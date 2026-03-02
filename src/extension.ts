@@ -85,6 +85,28 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('manuscript-markdown.prevChange', () => changes.prev())
 	);
 
+	// Register bib file open/reveal commands (used by hover links)
+	context.subscriptions.push(
+		vscode.commands.registerCommand('manuscript-markdown.openBibFile', async (filePath: string) => {
+			const uri = vscode.Uri.file(filePath);
+			try {
+				await vscode.workspace.fs.stat(uri);
+				await vscode.commands.executeCommand('vscode.open', uri);
+			} catch {
+				vscode.window.showErrorMessage('File not found: ' + filePath);
+			}
+		}),
+		vscode.commands.registerCommand('manuscript-markdown.revealBibFile', async (filePath: string) => {
+			const uri = vscode.Uri.file(filePath);
+			try {
+				await vscode.workspace.fs.stat(uri);
+				await vscode.commands.executeCommand('revealFileInOS', uri);
+			} catch {
+				vscode.window.showErrorMessage('File not found: ' + filePath);
+			}
+		})
+	);
+
 	// Register Set Citation Style command
 	context.subscriptions.push(
 		vscode.commands.registerCommand('manuscript-markdown.setCitationStyle', async () => {
@@ -699,6 +721,14 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 		initializationOptions: getLspSettings(),
 		synchronize: {
 			fileEvents: [markdownWatcher, bibWatcher],
+		},
+		markdown: {
+			isTrusted: {
+				enabledCommands: [
+					'manuscript-markdown.openBibFile',
+					'manuscript-markdown.revealBibFile',
+				],
+			},
 		},
 	};
 

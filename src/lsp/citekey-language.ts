@@ -529,3 +529,128 @@ export function findBibFieldLinkAtLine(lineText: string): BibFieldLink | undefin
 	return buildBibFieldLink(fieldName, value);
 }
 
+// --- File field support ---
+
+export interface BibFileEntry {
+	description: string;
+	filePath: string;
+	fileType: string;
+	fileName: string; // basename for display
+}
+
+const BIB_FILE_FIELD_RE = /^\s*file\s*=\s*[{"]\s*([^}"]+?)\s*[}"]/i;
+
+/**
+ * Split a string on unescaped occurrences of `sep`.
+ * Backslash-escaped separators (`\:`, `\;`) are treated as literal characters.
+ */
+function splitOnUnescaped(str: string, sep: string): string[] {
+	const parts: string[] = [];
+	let current = '';
+	for (let i = 0; i < str.length; i++) {
+		if (str[i] === '\\' && i + 1 < str.length && str[i + 1] === sep) {
+			current += sep;
+			i++;
+		} else if (str[i] === sep) {
+			parts.push(current);
+			current = '';
+		} else {
+			current += str[i];
+		}
+	}
+	parts.push(current);
+	return parts;
+}
+
+/**
+ * Parse a BibTeX file field value into individual file entries.
+ * Format: `Description:Path:Type` with entries separated by `;`.
+ * Colons and semicolons in paths can be escaped with backslash.
+ */
+export function parseFileFieldValue(rawValue: string): BibFileEntry[] {
+	const value = rawValue.trim().replace(/^\{+|\}+$/g, '').trim();
+	if (!value) return [];
+
+	const entries: BibFileEntry[] = [];
+	for (const segment of splitOnUnescaped(value, ';')) {
+		const trimmed = segment.trim();
+		if (!trimmed) continue;
+
+		const parts = splitOnUnescaped(trimmed, ':');
+		let description = '';
+		let filePath = '';
+		let fileType = '';
+
+		if (parts.length >= 3) {
+			// Standard format: Description:Path:Type
+			// Path may contain colons (e.g. Windows drive letter), so join middle parts
+			description = parts[0].trim();
+			fileType = parts[parts.length - 1].trim();
+			filePath = parts.slice(1, -1).join(':').trim();
+		} else if (parts.length === 2) {
+			// Two parts: treat as Path:Type
+			filePath = parts[0].trim();
+			fileType = parts[1].trim();
+		} else {
+			// Single value: treat as just a path
+			filePath = trimmed;
+		}
+
+		if (!filePath) continue;
+
+		const fileName = path.basename(filePath);
+		entries.push({ description, filePath, fileType, fileName });
+	}
+
+	return entries;
+}
+
+/** Check whether a .bib line is a file field and return parsed file entries. */
+export function findBibFileFieldAtLine(lineText: string): BibFileEntry[] | undefined {
+	const match = BIB_FILE_FIELD_RE.exec(lineText);
+	if (!match) return undefined;
+	const entries = parseFileFieldValue(match[1]);
+	return entries.length > 0 ? entries : undefined;
+}
+
+/** Extract file entries from a BibtexEntry's file field. */
+export function getFileEntriesForEntry(entry: BibtexEntry): BibFileEntry[] {
+	const fileValue = entry.fields.get('file');
+	if (!fileValue) return [];
+	return parseFileFieldValue(fileValue);
+}
+
+/**
+ * Build a display name for a file entry.
+ * Uses the description if provided, otherwise the filename.
+ */
+export function fileEntryDisplayName(file: BibFileEntry): string {
+	return file.description || file.fileName;
+}
+
+/** Platform-specific label for the "reveal in file manager" action. */
+export function getRevealLabel(): string {
+	return process.platform === 'darwin' ? 'Show in Finder'
+		: process.platform === 'win32' ? 'Show in Explorer'
+		: 'Show in File Manager';
+}
+
+/**
+ * Format a single file entry as markdown with command URIs.
+ * `absolutePath` must already be resolved.
+ */
+export function formatFileEntryMarkdown(displayName: string, absolutePath: string): string {
+	const args = encodeURIComponent(JSON.stringify([absolutePath]));
+	const escapedName = displayName.replace(/[[\]\\*_`]/g, '\\$&');
+	const openLink = `[Open file](command:manuscript-markdown.openBibFile?${args})`;
+	const revealLink = `[${getRevealLabel()}](command:manuscript-markdown.revealBibFile?${args})`;
+	return `**${escapedName}** \u2014 ${openLink} \u00B7 ${revealLink}`;
+}
+
+/**
+ * Resolve a file entry's path relative to a bib file directory.
+ */
+export function resolveFileEntryPath(filePath: string, bibDir: string): string {
+	return path.isAbsolute(filePath) ? filePath : path.resolve(bibDir, filePath);
+}
+

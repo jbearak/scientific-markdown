@@ -44,6 +44,14 @@
         "title": "Previous Change"
       },
       {
+        "command": "manuscript-markdown.openBibFile",
+        "title": "Open Bibliography File"
+      },
+      {
+        "command": "manuscript-markdown.revealBibFile",
+        "title": "Reveal Bibliography File in OS"
+      },
+      {
         "command": "manuscript-markdown.markAddition",
         "title": "Mark as Addition"
       },

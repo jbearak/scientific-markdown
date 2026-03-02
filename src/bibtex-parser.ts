@@ -14,7 +14,7 @@ export interface BibtexEntry {
 /** BibTeX fields whose values are verbatim identifiers (URLs, DOIs, etc.)
  *  that must not be LaTeX-escaped. */
 const VERBATIM_BIBTEX_FIELDS: ReadonlySet<string> = new Set([
-  'doi', 'url', 'isbn', 'issn',
+  'doi', 'url', 'isbn', 'issn', 'file',
 ]);
 
 /** Strip a single outer brace pair if it wraps the entire string.

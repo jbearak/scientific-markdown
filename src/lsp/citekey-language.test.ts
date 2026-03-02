@@ -5,15 +5,22 @@ import * as path from 'path';
 import {
 	buildBibFieldLink,
 	canonicalizeFsPath,
+	fileEntryDisplayName,
 	findBibFieldLinkAtLine,
+	findBibFileFieldAtLine,
 	findBibKeyAtOffset,
 	findCitekeyAtOffset,
+	formatFileEntryMarkdown,
 	fsPathToUri,
 	getAccessLinksForEntry,
 	getCompletionContextAtOffset,
+	getFileEntriesForEntry,
+	getRevealLabel,
 	isInsideCitationSegmentAtOffset,
+	parseFileFieldValue,
 	parseBibDataFromText,
 	pathsEqual,
+	resolveFileEntryPath,
 	resolveBibliographyPath,
 	scanCitationUsages,
 } from './citekey-language';
@@ -558,6 +565,211 @@ describe('findBibFieldLinkAtLine — url field', () => {
 		expect(result).toBeDefined();
 		expect(result!.invalid).toBe(true);
 		expect(result!.label).toContain('Invalid URL');
+	});
+});
+
+// --- File field tests ---
+
+describe('parseFileFieldValue', () => {
+	test('parses single file entry with standard format', () => {
+		const entries = parseFileFieldValue('Paper.pdf:/path/to/paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].description).toBe('Paper.pdf');
+		expect(entries[0].filePath).toBe('/path/to/paper.pdf');
+		expect(entries[0].fileType).toBe('PDF');
+		expect(entries[0].fileName).toBe('paper.pdf');
+	});
+
+	test('parses multiple file entries separated by semicolons', () => {
+		const entries = parseFileFieldValue('Paper.pdf:/path/to/paper.pdf:PDF;Supplement:/path/to/supp.pdf:PDF');
+		expect(entries).toHaveLength(2);
+		expect(entries[0].description).toBe('Paper.pdf');
+		expect(entries[0].filePath).toBe('/path/to/paper.pdf');
+		expect(entries[1].description).toBe('Supplement');
+		expect(entries[1].filePath).toBe('/path/to/supp.pdf');
+	});
+
+	test('handles empty description (JabRef format)', () => {
+		const entries = parseFileFieldValue(':/path/to/paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].description).toBe('');
+		expect(entries[0].filePath).toBe('/path/to/paper.pdf');
+		expect(entries[0].fileType).toBe('PDF');
+	});
+
+	test('handles relative paths', () => {
+		const entries = parseFileFieldValue(':paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('paper.pdf');
+		expect(entries[0].fileName).toBe('paper.pdf');
+	});
+
+	test('handles paths with spaces', () => {
+		const entries = parseFileFieldValue('My Paper:/path/to/my paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('/path/to/my paper.pdf');
+	});
+
+	test('handles escaped colons in paths', () => {
+		const entries = parseFileFieldValue(':C\\:/Users/test/paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('C:/Users/test/paper.pdf');
+	});
+
+	test('handles escaped semicolons', () => {
+		const entries = parseFileFieldValue(':path/to/file\\;v2.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('path/to/file;v2.pdf');
+	});
+
+	test('returns empty array for empty value', () => {
+		expect(parseFileFieldValue('')).toEqual([]);
+		expect(parseFileFieldValue('  ')).toEqual([]);
+	});
+
+	test('strips outer braces', () => {
+		const entries = parseFileFieldValue('{Paper.pdf:/path/to/paper.pdf:PDF}');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].description).toBe('Paper.pdf');
+	});
+
+	test('skips empty segments from trailing semicolons', () => {
+		const entries = parseFileFieldValue(':paper.pdf:PDF;');
+		expect(entries).toHaveLength(1);
+	});
+
+	test('handles two-part format as Path:Type', () => {
+		const entries = parseFileFieldValue('paper.pdf:PDF');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('paper.pdf');
+		expect(entries[0].fileType).toBe('PDF');
+	});
+
+	test('handles single value with no colons', () => {
+		const entries = parseFileFieldValue('/path/to/paper.pdf');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('/path/to/paper.pdf');
+		expect(entries[0].description).toBe('');
+		expect(entries[0].fileType).toBe('');
+	});
+
+	test('handles application/pdf file type', () => {
+		const entries = parseFileFieldValue('Paper:/path/to/paper.pdf:application/pdf');
+		expect(entries).toHaveLength(1);
+		expect(entries[0].fileType).toBe('application/pdf');
+	});
+});
+
+describe('findBibFileFieldAtLine', () => {
+	test('detects file field with brace delimiters', () => {
+		const result = findBibFileFieldAtLine('  file = {Paper.pdf:/path/to/paper.pdf:PDF},');
+		expect(result).toBeDefined();
+		expect(result).toHaveLength(1);
+		expect(result![0].filePath).toBe('/path/to/paper.pdf');
+	});
+
+	test('detects file field with quote delimiters', () => {
+		const result = findBibFileFieldAtLine('  file = "Paper.pdf:/path/to/paper.pdf:PDF",');
+		expect(result).toBeDefined();
+		expect(result).toHaveLength(1);
+	});
+
+	test('is case-insensitive for field name', () => {
+		const result = findBibFileFieldAtLine('  File = {:/path/to/paper.pdf:PDF},');
+		expect(result).toBeDefined();
+		expect(result).toHaveLength(1);
+	});
+
+	test('returns undefined for empty file field', () => {
+		expect(findBibFileFieldAtLine('  file = {},')).toBeUndefined();
+	});
+
+	test('returns undefined for non-file fields', () => {
+		expect(findBibFileFieldAtLine('  doi = {10.1234/test},')).toBeUndefined();
+		expect(findBibFileFieldAtLine('  title = {Some Title},')).toBeUndefined();
+	});
+
+	test('returns undefined for citekey lines', () => {
+		expect(findBibFileFieldAtLine('@article{smith2020,')).toBeUndefined();
+	});
+
+	test('detects multiple files in one field', () => {
+		const result = findBibFileFieldAtLine('  file = {Paper:/a.pdf:PDF;Supp:/b.pdf:PDF},');
+		expect(result).toBeDefined();
+		expect(result).toHaveLength(2);
+	});
+});
+
+describe('getFileEntriesForEntry', () => {
+	test('returns empty array when entry has no file field', () => {
+		const entry = makeEntry({ title: 'Some Paper', author: 'Smith' });
+		expect(getFileEntriesForEntry(entry)).toEqual([]);
+	});
+
+	test('returns file entries for entry with file field', () => {
+		const entry = makeEntry({ file: ':/path/to/paper.pdf:PDF' });
+		const entries = getFileEntriesForEntry(entry);
+		expect(entries).toHaveLength(1);
+		expect(entries[0].filePath).toBe('/path/to/paper.pdf');
+	});
+
+	test('returns multiple file entries', () => {
+		const entry = makeEntry({ file: 'Paper:/a.pdf:PDF;Supplement:/b.pdf:PDF' });
+		const entries = getFileEntriesForEntry(entry);
+		expect(entries).toHaveLength(2);
+	});
+});
+
+describe('fileEntryDisplayName', () => {
+	test('uses description when provided', () => {
+		expect(fileEntryDisplayName({ description: 'Paper', filePath: '/a.pdf', fileType: 'PDF', fileName: 'a.pdf' })).toBe('Paper');
+	});
+
+	test('falls back to fileName when no description', () => {
+		expect(fileEntryDisplayName({ description: '', filePath: '/path/to/a.pdf', fileType: 'PDF', fileName: 'a.pdf' })).toBe('a.pdf');
+	});
+});
+
+describe('resolveFileEntryPath', () => {
+	test('returns absolute paths unchanged', () => {
+		expect(resolveFileEntryPath('/absolute/path.pdf', '/bib/dir')).toBe('/absolute/path.pdf');
+	});
+
+	test('resolves relative paths against bib directory', () => {
+		const result = resolveFileEntryPath('paper.pdf', '/home/user/refs');
+		expect(result).toBe('/home/user/refs/paper.pdf');
+	});
+
+	test('resolves nested relative paths', () => {
+		const result = resolveFileEntryPath('files/paper.pdf', '/home/user/refs');
+		expect(result).toBe('/home/user/refs/files/paper.pdf');
+	});
+});
+
+describe('formatFileEntryMarkdown', () => {
+	test('produces markdown with open and reveal links', () => {
+		const md = formatFileEntryMarkdown('paper.pdf', '/path/to/paper.pdf');
+		expect(md).toContain('**paper.pdf**');
+		expect(md).toContain('[Open file]');
+		expect(md).toContain('command:manuscript-markdown.openBibFile');
+		expect(md).toContain('command:manuscript-markdown.revealBibFile');
+	});
+
+	test('encodes file path in command URI', () => {
+		const md = formatFileEntryMarkdown('paper.pdf', '/path/to/paper.pdf');
+		const encoded = encodeURIComponent(JSON.stringify(['/path/to/paper.pdf']));
+		expect(md).toContain(encoded);
+	});
+
+	test('uses platform-appropriate reveal label', () => {
+		const md = formatFileEntryMarkdown('paper.pdf', '/path/to/paper.pdf');
+		expect(md).toContain(getRevealLabel());
+	});
+
+	test('escapes markdown-special characters in display name', () => {
+		const md = formatFileEntryMarkdown('review [final].pdf', '/path/to/file.pdf');
+		expect(md).toContain('review \\[final\\].pdf');
+		expect(md).toContain('[Open file]');
 	});
 });
 

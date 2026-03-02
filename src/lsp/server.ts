@@ -43,12 +43,17 @@ import {
 	canonicalizeFsPath,
 	canonicalizeFsPathAsync,
 	ParsedBibData,
+	fileEntryDisplayName,
 	findBibFieldLinkAtLine,
+	findBibFileFieldAtLine,
 	findBibKeyAtOffset,
 	findCitekeyAtOffset,
 	findUsagesForKey,
+	formatFileEntryMarkdown,
 	fsPathToUri,
 	getAccessLinksForEntry,
+	getFileEntriesForEntry,
+	resolveFileEntryPath,
 	getCompletionContextAtOffset,
 	invalidateCanonicalCache,
 	parseBibDataFromText,
@@ -453,14 +458,14 @@ connection.onHover(async (params: HoverParams): Promise<Hover | null> => {
 				return {
 					contents: {
 						kind: MarkupKind.Markdown,
-						value: formatBibEntryHover(entry),
+						value: formatBibEntryHover(entry, symbol.bibPath),
 					},
 				};
 			}
 		}
 	}
 
-	// 2. Try DOI/ISBN/ISSN field link hover in .bib files
+	// 2. Try DOI/ISBN/ISSN/file field link hover in .bib files
 	if (isBibUri(params.textDocument.uri)) {
 		const doc = documents.get(params.textDocument.uri);
 		if (doc) {
@@ -472,6 +477,23 @@ connection.onHover(async (params: HoverParams): Promise<Hover | null> => {
 					contents: {
 						kind: MarkupKind.Markdown,
 						value: link.invalid ? link.label : `[${link.label}](${link.url})`,
+					},
+				};
+			}
+
+			// Try file field hover
+			const fileEntries = findBibFileFieldAtLine(lineText);
+			if (fileEntries) {
+				const bibFsPath = uriToFsPath(params.textDocument.uri);
+				const bibDir = bibFsPath ? path.dirname(bibFsPath) : '';
+				const lines = fileEntries.map(f => {
+					const absPath = resolveFileEntryPath(f.filePath, bibDir);
+					return formatFileEntryMarkdown(fileEntryDisplayName(f), absPath);
+				});
+				return {
+					contents: {
+						kind: MarkupKind.Markdown,
+						value: lines.length === 1 ? lines[0] : lines.map(l => '- ' + l).join('\n'),
 					},
 				};
 			}
@@ -976,7 +998,7 @@ function formatBibAuthors(raw: string): string {
 	return joinAuthorNames(names);
 }
 
-function formatBibEntryHover(entry: BibtexEntry): string {
+function formatBibEntryHover(entry: BibtexEntry, bibPath?: string): string {
 	const lines: string[] = [];
 
 	const author = entry.fields.get('author');
@@ -1005,11 +1027,27 @@ function formatBibEntryHover(entry: BibtexEntry): string {
 		lines.push(`\`${entry.key}\``);
 	}
 
+	// Access links (DOI, ISBN, ISSN, URL)
+	const allLinks: string[] = [];
 	const accessLinks = getAccessLinksForEntry(entry);
-	if (accessLinks.length === 1) {
-		lines.push(`[${accessLinks[0].label}](${accessLinks[0].url})`);
-	} else if (accessLinks.length > 1) {
-		lines.push(accessLinks.map(l => `- [${l.label}](${l.url})`).join('\n'));
+	for (const link of accessLinks) {
+		allLinks.push(`[${link.label}](${link.url})`);
+	}
+
+	// File links
+	if (bibPath) {
+		const bibDir = path.dirname(bibPath);
+		const fileEntries = getFileEntriesForEntry(entry);
+		for (const f of fileEntries) {
+			const absPath = resolveFileEntryPath(f.filePath, bibDir);
+			allLinks.push(formatFileEntryMarkdown(fileEntryDisplayName(f), absPath));
+		}
+	}
+
+	if (allLinks.length === 1) {
+		lines.push(allLinks[0]);
+	} else if (allLinks.length > 1) {
+		lines.push(allLinks.map(l => '- ' + l).join('\n'));
 	}
 
 	return lines.join('\n\n');
