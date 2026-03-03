@@ -73,7 +73,7 @@ async function readDocxFile(uri: vscode.Uri): Promise<Uint8Array> {
 
 	// Tier 1: VS Code virtual FS (works for normal files and workspace-accessible paths)
 	try {
-		return new Uint8Array(await vscode.workspace.fs.readFile(readUri));
+		return await vscode.workspace.fs.readFile(readUri);
 	} catch {
 		// Fall through to Tier 2
 	}
@@ -81,6 +81,8 @@ async function readDocxFile(uri: vscode.Uri): Promise<Uint8Array> {
 	// Tier 2: Node fs.promises.readFile (bypasses VS Code's virtual FS layer)
 	try {
 		const buf = await fs.promises.readFile(realPath);
+		// Buffer's backing ArrayBuffer may be larger than the data; create a
+		// proper Uint8Array view so downstream consumers get the right slice.
 		return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 	} catch {
 		// Fall through to Tier 3
@@ -104,7 +106,7 @@ async function readDocxFile(uri: vscode.Uri): Promise<Uint8Array> {
 	if (!picks || picks.length === 0) {
 		throw new Error('No file selected');
 	}
-	return new Uint8Array(await vscode.workspace.fs.readFile(picks[0]));
+	return await vscode.workspace.fs.readFile(picks[0]);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -382,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const existingBibtex = await fileExists(existingBibUri)
 					? new TextDecoder().decode(await vscode.workspace.fs.readFile(existingBibUri))
 					: undefined;
-				const result = await convertDocx(new Uint8Array(data), format, {
+				const result = await convertDocx(data, format, {
 					tableIndent: ' '.repeat(tableIndentSpaces),
 					alwaysUseCommentIds,
 					existingBibtex,
