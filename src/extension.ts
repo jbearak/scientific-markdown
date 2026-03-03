@@ -12,6 +12,7 @@ import { manuscriptMarkdownPlugin } from './preview/manuscript-markdown-plugin';
 import { WordCountController } from './wordcount';
 import { convertDocx, CitationKeyFormat } from './converter';
 import { convertMdToDocx } from './md-to-docx';
+import * as fs from 'fs';
 import * as path from 'path';
 import { parseFrontmatter, hasCitations, normalizeBibPath, normalizeColorScheme, type ColorScheme } from './frontmatter';
 import { BUNDLED_STYLE_LABELS } from './csl-loader';
@@ -54,6 +55,58 @@ let cslCacheDir: string = '';
 let previewMd: any;
 function syncPreviewColors(scheme: ColorScheme) {
 	if (previewMd) previewMd.manuscriptColors = scheme;
+}
+
+/**
+ * Three-tier read for .docx files that may be symlinks pointing outside
+ * VS Code's sandbox (e.g. OneDrive/SharePoint targets on macOS).
+ */
+async function readDocxFile(uri: vscode.Uri): Promise<Uint8Array> {
+	// Resolve symlinks so we know the real target path
+	let realPath: string;
+	try {
+		realPath = await fs.promises.realpath(uri.fsPath);
+	} catch {
+		realPath = uri.fsPath;
+	}
+	const readUri = realPath !== uri.fsPath ? vscode.Uri.file(realPath) : uri;
+
+	// Tier 1: VS Code virtual FS (works for normal files and workspace-accessible paths)
+	try {
+		return await vscode.workspace.fs.readFile(readUri);
+	} catch {
+		// Fall through to Tier 2
+	}
+
+	// Tier 2: Node fs.promises.readFile (bypasses VS Code's virtual FS layer)
+	try {
+		const buf = await fs.promises.readFile(realPath);
+		// Buffer's backing ArrayBuffer may be larger than the data; create a
+		// proper Uint8Array view so downstream consumers get the right slice.
+		return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+	} catch {
+		// Fall through to Tier 3
+	}
+
+	// Tier 3: Ask the user to grant access via file picker (extends macOS sandbox)
+	const message = 'Cannot read "' + path.basename(uri.fsPath) + '" \u2014 the symlink target may be outside VS Code\u2019s sandbox. Grant access by selecting the file.';
+	const choice = await vscode.window.showWarningMessage(message, 'Select File', 'Cancel');
+	if (choice !== 'Select File') {
+		throw new Error('File access denied by user');
+	}
+	const picks = await vscode.window.showOpenDialog({
+		// defaultUri only accepts a directory — showOpenDialog cannot pre-select a
+		// file. We can't use a native NSOpenPanel (e.g. via osascript) because only
+		// VS Code's own dialog grants the sandbox permission token needed to read.
+		defaultUri: vscode.Uri.file(path.dirname(realPath)),
+		filters: { 'Word Documents': ['docx'] },
+		canSelectMany: false,
+		openLabel: 'Grant Access',
+	});
+	if (!picks || picks.length === 0) {
+		throw new Error('No file selected');
+	}
+	return await vscode.workspace.fs.readFile(picks[0]);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -316,7 +369,7 @@ export function activate(context: vscode.ExtensionContext) {
 					if (!files || files.length === 0) { return; }
 					uri = files[0];
 				}
-				const data = await vscode.workspace.fs.readFile(uri);
+				const data = await readDocxFile(uri);
 				const config = vscode.workspace.getConfiguration('manuscriptMarkdown');
 				const format = config.get<CitationKeyFormat>('citationKeyFormat', 'authorYearTitle');
 				const tableIndentSpaces = config.get<number>('tableIndent', 2);
@@ -331,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const existingBibtex = await fileExists(existingBibUri)
 					? new TextDecoder().decode(await vscode.workspace.fs.readFile(existingBibUri))
 					: undefined;
-				const result = await convertDocx(new Uint8Array(data), format, {
+				const result = await convertDocx(data, format, {
 					tableIndent: ' '.repeat(tableIndentSpaces),
 					alwaysUseCommentIds,
 					existingBibtex,
