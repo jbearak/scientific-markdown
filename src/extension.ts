@@ -22,6 +22,9 @@ import {
 	getOutputBasePath,
 	getOutputConflictMessage,
 	getOutputConflictScenario,
+	isSymlink,
+	getSymlinkConflictMessage,
+	getDocxSymlinkConflictMessage,
 } from './output-conflicts';
 import {
 	VALID_COLOR_IDS,
@@ -107,6 +110,50 @@ async function readDocxFile(uri: vscode.Uri): Promise<Uint8Array> {
 		throw new Error('No file selected');
 	}
 	return await vscode.workspace.fs.readFile(picks[0]);
+}
+
+/**
+ * Three-tier write for files whose symlink targets may be outside
+ * VS Code's sandbox (mirrors the read tiers in readDocxFile).
+ */
+async function writeFileThroughSymlink(symlinkUri: vscode.Uri, data: Uint8Array): Promise<void> {
+	let realPath: string;
+	try {
+		realPath = await fs.promises.realpath(symlinkUri.fsPath);
+	} catch {
+		realPath = symlinkUri.fsPath;
+	}
+
+	// Tier 1: VS Code virtual FS (works if target is inside the sandbox)
+	const realUri = vscode.Uri.file(realPath);
+	try {
+		await vscode.workspace.fs.writeFile(realUri, data);
+		return;
+	} catch {
+		// Fall through to Tier 2
+	}
+
+	// Tier 2: Node fs.promises.writeFile (bypasses VS Code's virtual FS layer)
+	try {
+		await fs.promises.writeFile(realPath, data);
+		return;
+	} catch {
+		// Fall through to Tier 3
+	}
+
+	// Tier 3: Ask the user to grant access via save dialog (extends macOS sandbox)
+	const message = 'Cannot write to "' + path.basename(symlinkUri.fsPath) + '" — the symlink target may be outside VS Code\u2019s sandbox. Grant access by choosing a save location.';
+	const choice = await vscode.window.showWarningMessage(message, 'Select Location', 'Cancel');
+	if (choice !== 'Select Location') {
+		throw new Error('File write access denied by user');
+	}
+	const picked = await vscode.window.showSaveDialog({
+		defaultUri: vscode.Uri.file(path.dirname(realPath)),
+	});
+	if (!picked) {
+		throw new Error('No save location selected');
+	}
+	await vscode.workspace.fs.writeFile(picked, data);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -397,13 +444,33 @@ export function activate(context: vscode.ExtensionContext) {
 				const bibExists = hasBibtex ? await fileExists(bibUri) : false;
 				const conflictScenario = getOutputConflictScenario(mdExists, bibExists);
 
+				let unlinkBeforeWrite = false;
+				let writeThrough = false;
 				if (conflictScenario) {
-					const choice = await vscode.window.showWarningMessage(
-						getOutputConflictMessage(basePath, conflictScenario),
-						{ modal: true },
-						'Replace',
-						'New Name'
-					);
+					const mdIsSymlink = mdExists && await isSymlink(mdUri.fsPath);
+					const bibIsSymlink = bibExists && await isSymlink(bibUri.fsPath);
+					const hasSymlink = mdIsSymlink || bibIsSymlink;
+
+					let choice: string | undefined;
+					if (hasSymlink) {
+						const symlinkFiles: ('md' | 'bib')[] = [];
+						if (mdIsSymlink) symlinkFiles.push('md');
+						if (bibIsSymlink) symlinkFiles.push('bib');
+						choice = await vscode.window.showWarningMessage(
+							getSymlinkConflictMessage(basePath, conflictScenario, symlinkFiles),
+							{ modal: true },
+							'Replace Target',
+							'Replace Symlink',
+							'New Name'
+						);
+					} else {
+						choice = await vscode.window.showWarningMessage(
+							getOutputConflictMessage(basePath, conflictScenario),
+							{ modal: true },
+							'Replace',
+							'New Name'
+						);
+					}
 
 					if (!choice) {
 						return;
@@ -422,12 +489,31 @@ export function activate(context: vscode.ExtensionContext) {
 						const selectedBasePath = getOutputBasePath(selectedUri.fsPath);
 						mdUri = vscode.Uri.file(selectedBasePath + '.md');
 						bibUri = vscode.Uri.file(selectedBasePath + '.bib');
+					} else if (choice === 'Replace Symlink') {
+						unlinkBeforeWrite = true;
+					} else if (choice === 'Replace Target') {
+						writeThrough = true;
 					}
 				}
 
-				await vscode.workspace.fs.writeFile(mdUri, new TextEncoder().encode(result.markdown));
+				if (unlinkBeforeWrite) {
+					if (mdExists && await isSymlink(mdUri.fsPath)) await fs.promises.unlink(mdUri.fsPath);
+					if (bibExists && await isSymlink(bibUri.fsPath)) await fs.promises.unlink(bibUri.fsPath);
+				}
+
+				const mdData = new TextEncoder().encode(result.markdown);
+				if (writeThrough) {
+					await writeFileThroughSymlink(mdUri, mdData);
+				} else {
+					await vscode.workspace.fs.writeFile(mdUri, mdData);
+				}
 				if (result.bibtex) {
-					await vscode.workspace.fs.writeFile(bibUri, new TextEncoder().encode(result.bibtex));
+					const bibData = new TextEncoder().encode(result.bibtex);
+					if (writeThrough) {
+						await writeFileThroughSymlink(bibUri, bibData);
+					} else {
+						await vscode.workspace.fs.writeFile(bibUri, bibData);
+					}
 				}
 
 				const mdDoc = await vscode.workspace.openTextDocument(mdUri);
@@ -1068,20 +1154,39 @@ async function getMdExportInput(uri?: vscode.Uri): Promise<MdExportInput | undef
 	return { markdown, basePath, bibtex };
 }
 
-async function resolveDocxOutputUri(basePath: string): Promise<vscode.Uri | undefined> {
+interface DocxOutputResolution {
+	uri: vscode.Uri;
+	unlinkSymlink: boolean;
+	writeThrough: boolean;
+}
+
+async function resolveDocxOutputUri(basePath: string): Promise<DocxOutputResolution | undefined> {
 	let docxUri = vscode.Uri.file(basePath + '.docx');
 	const docxExists = await fileExists(docxUri);
 	if (!docxExists) {
-		return docxUri;
+		return { uri: docxUri, unlinkSymlink: false, writeThrough: false };
 	}
 
-	const name = basePath.split(/[/\\]/).pop()!;
-	const choice = await vscode.window.showWarningMessage(
-		'\"' + name + '.docx\" already exists. Replace it or save with a new name?',
-		{ modal: true },
-		'Replace',
-		'New Name'
-	);
+	const docxIsSymlink = await isSymlink(docxUri.fsPath);
+
+	let choice: string | undefined;
+	if (docxIsSymlink) {
+		choice = await vscode.window.showWarningMessage(
+			getDocxSymlinkConflictMessage(basePath),
+			{ modal: true },
+			'Replace Target',
+			'Replace Symlink',
+			'New Name'
+		);
+	} else {
+		const name = basePath.split(/[/\\]/).pop()!;
+		choice = await vscode.window.showWarningMessage(
+			'"' + name + '.docx" already exists. Replace it or save with a new name?',
+			{ modal: true },
+			'Replace',
+			'New Name'
+		);
+	}
 
 	if (!choice) {
 		return undefined;
@@ -1097,9 +1202,19 @@ async function resolveDocxOutputUri(basePath: string): Promise<vscode.Uri | unde
 			return undefined;
 		}
 		docxUri = selectedUri;
+		return { uri: docxUri, unlinkSymlink: false, writeThrough: false };
 	}
 
-	return docxUri;
+	if (choice === 'Replace Symlink') {
+		return { uri: docxUri, unlinkSymlink: true, writeThrough: false };
+	}
+
+	if (choice === 'Replace Target') {
+		return { uri: docxUri, unlinkSymlink: false, writeThrough: true };
+	}
+
+	// 'Replace' (non-symlink case)
+	return { uri: docxUri, unlinkSymlink: false, writeThrough: false };
 }
 
 async function exportMdToDocx(context: vscode.ExtensionContext, uri?: vscode.Uri, templateDocx?: Uint8Array): Promise<void> {
@@ -1144,12 +1259,21 @@ async function exportMdToDocx(context: vscode.ExtensionContext, uri?: vscode.Uri
 		}
 	});
 
-	const docxUri = await resolveDocxOutputUri(input.basePath);
-	if (!docxUri) {
+	const docxOutput = await resolveDocxOutputUri(input.basePath);
+	if (!docxOutput) {
 		return;
 	}
 
-	await vscode.workspace.fs.writeFile(docxUri, result.docx);
+	if (docxOutput.unlinkSymlink) {
+		await fs.promises.unlink(docxOutput.uri.fsPath);
+	}
+
+	if (docxOutput.writeThrough) {
+		await writeFileThroughSymlink(docxOutput.uri, result.docx);
+	} else {
+		await vscode.workspace.fs.writeFile(docxOutput.uri, result.docx);
+	}
+	const docxUri = docxOutput.uri;
 
 	const filename = docxUri.fsPath.split(/[/\\]/).pop()!;
 	const action = result.warnings.length > 0
