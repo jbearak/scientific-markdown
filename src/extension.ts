@@ -153,7 +153,9 @@ async function writeFileThroughSymlink(symlinkUri: vscode.Uri, data: Uint8Array)
 	if (!picked) {
 		throw new Error('No save location selected');
 	}
-	if (picked.fsPath !== realPath) {
+	const normalizePath = process.platform === 'win32' || process.platform === 'darwin'
+		? (p: string) => p.toLowerCase() : (p: string) => p;
+	if (normalizePath(picked.fsPath) !== normalizePath(realPath)) {
 		throw new Error('Save location must match the symlink target: ' + realPath);
 	}
 	await vscode.workspace.fs.writeFile(picked, data);
@@ -500,18 +502,11 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 
 				if (unlinkBeforeWrite) {
-					if (mdExists) {
-						if (!await isSymlink(mdUri.fsPath)) {
-							throw new Error('Expected symlink at ' + mdUri.fsPath + ' but found regular file; aborting to avoid overwriting');
-						}
-						await fs.promises.unlink(mdUri.fsPath);
-					}
-					if (bibExists) {
-						if (!await isSymlink(bibUri.fsPath)) {
-							throw new Error('Expected symlink at ' + bibUri.fsPath + ' but found regular file; aborting to avoid overwriting');
-						}
-						await fs.promises.unlink(bibUri.fsPath);
-					}
+					// Only unlink files that are actually symlinks; non-symlink files
+					// (e.g. when scenario === 'both' but only one is a symlink) are
+					// left in place and overwritten normally.
+					if (mdExists && await isSymlink(mdUri.fsPath)) { await fs.promises.unlink(mdUri.fsPath); }
+					if (bibExists && await isSymlink(bibUri.fsPath)) { await fs.promises.unlink(bibUri.fsPath); }
 				}
 
 				const mdData = new TextEncoder().encode(result.markdown);
