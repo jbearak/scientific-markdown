@@ -648,6 +648,14 @@ function runsToMarkdown(runs: HtmlTableRun[]): string {
   return result;
 }
 
+function escapePipesForMarkdownTableCell(text: string): string {
+  // Ensure each literal pipe has an odd number of preceding backslashes so
+  // splitOnPipes treats it as cell content, not a delimiter.
+  return text.replace(/(\\*)\|/g, (_m, slashes: string) => {
+    return slashes.length % 2 === 0 ? slashes + '\\|' : slashes + '|';
+  });
+}
+
 function convertHtmlTable(text: string, pad: boolean): string | null {
   const trimmed = text.trim();
   if (!/^<table\b[\s\S]*<\/table>$/i.test(trimmed)) return null;
@@ -686,7 +694,7 @@ function buildPipeTable(mdRows: { cells: string[]; header: boolean }[], pad: boo
   const escaped = mdRows.map(row => ({
     ...row,
     cells: Array.from({ length: colCount }, (_, i) =>
-      (row.cells[i] ?? '').replace(/\|/g, '\\|')
+      escapePipesForMarkdownTableCell(row.cells[i] ?? '')
     ),
   }));
   if (escaped.length === 0) return '';

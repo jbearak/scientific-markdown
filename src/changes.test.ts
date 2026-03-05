@@ -4,7 +4,7 @@ import * as fc from 'fast-check';
 // We'll test the regex pattern directly since we can't import vscode in tests
 // This is the same pattern used in changes.ts
 // Using [\s\S]*? to match zero or more characters (including newlines) to support empty patterns
-const combinedPattern = /\{\+\+([\s\S]*?)\+\+\}|\{--([\s\S]*?)--\}|\{\~\~([\s\S]*?)\~\~\}|\{#[a-zA-Z0-9_-]+>>([\s\S]*?)<<\}|\{>>([\s\S]*?)<<\}|\{#[a-zA-Z0-9_-]+\}|\{\/[a-zA-Z0-9_-]+\}|\{==([\s\S]*?)==\}|(?<![{=])==([^}=]+)==\{[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\}|(?<![{=])==([^}=]+)==(?!\})|\~\~([\s\S]*?)\~\~|<!--([\s\S]*?)-->/g;
+const combinedPattern = /\{\+\+([\s\S]*?)\+\+\}|\{--([\s\S]*?)--\}|\{\~\~([\s\S]*?)\~\~\}|\{#[a-zA-Z0-9_-]+>>([\s\S]*?)<<\}|\{>>([\s\S]*?)<<\}|\{#[a-zA-Z0-9_-]+\}|\{\/[a-zA-Z0-9_-]+\}|\{==([\s\S]*?)==\}|(?<![{=])==([^}=]+)==\{[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\}|(?<![{=])==([^}=]+)==(?![}=])|\~\~([\s\S]*?)\~\~|<!--([\s\S]*?)-->/g;
 
 // Helper function to find all pattern matches in text
 function findAllPatterns(text: string): Array<{ start: number; end: number; matched: string }> {
@@ -461,6 +461,12 @@ describe('Property 7: Navigation regex matches colored highlights', () => {
       }),
       { numRuns: 100 }
     );
+  });
+
+  it('should not match plain ==text== when immediately followed by =', () => {
+    const doc = 'some ==text=== more';
+    const matches = findAllPatterns(doc);
+    expect(matches.length).toBe(0);
   });
 });
 

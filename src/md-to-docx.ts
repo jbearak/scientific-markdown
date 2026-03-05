@@ -10,7 +10,7 @@ import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
-import { extractHtmlTables } from './html-table-parser';
+import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun } from './html-table-parser';
 export { preprocessGridTables } from './grid-table-preprocess';
 export { extractHtmlTables } from './html-table-parser';
 
@@ -90,6 +90,35 @@ export interface MdRun {
   imageWidth?: number;
   imageHeight?: number;
   imageSyntax?: 'md' | 'html';
+}
+
+function mapHtmlTableRunToMdRun(run: HtmlTableRun): MdRun {
+  if (run.type === 'softbreak') {
+    return { type: 'softbreak', text: '\n' };
+  }
+  return {
+    type: 'text',
+    text: run.text,
+    ...(run.bold ? { bold: true } : {}),
+    ...(run.italic ? { italic: true } : {}),
+    ...(run.underline ? { underline: true } : {}),
+    ...(run.strikethrough ? { strikethrough: true } : {}),
+    ...(run.code ? { code: true } : {}),
+    ...(run.superscript ? { superscript: true } : {}),
+    ...(run.subscript ? { subscript: true } : {}),
+    ...(run.href ? { href: run.href } : {}),
+  };
+}
+
+function mapHtmlTableRowsToMdTableRows(rows: HtmlTableRow[]): MdTableRow[] {
+  return rows.map(row => ({
+    header: row.header,
+    cells: row.cells.map(cell => ({
+      runs: cell.runs.map(mapHtmlTableRunToMdRun),
+      ...(cell.colspan && cell.colspan > 1 ? { colspan: cell.colspan } : {}),
+      ...(cell.rowspan && cell.rowspan > 1 ? { rowspan: cell.rowspan } : {}),
+    })),
+  }));
 }
 
 // Map Manuscript Markdown color names to OOXML ST_HighlightColor values
@@ -1382,10 +1411,13 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdTok
           if (htmlTables.length > 0) {
             for (const rows of htmlTables) {
               if (rows.length > 0) {
+                // Keep this mapping explicit so HtmlTableRun/MdRun shape changes
+                // cannot silently alter assignability behavior.
+                const mappedRows = mapHtmlTableRowsToMdTableRows(rows);
                 result.push({
                   type: 'table',
                   runs: [],
-                  rows,
+                  rows: mappedRows,
                   sourceFormat: 'html',
                 });
               }

@@ -17,6 +17,8 @@ LSP: `src/lsp/server.ts` (language server — diagnostics, completions)
 - Hidden HTML comments: Word may split one hidden HTML comment run into many vanish runs; docx→md must concatenate contiguous hidden fragments (including `w:br`) until the full `<!-- ... -->` payload is reconstructed.
 - Expand/Compact table safety: only convert selections that are exactly one HTML table block; mixed text+table selections must pass through unchanged to prevent content loss.
 - Inline code in HTML-table cells: choose a backtick fence longer than the longest backtick run in cell text (and add fence padding only when content starts/ends with backticks) to preserve literal backticks.
+- Pipe-table escaping invariant: when emitting HTML-table cell text to pipe tables, ensure each literal `|` has an odd number of preceding backslashes so parser splitting does not create extra columns.
+- Regex parity invariant: keep navigation (`src/changes.ts`) plain-highlight lookaround logic in lockstep with `syntaxes/manuscript-markdown.json` and mirrored regex test copies.
 
 Per-module learnings live as comments in the corresponding source files.
 

@@ -1478,6 +1478,32 @@ describe('HTML table support for Expand/Compact Table', () => {
     if (!result.newText.includes('a\\|b')) throw new Error('Expected escaped pipe, got: ' + result.newText);
   });
 
+  it('HTML with backslash+pipe in cell text keeps one table cell', () => {
+    const html = '<table><tr><th>Col</th></tr><tr><td>a\\|b</td></tr></table>';
+    const result = reflowTable(html);
+    const parsed = parseTable(result.newText);
+    if (!parsed) throw new Error('Expected converted markdown table to parse');
+    if (parsed.rows[2].cells.length !== 1) {
+      throw new Error('Expected 1 body cell, got: ' + parsed.rows[2].cells.length + '\n' + result.newText);
+    }
+    if (parsed.rows[2].cells[0] !== 'a\\|b') {
+      throw new Error('Expected preserved backslash+pipe content, got: ' + parsed.rows[2].cells[0]);
+    }
+  });
+
+  it('HTML link URL containing | does not split table cells', () => {
+    const html = '<table><tr><th>Col</th></tr><tr><td><a href=\"https://example.com/A|B\">x</a></td></tr></table>';
+    const result = reflowTable(html);
+    const parsed = parseTable(result.newText);
+    if (!parsed) throw new Error('Expected converted markdown table to parse');
+    if (parsed.rows[2].cells.length !== 1) {
+      throw new Error('Expected 1 body cell, got: ' + parsed.rows[2].cells.length + '\n' + result.newText);
+    }
+    if (!result.newText.includes('[x](https://example.com/A\\|B)')) {
+      throw new Error('Expected escaped pipe in URL, got: ' + result.newText);
+    }
+  });
+
   it('HTML with <p> multi-paragraph cells → grid table output', () => {
     const html = '<table><tr><th>Col</th></tr><tr><td><p>para1</p><p>para2</p></td></tr></table>';
     const result = reflowTable(html);
