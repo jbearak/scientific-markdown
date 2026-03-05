@@ -214,7 +214,7 @@ export function extractHighlightRanges(text: string, defaultColor: string): Map<
   // Colored highlights ==text=={color} and default highlights ==text==
   // Run on masked text so `=` and `}` in CriticMarkup delimiters don't block matches
   const masked = maskCriticDelimiters(text);
-  const hlRe = /(?<![{=])==([^}=]+)==(?:\{([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\})?/g;
+  const hlRe = /(?<![{=])==([^}=]+)==(?![}=])(?:\{([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\})?/g;
   while ((m = hlRe.exec(masked)) !== null) {
     const mStart = m.index;
     const mEnd = mStart + m[0].length;
@@ -379,6 +379,12 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
         // Need at least 1 char of content and closing ==
         if (k > contentStart && k + 1 < regionEnd &&
             text.charCodeAt(k) === 0x3D && text.charCodeAt(k + 1) === 0x3D) {
+          // Trailing guard: closing == must not be followed by = or }
+          const afterClose = k + 2;
+          if (afterClose < regionEnd) {
+            const ac = text.charCodeAt(afterClose);
+            if (ac === 0x3D || ac === 0x7D) { j = k; continue; }
+          }
           // Found closing ==. Check for optional {color} suffix
           const closeEnd = k + 2;
           let matchEnd = closeEnd;
@@ -562,6 +568,9 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
           if (ch === 0x3D) { // =
             // Check for closing ==
             if (k + 1 < len && text.charCodeAt(k + 1) === 0x3D) {
+              // Trailing guard: closing == must not be followed by = or }
+              const ac2 = k + 2 < len ? text.charCodeAt(k + 2) : -1;
+              if (ac2 === 0x3D || ac2 === 0x7D) break;
               if (hasContent) { found = true; }
               break;
             }

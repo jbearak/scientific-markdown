@@ -51,7 +51,7 @@ function extractHtmlTableRows(tableHtml: string): HtmlTableRow[] {
           ...(cell.colspan && cell.colspan > 1 ? { colspan: cell.colspan } : {}),
           ...(cell.rowspan && cell.rowspan > 1 ? { rowspan: cell.rowspan } : {}),
         })),
-        header: cells.some(c => c.isHeader)
+        header: cells.every(c => c.isHeader)
       });
     }
   }
@@ -101,7 +101,8 @@ function parseHtmlCellRuns(cellHtml: string): HtmlTableRun[] {
     // Emit any text before this tag
     if (match.index > lastIndex) {
       const rawText = cellHtml.slice(lastIndex, match.index);
-      const text = decodeHtmlEntities(rawText).replace(/\s+/g, ' ');
+      const decoded = decodeHtmlEntities(rawText);
+      const text = code ? decoded : decoded.replace(/\s+/g, ' ');
       if (text) {
         runs.push({
           type: 'text', text,
@@ -154,7 +155,8 @@ function parseHtmlCellRuns(cellHtml: string): HtmlTableRun[] {
   // Emit any trailing text
   if (lastIndex < cellHtml.length) {
     const rawText = cellHtml.slice(lastIndex);
-    const text = decodeHtmlEntities(rawText).replace(/\s+/g, ' ');
+    const decoded = decodeHtmlEntities(rawText);
+    const text = code ? decoded : decoded.replace(/\s+/g, ' ');
     if (text) {
       runs.push({
         type: 'text', text,
@@ -173,7 +175,7 @@ function parseHtmlCellRuns(cellHtml: string): HtmlTableRun[] {
   // Trim leading/trailing whitespace from the run sequence
   if (runs.length > 0) {
     const first = runs[0];
-    if (first.type === 'text') {
+    if (first.type === 'text' && !first.code) {
       first.text = first.text.replace(/^\s+/, '');
       if (!first.text) runs.shift();
     }
@@ -181,7 +183,7 @@ function parseHtmlCellRuns(cellHtml: string): HtmlTableRun[] {
   if (runs.length > 0) {
     const last = runs[runs.length - 1];
     if (last.type === 'softbreak') runs.pop();
-    else if (last.type === 'text') {
+    else if (last.type === 'text' && !last.code) {
       last.text = last.text.replace(/\s+$/, '');
       if (!last.text) runs.pop();
     }
