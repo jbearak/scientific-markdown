@@ -4072,6 +4072,22 @@ export function generateBibTeX(
         alreadyEmitted.add('editor');
       }
 
+      // Institution for techreport entries: prefer explicit x-institution
+      // (BibTeX roundtrip), then fall back to publisher (Zotero maps its
+      // "Institution" field to CSL publisher for report types).
+      if (entryType === 'techreport') {
+        const xInstitution = meta.fullItemData?.['x-institution'];
+        if (typeof xInstitution === 'string' && xInstitution) {
+          fields.push(`  institution = {${escapeBibtex(xInstitution)}}`);
+        } else {
+          const pub = meta.fullItemData?.publisher;
+          if (typeof pub === 'string' && pub) {
+            fields.push(`  institution = {${escapeBibtex(pub)}}`);
+            alreadyEmitted.add('publisher');
+          }
+        }
+      }
+
       // Additional CSL→BibTeX fields from fullItemData
       for (const [cslField, bibtexField] of Object.entries(CSL_TO_BIBTEX)) {
         if (alreadyEmitted.has(cslField)) continue;
