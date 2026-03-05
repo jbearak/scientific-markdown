@@ -43,6 +43,8 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `code-font` | Monospace font family for code styles. Default: Consolas. |
 | `font-size` | Body font size in points. Default: 11. |
 | `code-font-size` | Code font size in points. Default: 10. When `font-size` is specified without `code-font-size`, the code font size is automatically set to 1pt less than the body font size, preserving the default size difference. |
+| `table-font` | Table font family. Falls back to `font` if not set. |
+| `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size` or `table-font`, the table font size is automatically set to 2pt less than the body font size. |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
 | `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `normal`, or hyphenated combinations (e.g., `bold-italic`). Default: `bold`. |
@@ -118,6 +120,37 @@ code-font-size: 10
 ---
 ```
 
+### Table Font Configuration
+
+The `table-font` and `table-font-size` frontmatter fields control table typography independently of body text.
+
+**Auto-shrink behavior**: When `font-size` is specified without `table-font-size` or `table-font`, tables automatically use a font size 2pt smaller than the body font size. For example, `font-size: 12` produces 10pt table text. Setting either `table-font` or `table-font-size` explicitly disables auto-shrink.
+
+**Per-table overrides** allow individual tables to use different font settings. Two mechanisms are supported:
+
+1. **HTML comment directive** — place a comment immediately before the table:
+
+   ```markdown
+   <!-- table-font-size: 8 -->
+   | Column A | Column B |
+   |----------|----------|
+   | data     | data     |
+   ```
+
+   Supported directives: `table-font-size` and `table-font`.
+
+2. **HTML `<table>` data attributes** — for HTML tables, use `data-font-size` and `data-font` attributes:
+
+   ```html
+   <table data-font-size="8" data-font="Arial Narrow">
+     <tr><td>data</td><td>data</td></tr>
+   </table>
+   ```
+
+**Priority** (highest to lowest): per-table override → document-level frontmatter → auto-shrink default.
+
+Per-table overrides are preserved through DOCX round-trips: comment directives and data attributes are re-emitted on conversion back to Markdown.
+
 ### Code Block Styling Example
 
 ```yaml
@@ -146,7 +179,7 @@ Manuscript Markdown supports CommonMark plus the implemented [GitHub Flavored Ma
 - **Links**: `[text](url)` plus autolink literals (bare URLs/emails)
 - **Code blocks**: fenced with triple backticks. Optional language annotation (e.g., `` ```stata ``) is preserved on round-trip via the `MANUSCRIPT_CODE_BLOCK_LANGS` custom property in the DOCX. In Word, code blocks use the "Code Block" paragraph style (Consolas, shaded background). Consecutive code blocks are separated by an empty paragraph to prevent merging.
 - **Blockquotes**: `> quoted text`
-- **Tables**: simple tables are emitted as pipe tables (pipe-delimited with alignment support). Tables that contain colspans, rowspans, multi-paragraph cells, or that exceed the configured line width fall back to indented HTML. The line-width threshold is controlled by the `pipe-table-max-line-width` frontmatter field, the VS Code `pipeTableMaxLineWidth` setting, or the CLI `--pipe-table-max-line-width` flag. Pandoc-style grid tables are also supported for multi-line cells (see below).
+- **Tables**: simple tables are emitted as pipe tables (pipe-delimited with alignment support). Tables that contain colspans, rowspans, multi-paragraph cells, or that exceed the configured line width fall back to indented HTML. The line-width threshold is controlled by the `pipe-table-max-line-width` frontmatter field, the VS Code `pipeTableMaxLineWidth` setting, or the CLI `--pipe-table-max-line-width` flag. Tables support per-table font overrides via comment directives (`<!-- table-font-size: N -->`) and HTML data attributes (`data-font-size`, `data-font`); see [Table Font Configuration](#table-font-configuration). Pandoc-style grid tables are also supported for multi-line cells (see below).
 
 ### GitHub Flavored Markdown Extension Notes
 
