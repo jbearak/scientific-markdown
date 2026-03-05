@@ -628,7 +628,11 @@ function runsToMarkdown(runs: MdRun[]): string {
     }
     let t = run.text;
     if (run.code) {
-      result += '`' + t + '`';
+      if (t.includes('`')) {
+        result += '`` ' + t + ' ``';
+      } else {
+        result += '`' + t + '`';
+      }
       continue;
     }
     if (run.bold) t = '**' + t + '**';
