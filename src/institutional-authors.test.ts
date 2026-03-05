@@ -386,6 +386,65 @@ describe('generateBibTeX with institutional authors and additional fields', () =
   });
 });
 
+// ---------- generateBibTeX: institution field ----------
+
+describe('generateBibTeX institution handling', () => {
+  it('emits publisher as institution for techreport (Zotero path)', () => {
+    const citations: ZoteroCitation[] = [{
+      plainCitation: '(NCHS 2014)',
+      items: [{
+        authors: [{ literal: 'National Center for Health Statistics' }],
+        title: 'National Survey', year: '2014', journal: '', volume: '',
+        pages: '', doi: '', type: 'report',
+        fullItemData: {
+          publisher: 'National Center for Health Statistics',
+        },
+      }],
+    }];
+    const keyMap = buildCitationKeyMap(citations);
+    const bib = generateBibTeX(citations, keyMap);
+    expect(bib).toContain('institution = {National Center for Health Statistics}');
+    expect(bib).not.toContain('publisher');
+  });
+
+  it('prefers x-institution over publisher for techreport', () => {
+    const citations: ZoteroCitation[] = [{
+      plainCitation: '(NCHS 2014)',
+      items: [{
+        authors: [{ literal: 'National Center for Health Statistics' }],
+        title: 'National Survey', year: '2014', journal: '', volume: '',
+        pages: '', doi: '', type: 'report',
+        fullItemData: {
+          publisher: 'US Government',
+          'x-institution': 'National Center for Health Statistics',
+        },
+      }],
+    }];
+    const keyMap = buildCitationKeyMap(citations);
+    const bib = generateBibTeX(citations, keyMap);
+    expect(bib).toContain('institution = {National Center for Health Statistics}');
+    expect(bib).toContain('publisher = {US Government}');
+  });
+
+  it('does not emit institution for non-techreport types', () => {
+    const citations: ZoteroCitation[] = [{
+      plainCitation: '(Test 2020)',
+      items: [{
+        authors: [{ family: 'Test', given: 'A' }],
+        title: 'A Book', year: '2020', journal: '', volume: '',
+        pages: '', doi: '', type: 'book',
+        fullItemData: {
+          publisher: 'MIT Press',
+        },
+      }],
+    }];
+    const keyMap = buildCitationKeyMap(citations);
+    const bib = generateBibTeX(citations, keyMap);
+    expect(bib).toContain('publisher = {MIT Press}');
+    expect(bib).not.toContain('institution');
+  });
+});
+
 // ---------- mapCSLTypeToBibtex ----------
 
 describe('mapCSLTypeToBibtex', () => {
