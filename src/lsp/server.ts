@@ -1020,7 +1020,7 @@ function formatBibEntryHover(entry: BibtexEntry, bibPath?: string): string {
 
 	const venue = entry.fields.get('journal') ?? entry.fields.get('booktitle');
 	if (venue) {
-		lines.push(venue);
+		lines.push(`*${venue}*`);
 	}
 
 	if (lines.length === 0) {
