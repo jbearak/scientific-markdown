@@ -992,6 +992,14 @@ export async function extractTableFormatMapping(data: Uint8Array | JSZip): Promi
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FORMATS');
 }
 
+export async function extractTableFontSizeMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FONT_SIZES');
+}
+
+export async function extractTableFontMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FONTS');
+}
+
 export async function extractListIndent(data: Uint8Array | JSZip): Promise<'tab' | 'spaces' | null> {
   const zip = data instanceof JSZip ? data : await loadZip(data);
   const parsed = await readZipXml(zip, 'docProps/custom.xml');
@@ -2928,11 +2936,11 @@ function renderInlineRangeWithIds(
   return { text: out, nextIndex: i, deferredComments: deferred.map(d => d.body) };
 }
 
-function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comment>, indent: string = '  ', renderOpts?: RenderOpts): string {
+function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comment>, indent: string = '  ', renderOpts?: RenderOpts, extraAttrs: string = ''): string {
   const i1 = indent;  // tr level
   const i2 = indent + indent;  // td/th level
   const i3 = indent + indent + indent;  // content level
-  const lines: string[] = ['<table>'];
+  const lines: string[] = ['<table' + extraAttrs + '>'];
   for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
     const row = table.rows[rowIdx];
     lines.push(i1 + '<tr>');
@@ -2957,7 +2965,7 @@ function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comm
   return lines.join('\n');
 }
 
-type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string> };
+type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string> };
 
 // East Asian Wide / Fullwidth code-point ranges (UAX #11).  Characters in
 // these ranges occupy two terminal columns; everything else is treated as
@@ -3297,29 +3305,41 @@ function renderTableOrFallback(
   options?: { pipeTableMaxLineWidth?: number; tableIndent?: string },
   renderOpts?: RenderOpts,
   storedFormat?: string,
+  tableIndex?: number,
 ): string {
+  // Build per-table font directive prefix for pipe/grid tables
+  let fontPrefix = '';
+  let htmlFontAttrs = '';
+  if (tableIndex !== undefined && renderOpts) {
+    const fontSize = renderOpts.tableFontSizeMapping?.get(String(tableIndex));
+    const font = renderOpts.tableFontMapping?.get(String(tableIndex));
+    if (fontSize) fontPrefix += '<!-- table-font-size: ' + fontSize + ' -->\n';
+    if (font) fontPrefix += '<!-- table-font: ' + font + ' -->\n';
+    if (fontSize) htmlFontAttrs += ' data-font-size="' + fontSize + '"';
+    if (font) htmlFontAttrs += ' data-font="' + font + '"';
+  }
   // If the original format was HTML, emit HTML directly
   if (storedFormat === 'html') {
-    return renderHtmlTable(item, comments, options?.tableIndent, renderOpts);
+    return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
   }
   // If original was grid, try grid first to preserve format
   if (storedFormat === 'grid') {
     const gridResult = tryRenderGridTable(item, comments, renderOpts);
-    if (gridResult !== null) return gridResult;
+    if (gridResult !== null) return fontPrefix + gridResult;
   }
   // When the original was a pipe table, skip the width check to preserve format
   const pipeMax = storedFormat === 'pipe' ? Infinity : (options?.pipeTableMaxLineWidth ?? 120);
   const pipeResult = tryRenderPipeTable(item, pipeMax, comments, renderOpts);
   if (pipeResult !== null) {
-    return pipeResult;
+    return fontPrefix + pipeResult;
   }
-  return renderHtmlTable(item, comments, options?.tableIndent, renderOpts);
+  return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
 }
 
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -3435,6 +3455,8 @@ export function buildMarkdown(
     noteLabels,
     imageFormatMapping: options?.imageFormatMapping ?? undefined,
     tableFormatMapping: options?.tableFormatMapping ?? undefined,
+    tableFontSizeMapping: options?.tableFontSizeMapping ?? undefined,
+    tableFontMapping: options?.tableFontMapping ?? undefined,
   };
 
   const output: string[] = [];
@@ -3810,7 +3832,7 @@ export function buildMarkdown(
         output.push('\n\n');
       }
       const storedFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
-      output.push(renderTableOrFallback(item, comments, options, renderOpts, storedFormat));
+      output.push(renderTableOrFallback(item, comments, options, renderOpts, storedFormat, tableIndex));
       tableIndex++;
       lastListType = undefined;
       lastAlertParagraphKey = undefined;
@@ -4293,6 +4315,24 @@ function extractFontOverridesFromStyles(stylesXml: string): Partial<Frontmatter>
     if (tStyle !== 'normal') result.titleFontStyle = [tStyle];
   }
 
+  // TableParagraph extraction
+  const tableRpr = getStyleRPr('TableParagraph');
+  if (tableRpr) {
+    const tblFont = extractFont(tableRpr);
+    if (tblFont && tblFont !== bodyFont) result.tableFont = tblFont;
+    const tblSizeHp = extractSizeHp(tableRpr);
+    if (tblSizeHp !== undefined) {
+      const bodySizeHp = normalRpr ? (extractSizeHp(normalRpr) ?? 22) : 22;
+      // Auto-shrink only applies when font-size was explicitly set (body != default 22hp).
+      // Only suppress table-font-size when it matches the auto-computed default.
+      const isCustomBodySize = bodySizeHp !== 22;
+      const autoDefault = isCustomBodySize ? Math.max(1, bodySizeHp - 4) : undefined;
+      if (autoDefault === undefined || tblSizeHp !== autoDefault) {
+        result.tableFontSize = tblSizeHp / 2;
+      }
+    }
+  }
+
   return result;
 }
 
@@ -4302,7 +4342,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, storedPipeTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4318,6 +4358,8 @@ export async function convertDocx(
     extractBlockquoteAlertStyleMapping(zip),
     extractImageFormatMapping(zip),
     extractTableFormatMapping(zip),
+    extractTableFontSizeMapping(zip),
+    extractTableFontMapping(zip),
     extractPipeTableMaxLineWidth(zip),
     extractListIndent(zip),
     extractConsecutiveReplyParaIds(zip),
@@ -4445,6 +4487,8 @@ export async function convertDocx(
     blockquoteAlertInlineByGroup: blockquoteAlertStyleMapping,
     imageFormatMapping,
     tableFormatMapping,
+    tableFontSizeMapping,
+    tableFontMapping,
     listIndent: storedListIndent ?? 'spaces',
     htmlCommentGaps: htmlCommentGapMapping,
   });

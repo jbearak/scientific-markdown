@@ -22,16 +22,33 @@ export interface HtmlTableRow {
   header: boolean;
 }
 
-export function extractHtmlTables(html: string): HtmlTableRow[][] {
-  const tables: HtmlTableRow[][] = [];
+export interface HtmlTableMeta {
+  rows: HtmlTableRow[];
+  fontSize?: number;   // from data-font-size attribute
+  font?: string;       // from data-font attribute
+}
+
+export function extractHtmlTables(html: string): HtmlTableMeta[] {
+  const tables: HtmlTableMeta[] = [];
   // Regex-based extraction intentionally does not support nested <table> blocks.
   // This parser targets simple manuscript tables (<table>/<tr>/<th>/<td>).
-  const tableRegex = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+  const tableRegex = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi;
   let tableMatch: RegExpExecArray | null;
   while ((tableMatch = tableRegex.exec(html)) !== null) {
-    const rows = extractHtmlTableRows(tableMatch[1]);
+    const attrs = tableMatch[1];
+    const rows = extractHtmlTableRows(tableMatch[2]);
     // Invariant: only non-empty row sets are returned to callers.
-    if (rows.length > 0) tables.push(rows);
+    if (rows.length > 0) {
+      const meta: HtmlTableMeta = { rows };
+      const fontSizeMatch = attrs.match(/data-font-size\s*=\s*["']?(\d+(?:\.\d+)?)["']?/i);
+      if (fontSizeMatch) {
+        const n = parseFloat(fontSizeMatch[1]);
+        if (isFinite(n) && n > 0) meta.fontSize = n;
+      }
+      const fontMatch = attrs.match(/data-font\s*=\s*["']([^"']*)["']/i);
+      if (fontMatch && fontMatch[1]) meta.font = fontMatch[1];
+      tables.push(meta);
+    }
   }
   return tables;
 }

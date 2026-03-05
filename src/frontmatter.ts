@@ -105,6 +105,8 @@ export interface Frontmatter {
   codeFontColor?: string;
   codeBlockInset?: number;
   pipeTableMaxLineWidth?: number;
+  tableFont?: string;
+  tableFontSize?: number;
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
 }
@@ -234,6 +236,14 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         }
         break;
       }
+      case 'table-font':
+        if (value) metadata.tableFont = value;
+        break;
+      case 'table-font-size': {
+        const n = parseFloat(value);
+        if (isFinite(n) && n > 0) metadata.tableFontSize = n;
+        break;
+      }
       // 0 = disable pipe tables (always HTML); positive = max line width
       case 'pipe-table-max-line-width': {
         const n = parseInt(value, 10);
@@ -299,6 +309,8 @@ export function serializeFrontmatter(metadata: Frontmatter): string {
   emitArr('title-font', metadata.titleFont);
   emitArr('title-font-size', metadata.titleFontSize);
   emitArr('title-font-style', metadata.titleFontStyle);
+  if (metadata.tableFont) lines.push('table-font: ' + metadata.tableFont);
+  if (metadata.tableFontSize !== undefined) lines.push('table-font-size: ' + metadata.tableFontSize);
   if (metadata.codeBackgroundColor) lines.push('code-background-color: ' + metadata.codeBackgroundColor);
   if (metadata.codeFontColor) lines.push('code-font-color: ' + metadata.codeFontColor);
   if (metadata.codeBlockInset !== undefined) lines.push('code-block-inset: ' + metadata.codeBlockInset);

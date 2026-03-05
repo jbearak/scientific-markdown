@@ -10,7 +10,7 @@ import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
-import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun } from './html-table-parser';
+import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun, type HtmlTableMeta } from './html-table-parser';
 export { preprocessGridTables } from './grid-table-preprocess';
 export { extractHtmlTables } from './html-table-parser';
 
@@ -42,6 +42,8 @@ export interface MdToken {
   rows?: MdTableRow[];      // for tables
   language?: string;        // for code blocks
   sourceFormat?: TableFormat; // original table format for round-trip
+  tableFontSize?: number;   // per-table font size override (pt)
+  tableFont?: string;       // per-table font name override
 }
 
 export interface MdTableCell {
@@ -1068,6 +1070,26 @@ export function tableFormatProps(tableFormats: Map<number, TableFormat>): Custom
   return chunkCustomProps('MANUSCRIPT_TABLE_FORMATS_', JSON.stringify(mapping));
 }
 
+export function tableFontSizeProps(sizes: Map<number, number>, defaultSizeHp?: number): CustomPropEntry[] {
+  // Only store entries where per-table value differs from document-level default
+  const mapping: Record<string, string> = {};
+  for (const [idx, pt] of sizes) {
+    const hp = Math.round(pt * 2);
+    if (hp !== defaultSizeHp) mapping[String(idx)] = String(pt);
+  }
+  if (Object.keys(mapping).length === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_TABLE_FONT_SIZES_', JSON.stringify(mapping));
+}
+
+export function tableFontProps(fonts: Map<number, string>, defaultFont?: string): CustomPropEntry[] {
+  const mapping: Record<string, string> = {};
+  for (const [idx, font] of fonts) {
+    if (font !== defaultFont) mapping[String(idx)] = font;
+  }
+  if (Object.keys(mapping).length === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_TABLE_FONTS_', JSON.stringify(mapping));
+}
+
 
 export function parseMd(markdown: string): MdToken[] {
   const md = createMarkdownIt();
@@ -1083,6 +1105,27 @@ export function parseMd(markdown: string): MdToken[] {
 
   const result = convertTokens(tokens);
   annotateBlockquoteBoundaries(result);
+
+  // Post-process: transfer table-font directives from HTML comment tokens to table tokens
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
+    const run = result[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+    const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
+    const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
+    if (!fontSizeMatch && !fontMatch) continue;
+    // Look for the next table token
+    if (i + 1 < result.length && result[i + 1].type === 'table') {
+      if (fontSizeMatch) {
+        const n = parseFloat(fontSizeMatch[1]);
+        if (isFinite(n) && n > 0) result[i + 1].tableFontSize = n;
+      }
+      if (fontMatch) result[i + 1].tableFont = fontMatch[1];
+      result.splice(i, 1);
+    }
+  }
+
   return result;
 }
 
@@ -1421,17 +1464,20 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdTok
         } else {
           const htmlTables = extractHtmlTables(htmlContent);
           if (htmlTables.length > 0) {
-            for (const rows of htmlTables) {
-              if (rows.length > 0) {
+            for (const meta of htmlTables) {
+              if (meta.rows.length > 0) {
                 // Keep this mapping explicit so HtmlTableRun/MdRun shape changes
                 // cannot silently alter assignability behavior.
-                const mappedRows = mapHtmlTableRowsToMdTableRows(rows);
-                result.push({
+                const mappedRows = mapHtmlTableRowsToMdTableRows(meta.rows);
+                const tableToken: MdToken = {
                   type: 'table',
                   runs: [],
                   rows: mappedRows,
                   sourceFormat: 'html',
-                });
+                };
+                if (meta.fontSize) tableToken.tableFontSize = meta.fontSize;
+                if (meta.font) tableToken.tableFont = meta.font;
+                result.push(tableToken);
               }
             }
           } else {
@@ -1999,6 +2045,9 @@ export interface DocxGenState {
   nextImageDocPrId: number;
   tableIndex: number;
   tableFormats: Map<number, TableFormat>; // table index -> source format
+  tableFontSizes: Map<number, number>; // table index -> per-table font size (pt)
+  tableFonts: Map<number, string>;     // table index -> per-table font name
+  fontOverrides?: FontOverrides;       // document-level font overrides for table default resolution
   listIndent: 'tab' | 'spaces'; // indentation style for nested list items
   consecutiveReplyParaIds: Set<string>; // parent paraIds whose replies were in consecutive format
   htmlCommentGaps: Map<number, number>; // blank-line-before count per HTML comment index (non-default only)
@@ -2173,6 +2222,8 @@ export interface FontOverrides {
   titleFonts?: string[];
   titleSizesHp?: number[];
   titleStyles?: string[];
+  tableFont?: string;
+  tableSizeHp?: number;
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -2192,7 +2243,8 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides | undefined
   const hasAnyField = !!fm.font || !!fm.codeFont ||
     fm.fontSize !== undefined || fm.codeFontSize !== undefined ||
     !!fm.headerFont || !!fm.headerFontSize || !!fm.headerFontStyle ||
-    !!fm.titleFont || !!fm.titleFontSize || !!fm.titleFontStyle;
+    !!fm.titleFont || !!fm.titleFontSize || !!fm.titleFontStyle ||
+    !!fm.tableFont || fm.tableFontSize !== undefined;
   if (!hasAnyField) return undefined;
 
   const overrides: FontOverrides = {};
@@ -2267,6 +2319,18 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides | undefined
     overrides.titleStyles = fm.titleFontStyle;
   }
 
+  // Table font overrides
+  if (fm.tableFont) {
+    overrides.tableFont = fm.tableFont;
+  }
+  if (fm.tableFontSize !== undefined) {
+    overrides.tableSizeHp = Math.round(fm.tableFontSize * 2);
+  } else if (fm.fontSize !== undefined && !fm.tableFont) {
+    // Auto-shrink: tables use body - 2pt (4hp) when only font-size is set
+    const bodySizeHp = Math.round(fm.fontSize * 2);
+    overrides.tableSizeHp = Math.max(1, bodySizeHp - 4);
+  }
+
   return overrides;
 }
 
@@ -2278,6 +2342,8 @@ const BODY_STYLE_IDS = new Set([
 ]);
 // Style IDs that receive code font/size overrides
 const CODE_STYLE_IDS = new Set(['CodeChar', 'CodeBlock']);
+// Style IDs that receive table font/size overrides
+const TABLE_STYLE_IDS = new Set(['TableParagraph']);
 
 /**
  * Apply font overrides to a template's word/styles.xml content.
@@ -2292,8 +2358,31 @@ export function applyFontOverridesToTemplate(
 ): string {
   let xml = new TextDecoder('utf-8').decode(stylesXmlBytes);
 
+  // Inject TableParagraph style if table overrides exist but the template lacks it
+  if (overrides.tableSizeHp || overrides.tableFont) {
+    if (!xml.includes('w:styleId="TableParagraph"')) {
+      // Insert before </w:styles>
+      const tableRpr = '<w:rPr>' +
+        (overrides.tableFont
+          ? '<w:rFonts w:ascii="' + escapeXml(overrides.tableFont) + '" w:hAnsi="' + escapeXml(overrides.tableFont) + '"/>'
+          : (overrides.bodyFont
+            ? '<w:rFonts w:ascii="' + escapeXml(overrides.bodyFont) + '" w:hAnsi="' + escapeXml(overrides.bodyFont) + '"/>'
+            : '')) +
+        (overrides.tableSizeHp
+          ? '<w:sz w:val="' + overrides.tableSizeHp + '"/><w:szCs w:val="' + overrides.tableSizeHp + '"/>'
+          : '') +
+        '</w:rPr>';
+      const tableStyle = '<w:style w:type="paragraph" w:styleId="TableParagraph">' +
+        '<w:name w:val="Table Paragraph"/>' +
+        '<w:basedOn w:val="Normal"/>' +
+        tableRpr +
+        '</w:style>';
+      xml = xml.replace('</w:styles>', tableStyle + '</w:styles>');
+    }
+  }
+
   // Collect all style IDs we want to modify
-  const allTargetIds = new Set([...BODY_STYLE_IDS, ...CODE_STYLE_IDS]);
+  const allTargetIds = new Set([...BODY_STYLE_IDS, ...CODE_STYLE_IDS, ...TABLE_STYLE_IDS]);
 
   for (const styleId of allTargetIds) {
     // Find the <w:style ...w:styleId="ID"...> ... </w:style> block
@@ -2308,13 +2397,16 @@ export function applyFontOverridesToTemplate(
     const closeTag = styleMatch[3];
 
     const isCodeStyle = CODE_STYLE_IDS.has(styleId);
+    const isTableStyle = TABLE_STYLE_IDS.has(styleId);
     const isHeading = /^Heading[1-6]$/.test(styleId);
     const isTitle = styleId === 'Title';
 
-    // Determine font: heading-specific > title-specific > body/code font
+    // Determine font: heading-specific > title-specific > table > body/code font
     let font: string | undefined;
     if (isCodeStyle) {
       font = overrides.codeFont;
+    } else if (isTableStyle) {
+      font = overrides.tableFont ?? overrides.bodyFont;
     } else if (isHeading && overrides.headingFonts?.has(styleId)) {
       font = overrides.headingFonts.get(styleId);
     } else if (isTitle && overrides.titleFonts?.[0]) {
@@ -2327,6 +2419,8 @@ export function applyFontOverridesToTemplate(
     let sizeHp: number | undefined;
     if (isCodeStyle) {
       if (styleId === 'CodeBlock') sizeHp = overrides.codeSizeHp;
+    } else if (isTableStyle) {
+      sizeHp = overrides.tableSizeHp;
     } else if (isTitle && overrides.titleSizesHp?.[0]) {
       sizeHp = overrides.titleSizesHp[0];
     } else if (overrides.headingSizesHp && overrides.headingSizesHp.has(styleId)) {
@@ -2710,6 +2804,19 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:name w:val="endnote reference"/>\n' +
     '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>\n' +
     '</w:style>\n' +
+    // TableParagraph: table-specific font/size style (only when overrides exist)
+    (overrides?.tableSizeHp || overrides?.tableFont
+      ? '<w:style w:type="paragraph" w:styleId="TableParagraph">\n' +
+        '<w:name w:val="Table Paragraph"/>\n' +
+        '<w:basedOn w:val="Normal"/>\n' +
+        '<w:rPr>' +
+        (overrides.tableFont
+          ? '<w:rFonts w:ascii="' + escapeXml(overrides.tableFont) + '" w:hAnsi="' + escapeXml(overrides.tableFont) + '"/>'
+          : bodyFontStr) +
+        (overrides.tableSizeHp ? szPair(overrides.tableSizeHp) : '') +
+        '</w:rPr>\n' +
+        '</w:style>\n'
+      : '') +
     '</w:styles>';
 }
 
@@ -3631,6 +3738,31 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 export function generateTable(token: MdToken, state: DocxGenState, options?: MdToDocxOptions, bibEntries?: Map<string, BibtexEntry>, citeprocEngine?: any): string {
   if (!token.rows) return '';
 
+  // Resolve effective table font/size: per-table token > document-level overrides
+  const fo = state.fontOverrides;
+  const effectiveTableSizeHp = token.tableFontSize !== undefined
+    ? Math.round(token.tableFontSize * 2)
+    : fo?.tableSizeHp;
+  const effectiveTableFont = token.tableFont ?? fo?.tableFont;
+  // Build pPr for table cell paragraphs (style ref + inline overrides for per-table diffs)
+  let tablePPr = '';
+  if (effectiveTableSizeHp || effectiveTableFont) {
+    const hasDocLevelStyle = !!(fo?.tableSizeHp || fo?.tableFont);
+    // Per-table overrides that differ from doc-level require inline rPr
+    const needsInlineFont = effectiveTableFont && effectiveTableFont !== fo?.tableFont;
+    const needsInlineSize = effectiveTableSizeHp && effectiveTableSizeHp !== fo?.tableSizeHp;
+    let pPrInner = '';
+    if (hasDocLevelStyle) pPrInner += '<w:pStyle w:val="TableParagraph"/>';
+    let rPrInner = '';
+    if (needsInlineFont || (!hasDocLevelStyle && effectiveTableFont)) {
+      rPrInner += '<w:rFonts w:ascii="' + escapeXml(effectiveTableFont!) + '" w:hAnsi="' + escapeXml(effectiveTableFont!) + '"/>';
+    }
+    if (needsInlineSize || (!hasDocLevelStyle && effectiveTableSizeHp)) {
+      rPrInner += '<w:sz w:val="' + effectiveTableSizeHp + '"/><w:szCs w:val="' + effectiveTableSizeHp + '"/>';
+    }
+    tablePPr = '<w:pPr>' + pPrInner + (rPrInner ? '<w:rPr>' + rPrInner + '</w:rPr>' : '') + '</w:pPr>';
+  }
+
   // Compute total grid columns by simulating grid occupancy (accounts for
   // columns implicitly occupied by rowspan cells from previous rows).
   let totalCols = 0;
@@ -3742,7 +3874,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         mergeMap.set(gridCol, { remaining: rs - 1, colspan: cs });
       }
 
-      xml += '<w:tc>' + tcPr + '<w:p>';
+      xml += '<w:tc>' + tcPr + '<w:p>' + tablePPr;
       // Auto-bold header cells to match Word's default table header styling.
       // Word applies bold to header rows via table styles; we reproduce that here.
       const cellRuns = row.header
@@ -3964,8 +4096,14 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.sourceFormat) {
         state.tableFormats.set(state.tableIndex, token.sourceFormat);
       }
-      state.tableIndex++;
+      if (token.tableFontSize !== undefined) {
+        state.tableFontSizes.set(state.tableIndex, token.tableFontSize);
+      }
+      if (token.tableFont) {
+        state.tableFonts.set(state.tableIndex, token.tableFont);
+      }
       body += generateTable(token, state, options, bibEntries, citeprocEngine);
+      state.tableIndex++;
     } else {
       body += generateParagraph(token, state, options, bibEntries, citeprocEngine);
     }
@@ -4170,6 +4308,9 @@ export async function convertMdToDocx(
     nextImageDocPrId: 1,
     tableIndex: 0,
     tableFormats: new Map(),
+    tableFontSizes: new Map(),
+    tableFonts: new Map(),
+    fontOverrides,
     listIndent: detectListIndent(bodyWithoutFootnotes),
     consecutiveReplyParaIds: new Set(),
     htmlCommentGaps,
@@ -4352,6 +4493,8 @@ export async function convertMdToDocx(
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
   customProps.push(...imageFormatProps(state.imageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
+  customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
+  customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
   customProps.push(...listIndentProps(state));
   customProps.push(...consecutiveReplyProps(state));
   customProps.push(...htmlCommentGapProps(state.htmlCommentGaps));

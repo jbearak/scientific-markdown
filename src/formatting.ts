@@ -667,7 +667,7 @@ function convertHtmlTable(text: string, pad: boolean): string | null {
   const tables = extractHtmlTables(trimmed);
   // Subtle bug guard: mixed text/table selections must remain unchanged.
   if (tables.length !== 1) return null;
-  const rows = tables[0];
+  const rows = tables[0].rows;
 
   // Reject colspan/rowspan
   for (const row of rows) {
