@@ -1566,6 +1566,95 @@ describe('parseMd multi-paragraph CriticMarkup', () => {
   });
 });
 
+describe('Nested critic runs in deletions and formatting propagation', () => {
+  const createState = () => ({ ...makeState(), rIdOffset: 3 });
+
+  it('renders nested addition inside deletion as delText', () => {
+    const token: MdToken = {
+      type: 'paragraph',
+      runs: [{
+        type: 'critic_del', text: 'text added more', author: 'A', date: '2024-01-01T00:00:00Z',
+        innerRuns: [
+          { type: 'text', text: 'text ' },
+          { type: 'critic_add', text: 'added', innerRuns: [{ type: 'text', text: 'added' }] },
+          { type: 'text', text: ' more' }
+        ]
+      }]
+    };
+    const state = createState();
+    const result = generateParagraph(token, state, { authorName: 'Default' });
+    expect(result).toContain('<w:del');
+    expect(result).toContain('<w:delText xml:space="preserve">text </w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve">added</w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve"> more</w:delText>');
+    // Must NOT contain <w:ins> inside the deletion
+    const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
+    expect(delMatch).toBeTruthy();
+    expect(delMatch![1]).not.toContain('<w:ins');
+  });
+
+  it('renders nested deletion inside deletion as delText', () => {
+    const token: MdToken = {
+      type: 'paragraph',
+      runs: [{
+        type: 'critic_del', text: 'outer inner text', author: 'A', date: '2024-01-01T00:00:00Z',
+        innerRuns: [
+          { type: 'text', text: 'outer ' },
+          { type: 'critic_del', text: 'inner', innerRuns: [{ type: 'text', text: 'inner' }] },
+          { type: 'text', text: ' text' }
+        ]
+      }]
+    };
+    const state = createState();
+    const result = generateParagraph(token, state, { authorName: 'Default' });
+    expect(result).toContain('<w:delText xml:space="preserve">outer </w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve">inner</w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve"> text</w:delText>');
+  });
+
+  it('renders substitution inside deletion as delText', () => {
+    const token: MdToken = {
+      type: 'paragraph',
+      runs: [{
+        type: 'critic_del', text: 'before old after', author: 'A', date: '2024-01-01T00:00:00Z',
+        innerRuns: [
+          { type: 'text', text: 'before ' },
+          { type: 'critic_sub', text: 'old', newText: 'new', oldRuns: [{ type: 'text', text: 'old' }], newRuns: [{ type: 'text', text: 'new' }] },
+          { type: 'text', text: ' after' }
+        ]
+      }]
+    };
+    const state = createState();
+    const result = generateParagraph(token, state, { authorName: 'Default' });
+    expect(result).toContain('<w:delText xml:space="preserve">before </w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve">old</w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve">new</w:delText>');
+    expect(result).toContain('<w:delText xml:space="preserve"> after</w:delText>');
+  });
+
+  it('propagates bold formatting into nested critic innerRuns', () => {
+    const token: MdToken = {
+      type: 'paragraph',
+      runs: [{
+        type: 'critic_add', text: 'bold deleted', author: 'A', date: '2024-01-01T00:00:00Z',
+        innerRuns: [
+          { type: 'text', text: 'bold ', bold: true },
+          { type: 'critic_del', text: 'deleted', bold: true, innerRuns: [{ type: 'text', text: 'deleted' }] }
+        ]
+      }]
+    };
+    const state = createState();
+    const result = generateParagraph(token, state, { authorName: 'Default' });
+    // The nested deletion should have bold formatting propagated to its inner text
+    expect(result).toContain('<w:del');
+    expect(result).toContain('<w:delText xml:space="preserve">deleted</w:delText>');
+    // The deleted run should include bold rPr
+    const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
+    expect(delMatch).toBeTruthy();
+    expect(delMatch![1]).toContain('<w:b/>');
+  });
+});
+
 describe('Footnote parsing', () => {
   it('parseMd produces footnote_ref runs for [^1]', () => {
     const tokens = parseMd('Hello[^1] world');
