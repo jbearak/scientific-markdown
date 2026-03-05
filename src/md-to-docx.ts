@@ -1091,7 +1091,7 @@ export function tableFontProps(fonts: Map<number, string>, defaultFont?: string)
 }
 
 
-export function parseMd(markdown: string): MdToken[] {
+export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const md = createMarkdownIt();
   // Preserve explicit source semantics for blockquotes by disabling markdown-it
   // lazy continuation behavior (where a non-`>` line can be absorbed into a
@@ -1103,7 +1103,7 @@ export function parseMd(markdown: string): MdToken[] {
   const processed = preprocessCriticMarkup(wrapped);
   const tokens = md.parse(processed, {});
 
-  const result = convertTokens(tokens);
+  const result = convertTokens(tokens, 0, 0, warnings);
   annotateBlockquoteBoundaries(result);
 
   // Post-process: transfer table-font directives from HTML comment tokens to table tokens
@@ -1297,7 +1297,7 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
   return result;
 }
 
-function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdToken[] {
+function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnings?: string[]): MdToken[] {
   const result: MdToken[] = [];
   let i = 0;
   
@@ -1328,18 +1328,18 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdTok
       case 'ordered_list_open':
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
-        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel);
+        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings);
         result.push(...listItems);
         i = listClose + 1;
         break;
-        
+
       case 'blockquote_open':
         const blockquoteClose = findClosingToken(tokens, i, 'blockquote_close');
         const bqLevel = blockquoteLevel + 1;
         // Intentionally reset listLevel inside blockquotes.
         // In Markdown, `> - item` starts a new list context within the quote,
         // so numbering/indentation should not inherit from outer lists.
-        const blockquoteTokens = convertTokens(tokens.slice(i + 1, blockquoteClose), 0, bqLevel);
+        const blockquoteTokens = convertTokens(tokens.slice(i + 1, blockquoteClose), 0, bqLevel, warnings);
         result.push(...annotateBlockquoteAlert(blockquoteTokens, bqLevel));
         i = blockquoteClose + 1;
         break;
@@ -1846,24 +1846,45 @@ function findClosingToken(tokens: any[], start: number, closeType: string): numb
   return tokens.length;
 }
 
-function extractListItems(tokens: any[], ordered: boolean, level: number): MdToken[] {
+// Block token types that are silently dropped when they appear inside list
+// continuation (e.g. a fenced code block indented under a list item).
+// The md-to-docx converter only preserves the first paragraph and nested
+// sublists; all other block content is lost.
+const DROPPED_LIST_BLOCK_TYPES = new Set([
+  'fence', 'code_block', 'html_block', 'blockquote_open', 'table_open',
+]);
+
+function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[]): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
-  
+
   while (i < tokens.length) {
     if (tokens[i].type === 'list_item_open') {
       const closePos = findClosingToken(tokens, i, 'list_item_close');
       const itemTokens = tokens.slice(i + 1, closePos);
       let runs: MdRun[] = [];
-      
+      let foundFirstParagraph = false;
       for (let j = 0; j < itemTokens.length; j++) {
         if (itemTokens[j].type === 'paragraph_open') {
           const paragraphClose = findClosingToken(itemTokens, j, 'paragraph_close');
-          runs = processInlineChildren(itemTokens.slice(j + 1, paragraphClose));
-          break;
-        } else if (itemTokens[j].type === 'inline') {
+          if (!foundFirstParagraph) {
+            runs = processInlineChildren(itemTokens.slice(j + 1, paragraphClose));
+            foundFirstParagraph = true;
+          } else if (warnings) {
+            warnings.push('Continuation paragraph inside list item dropped during conversion (not supported). Move the content outside the list for round-trip fidelity.');
+          }
+          j = paragraphClose;
+        } else if (itemTokens[j].type === 'inline' && !foundFirstParagraph) {
           runs = processInlineChildren([itemTokens[j]]);
-          break;
+          foundFirstParagraph = true;
+        } else if (warnings && DROPPED_LIST_BLOCK_TYPES.has(itemTokens[j].type)) {
+          const kind = itemTokens[j].type === 'fence' ? 'Code block'
+            : itemTokens[j].type === 'code_block' ? 'Indented code block'
+            : itemTokens[j].type === 'html_block' ? 'HTML block'
+            : itemTokens[j].type === 'blockquote_open' ? 'Blockquote'
+            : itemTokens[j].type === 'table_open' ? 'Table'
+            : 'Block element';
+          warnings.push(kind + ' inside list item dropped during conversion (not supported). Move the content outside the list for round-trip fidelity.');
         }
       }
 
@@ -1875,23 +1896,23 @@ function extractListItems(tokens: any[], ordered: boolean, level: number): MdTok
         runs: taskInfo?.runs ?? runs,
         taskChecked: taskInfo?.checked,
       });
-      
+
       // Extract nested sublists
       for (let j = 0; j < itemTokens.length; j++) {
         if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
           const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
           const subOrdered = itemTokens[j].type === 'ordered_list_open';
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1));
+          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings));
           j = subClose;
         }
       }
-      
+
       i = closePos + 1;
     } else {
       i++;
     }
   }
-  
+
   return items;
 }
 
@@ -4179,7 +4200,8 @@ export async function convertMdToDocx(
 
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
-  const tokens = parseMd(bodyWithoutFootnotes);
+  const parseWarnings: string[] = [];
+  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings);
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.
@@ -4198,7 +4220,7 @@ export async function convertMdToDocx(
 
   // Create citeproc engine if CSL style specified in frontmatter
   let citeprocEngine: any;
-  const earlyWarnings: string[] = [];
+  const earlyWarnings: string[] = [...parseWarnings];
   if (frontmatter.csl && bibEntries) {
     let styleName = frontmatter.csl;
 
@@ -4365,7 +4387,7 @@ export async function convertMdToDocx(
       continue;
     }
     // Parse the definition body into tokens and generate OOXML
-    const bodyTokens = parseMd(bodyText);
+    const bodyTokens = parseMd(bodyText, state.warnings);
     // Generate paragraph OOXML for the note body
     const selfRefTag = state.notesMode === 'endnotes' ? 'w:endnoteRef' : 'w:footnoteRef';
     const pStyle = state.notesMode === 'endnotes' ? 'EndnoteText' : 'FootnoteText';

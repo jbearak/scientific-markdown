@@ -128,24 +128,22 @@ The `table-font` and `table-font-size` frontmatter fields control table typograp
 
 **Per-table overrides** allow individual tables to use different font settings. Two mechanisms are supported:
 
-1. **HTML comment directive** — place a comment immediately before the table:
+**HTML comment directive** — place a comment immediately before the table. Supported directives: `table-font-size` and `table-font`.
 
-   ```markdown
-   <!-- table-font-size: 8 -->
-   | Column A | Column B |
-   |----------|----------|
-   | data     | data     |
-   ```
+```markdown
+<!-- table-font-size: 8 -->
+| Column A | Column B |
+|----------|----------|
+| data     | data     |
+```
 
-   Supported directives: `table-font-size` and `table-font`.
+**HTML `<table>` data attributes** — for HTML tables, use `data-font-size` and `data-font` attributes:
 
-2. **HTML `<table>` data attributes** — for HTML tables, use `data-font-size` and `data-font` attributes:
-
-   ```html
-   <table data-font-size="8" data-font="Arial Narrow">
-     <tr><td>data</td><td>data</td></tr>
-   </table>
-   ```
+```html
+<table data-font-size="8" data-font="Arial Narrow">
+  <tr><td>data</td><td>data</td></tr>
+</table>
+```
 
 **Priority** (highest to lowest): per-table override → document-level frontmatter → auto-shrink default.
 
@@ -175,7 +173,7 @@ Manuscript Markdown supports CommonMark plus the implemented [GitHub Flavored Ma
 
 - **Formatting**: bold (`**text**`), italic (`_text_`), strikethrough (`~~text~~`), underline (`<u>text</u>`), superscript (`<sup>text</sup>`), subscript (`<sub>text</sub>`), inline code (`` `code` ``)
 - **Headings**: `# H1` through `###### H6`
-- **Lists**: bulleted (`- item`), numbered (`1. item`), task lists (`- [ ] item`, `- [x] item`)
+- **Lists**: bulleted (`- item`), numbered (`1. item`), task lists (`- [ ] item`, `- [x] item`). See [List item limitations](#list-item-block-content) for block content inside list items.
 - **Links**: `[text](url)` plus autolink literals (bare URLs/emails)
 - **Code blocks**: fenced with triple backticks. Optional language annotation (e.g., `` ```stata ``) is preserved on round-trip via the `MANUSCRIPT_CODE_BLOCK_LANGS` custom property in the DOCX. In Word, code blocks use the "Code Block" paragraph style (Consolas, shaded background). Consecutive code blocks are separated by an empty paragraph to prevent merging.
 - **Blockquotes**: `> quoted text`
@@ -507,3 +505,13 @@ IDs use `[a-zA-Z0-9_-]+` — alphanumeric characters, hyphens, and underscores. 
 | `manuscriptMarkdown.alwaysUseCommentIds` | `false` | Always use ID-based comment syntax (`{#id}...{/id}{#id>>...<<}`) even for non-overlapping comments |
 
 CLI flag: `--always-use-comment-ids`
+
+## Known Limitations
+
+### List Item Block Content
+
+The Markdown-to-DOCX converter only preserves the first paragraph and nested sublists within a list item. Block-level content in list continuation — such as fenced code blocks, indented code blocks, HTML blocks, blockquotes, and tables — is dropped during conversion and will not survive a round-trip.
+
+The converter emits a warning when block content inside a list item is dropped.
+
+To preserve such content through DOCX round-trip, move it outside the list:
