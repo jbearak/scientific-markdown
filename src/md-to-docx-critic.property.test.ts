@@ -165,7 +165,7 @@ describe('Math inside CriticMarkup', () => {
   it('insertion with math produces <w:ins> wrapping <m:oMath>', () => {
     const state = createState();
     const tokens = parseMd('{++text $x^2$ text++}');
-    const result = generateParagraph(tokens[0], state as any);
+    const result = generateParagraph(tokens[0], state as any, { authorName: 'Default' });
     expect(result).toContain('<w:ins');
     expect(result).toContain('<m:oMath>');
   });
@@ -173,7 +173,7 @@ describe('Math inside CriticMarkup', () => {
   it('deletion with math produces <w:del> wrapping <m:oMath>', () => {
     const state = createState();
     const tokens = parseMd('{--text $x^2$ text--}');
-    const result = generateParagraph(tokens[0], state as any);
+    const result = generateParagraph(tokens[0], state as any, { authorName: 'Default' });
     expect(result).toContain('<w:del');
     expect(result).toContain('<m:oMath>');
   });
@@ -181,7 +181,7 @@ describe('Math inside CriticMarkup', () => {
   it('substitution with math produces both <w:del> and <w:ins> containing <m:oMath>', () => {
     const state = createState();
     const tokens = parseMd('{~~old $a$~>new $b$~~}');
-    const result = generateParagraph(tokens[0], state as any);
+    const result = generateParagraph(tokens[0], state as any, { authorName: 'Default' });
     const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
     const insMatch = result.match(/<w:ins[^>]*>([\s\S]*?)<\/w:ins>/);
     expect(delMatch?.[1]).toContain('<m:oMath>');
@@ -191,7 +191,7 @@ describe('Math inside CriticMarkup', () => {
   it('nested critic markup inside highlight produces <w:ins> and <w:del> with <m:oMath>', () => {
     const state = createState();
     const tokens = parseMd('{==text {--old $a$--}{++new $b$++} more==}{>>@A (2025-01-01) | note<<}');
-    const result = generateParagraph(tokens[0], state as any);
+    const result = generateParagraph(tokens[0], state as any, { authorName: 'Default' });
     expect(result).toContain('<w:ins');
     expect(result).toContain('<w:del');
     expect(result).toContain('<m:oMath>');
@@ -205,7 +205,7 @@ describe('Math inside CriticMarkup', () => {
   it('highlight/comment with math produces <m:oMath> between comment range markers', () => {
     const state = createState();
     const tokens = parseMd('{==text $x^2$ text==}{>>note<<}');
-    const result = generateParagraph(tokens[0], state as any);
+    const result = generateParagraph(tokens[0], state as any, { authorName: 'Default' });
     expect(result).toContain('<m:oMath>');
     expect(result).toContain('<w:commentRangeStart');
   });
