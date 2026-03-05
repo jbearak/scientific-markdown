@@ -1424,6 +1424,14 @@ describe('compactTable', () => {
 });
 
 describe('HTML table support for Expand/Compact Table', () => {
+  it('mixed text + HTML table selection remains unchanged', () => {
+    const html = '<table><tr><th>Name</th></tr><tr><td>Alice</td></tr></table>';
+    const mixed = 'Intro\n' + html + '\nOutro';
+    const reflowed = reflowTable(mixed);
+    const compacted = compactTable(mixed);
+    if (reflowed.newText !== mixed) throw new Error('Expected reflowTable to preserve mixed selection');
+    if (compacted.newText !== mixed) throw new Error('Expected compactTable to preserve mixed selection');
+  });
   it('simple HTML → expanded pipe table', () => {
     const html = '<table><tr><th>Name</th><th>Age</th></tr><tr><td>Alice</td><td>30</td></tr></table>';
     const result = reflowTable(html);
@@ -1448,6 +1456,14 @@ describe('HTML table support for Expand/Compact Table', () => {
     if (!result.newText.includes('**bold**')) throw new Error('Expected bold markdown');
     if (!result.newText.includes('*italic*')) throw new Error('Expected italic markdown');
     if (!result.newText.includes('`code`')) throw new Error('Expected code markdown');
+  });
+
+  it('HTML code containing double backticks uses a longer fence', () => {
+    const html = '<table><tr><th>Code</th></tr><tr><td><code>``test``</code></td></tr></table>';
+    const result = reflowTable(html);
+    if (!result.newText.includes('``` ``test`` ```')) {
+      throw new Error('Expected dynamic backtick fence, got: ' + result.newText);
+    }
   });
 
   it('HTML with <a href> → [text](url) in cells', () => {
@@ -1497,6 +1513,15 @@ describe('HTML table support for Expand/Compact Table', () => {
     if (!lines[0].includes('A')) throw new Error('Expected first row as header');
     if (!lines[1].includes('---')) throw new Error('Expected separator after header');
     if (!lines[2].includes('1')) throw new Error('Expected body row');
+  });
+
+  it('preserves source row order when a later row is header-tagged', () => {
+    const html = '<table><tr><td>row1</td></tr><tr><th>row2h</th></tr><tr><td>row3</td></tr></table>';
+    const result = reflowTable(html);
+    const lines = result.newText.split('\n');
+    if (!lines[0].includes('row1')) throw new Error('Expected first source row to remain first');
+    if (!lines[2].includes('row2h')) throw new Error('Expected later header-tagged row to keep order');
+    if (!lines[3].includes('row3')) throw new Error('Expected trailing row to keep order');
   });
 
   it('roundtrip: compactTable(reflowTable(htmlInput)) produces consistent output', () => {

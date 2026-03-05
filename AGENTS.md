@@ -15,6 +15,8 @@ LSP: `src/lsp/server.ts` (language server — diagnostics, completions)
 - Word-save blockquotes: Word may rewrite `GitHub` style paragraphs to `GitHubBlockquote` and split hidden `\u200B_bqgN` metadata across multiple hidden runs. Keep blockquote style detection and hidden-run parsing robust to that rewrite.
 - Comment attribution encoding: uses `@Author (Date) | text` syntax — the `@` prefix and `|` separator eliminate the old `:` ambiguity. No heuristic (`isLikelyCommentAuthorLabel`) is needed; if content starts with `@` and contains `|`, it's attributed, otherwise it's plain text.
 - Hidden HTML comments: Word may split one hidden HTML comment run into many vanish runs; docx→md must concatenate contiguous hidden fragments (including `w:br`) until the full `<!-- ... -->` payload is reconstructed.
+- Expand/Compact table safety: only convert selections that are exactly one HTML table block; mixed text+table selections must pass through unchanged to prevent content loss.
+- Inline code in HTML-table cells: choose a backtick fence longer than the longest backtick run in cell text (and add fence padding only when content starts/ends with backticks) to preserve literal backticks.
 
 Per-module learnings live as comments in the corresponding source files.
 

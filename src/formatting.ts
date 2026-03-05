@@ -1,4 +1,4 @@
-import { extractHtmlTables, type MdRun } from './md-to-docx';
+import { extractHtmlTables, type HtmlTableRun } from './html-table-parser';
 
 export interface TextTransformation {
   newText: string;
@@ -615,7 +615,7 @@ function formatGridContentRow(cells: string[], columnWidths: number[], pad: bool
   return '| ' + rendered.join(' | ') + ' |';
 }
 
-function runsToMarkdown(runs: MdRun[]): string {
+function runsToMarkdown(runs: HtmlTableRun[]): string {
   let result = '';
   for (const run of runs) {
     if (run.type === 'softbreak') {
@@ -628,11 +628,12 @@ function runsToMarkdown(runs: MdRun[]): string {
     }
     let t = run.text;
     if (run.code) {
-      if (t.includes('`')) {
-        result += '`` ' + t + ' ``';
-      } else {
-        result += '`' + t + '`';
-      }
+      // Subtle bug guard: a fixed `` fence breaks content like ``test``.
+      const backtickRuns = t.match(/`+/g) ?? [];
+      const maxBacktickRun = backtickRuns.reduce((max, runText) => Math.max(max, runText.length), 0);
+      const fence = '`'.repeat(maxBacktickRun + 1);
+      const needsPadding = t.startsWith('`') || t.endsWith('`');
+      result += needsPadding ? fence + ' ' + t + ' ' + fence : fence + t + fence;
       continue;
     }
     if (run.bold) t = '**' + t + '**';
@@ -648,9 +649,11 @@ function runsToMarkdown(runs: MdRun[]): string {
 }
 
 function convertHtmlTable(text: string, pad: boolean): string | null {
-  if (!/<table\b/i.test(text)) return null;
-  const tables = extractHtmlTables(text);
-  if (tables.length === 0) return null;
+  const trimmed = text.trim();
+  if (!/^<table\b[\s\S]*<\/table>$/i.test(trimmed)) return null;
+  const tables = extractHtmlTables(trimmed);
+  // Subtle bug guard: mixed text/table selections must remain unchanged.
+  if (tables.length !== 1) return null;
   const rows = tables[0];
 
   // Reject colspan/rowspan
@@ -676,7 +679,9 @@ function convertHtmlTable(text: string, pad: boolean): string | null {
 }
 
 function buildPipeTable(mdRows: { cells: string[]; header: boolean }[], pad: boolean): string {
+  if (mdRows.length === 0) return '';
   const colCount = Math.max(...mdRows.map(r => r.cells.length));
+  if (colCount <= 0) return '';
   // Escape pipes in cell text
   const escaped = mdRows.map(row => ({
     ...row,
@@ -684,13 +689,13 @@ function buildPipeTable(mdRows: { cells: string[]; header: boolean }[], pad: boo
       (row.cells[i] ?? '').replace(/\|/g, '\\|')
     ),
   }));
-
-  // Split into header rows and body rows
-  const headerRows = escaped.filter(r => r.header);
-  const bodyRows = escaped.filter(r => !r.header);
-  // If no header rows, treat first row as header
-  const finalHeader = headerRows.length > 0 ? headerRows : [escaped[0]];
-  const finalBody = headerRows.length > 0 ? bodyRows : escaped.slice(1);
+  if (escaped.length === 0) return '';
+  // Preserve source order: only leading header-flagged rows are header rows.
+  let headerEnd = 0;
+  while (headerEnd < escaped.length && escaped[headerEnd].header) headerEnd++;
+  if (headerEnd === 0) headerEnd = 1;
+  const finalHeader = escaped.slice(0, headerEnd);
+  const finalBody = escaped.slice(headerEnd);
 
   const allRows = [...finalHeader, ...finalBody];
 
@@ -732,7 +737,9 @@ function buildPipeTable(mdRows: { cells: string[]; header: boolean }[], pad: boo
 }
 
 function buildGridTable(mdRows: { cells: string[]; header: boolean }[], pad: boolean): string {
+  if (mdRows.length === 0) return '';
   const colCount = Math.max(...mdRows.map(r => r.cells.length));
+  if (colCount <= 0) return '';
   // Split each cell into lines
   const splitRows = mdRows.map(row => ({
     header: row.header,
