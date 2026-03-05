@@ -1002,12 +1002,14 @@ function formatBibEntryHover(entry: BibtexEntry, bibPath?: string): string {
 	const lines: string[] = [];
 
 	const author = entry.fields.get('author');
+	const institution = entry.fields.get('institution');
 	const year = entry.fields.get('year');
 	const formattedAuthors = author ? formatBibAuthors(author) : undefined;
-	if (formattedAuthors && year) {
-		lines.push(`${formattedAuthors} (${year})`);
-	} else if (formattedAuthors) {
-		lines.push(formattedAuthors);
+	const displayName = formattedAuthors || institution;
+	if (displayName && year) {
+		lines.push(`${displayName} (${year})`);
+	} else if (displayName) {
+		lines.push(displayName);
 	} else if (year) {
 		lines.push(`(${year})`);
 	}

@@ -461,7 +461,14 @@ export function buildItemData(entry: BibtexEntry): any {
   if (title) itemData.title = title;
 
   const author = entry.fields.get('author');
-  if (author) itemData.author = parseAuthors(author);
+  if (author) {
+    itemData.author = parseAuthors(author);
+  } else {
+    const institution = entry.fields.get('institution');
+    if (institution) {
+      itemData.author = [{ literal: institution }];
+    }
+  }
 
   const year = entry.fields.get('year');
   if (year && /^\d+$/.test(year)) {
@@ -613,7 +620,8 @@ export function generateFallbackText(keys: string[], entries: Map<string, Bibtex
       // suppress-author: year only, no author name
       text = '';
     } else {
-      text = key;
+      const institution = entry.fields.get('institution');
+      text = institution || key;
     }
 
     if (year) text += (text ? ' ' : '') + year;

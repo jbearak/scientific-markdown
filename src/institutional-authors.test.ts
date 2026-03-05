@@ -456,6 +456,51 @@ describe('getSurname with literal author', () => {
   });
 });
 
+// ---------- buildItemData with institution fallback ----------
+
+describe('buildItemData with institution fallback (no author)', () => {
+  it('maps institution to CSL literal author for techreport', () => {
+    const entry: BibtexEntry = {
+      type: 'techreport',
+      key: 'nchs2014',
+      fields: new Map([
+        ['institution', 'National Center for Health Statistics'],
+        ['title', 'National Survey of Family Growth'],
+        ['year', '2014'],
+      ]),
+    };
+    const data = buildItemData(entry);
+    expect(data.author).toEqual([{ literal: 'National Center for Health Statistics' }]);
+  });
+
+  it('prefers author over institution when both present', () => {
+    const entry: BibtexEntry = {
+      type: 'techreport',
+      key: 'test2020',
+      fields: new Map([
+        ['author', 'Smith, John'],
+        ['institution', 'Some Institute'],
+        ['year', '2020'],
+      ]),
+    };
+    const data = buildItemData(entry);
+    expect(data.author).toEqual([{ family: 'Smith', given: 'John' }]);
+  });
+
+  it('does not set author when neither author nor institution present', () => {
+    const entry: BibtexEntry = {
+      type: 'techreport',
+      key: 'anon2020',
+      fields: new Map([
+        ['title', 'Anonymous Report'],
+        ['year', '2020'],
+      ]),
+    };
+    const data = buildItemData(entry);
+    expect(data.author).toBeUndefined();
+  });
+});
+
 // ---------- generateFallbackText ----------
 
 describe('generateFallbackText with institutional author', () => {
@@ -485,6 +530,35 @@ describe('generateFallbackText with institutional author', () => {
     });
     const result = generateFallbackText(['cdc2021'], entries);
     expect(result).toBe('(Centers for Disease Control and Prevention 2021)');
+  });
+});
+
+describe('generateFallbackText with institution fallback (no author)', () => {
+  it('uses institution name instead of citekey', () => {
+    const entries = new Map<string, BibtexEntry>();
+    entries.set('nchs2014', {
+      type: 'techreport',
+      key: 'nchs2014',
+      fields: new Map([
+        ['institution', 'National Center for Health Statistics'],
+        ['year', '2014'],
+      ]),
+    });
+    const result = generateFallbackText(['nchs2014'], entries);
+    expect(result).toBe('(National Center for Health Statistics 2014)');
+  });
+
+  it('falls back to citekey when neither author nor institution', () => {
+    const entries = new Map<string, BibtexEntry>();
+    entries.set('anon2020', {
+      type: 'techreport',
+      key: 'anon2020',
+      fields: new Map([
+        ['year', '2020'],
+      ]),
+    });
+    const result = generateFallbackText(['anon2020'], entries);
+    expect(result).toBe('(anon2020 2020)');
   });
 });
 
