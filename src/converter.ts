@@ -3315,8 +3315,8 @@ function renderTableOrFallback(
     const font = renderOpts.tableFontMapping?.get(String(tableIndex));
     if (fontSize) fontPrefix += '<!-- table-font-size: ' + fontSize + ' -->\n';
     if (font) fontPrefix += '<!-- table-font: ' + font + ' -->\n';
-    if (fontSize) htmlFontAttrs += ' data-font-size="' + fontSize + '"';
-    if (font) htmlFontAttrs += ' data-font="' + font + '"';
+    if (fontSize) htmlFontAttrs += ' data-font-size="' + escapeHtmlAttr(fontSize) + '"';
+    if (font) htmlFontAttrs += ' data-font="' + escapeHtmlAttr(font) + '"';
   }
   // If the original format was HTML, emit HTML directly
   if (storedFormat === 'html') {

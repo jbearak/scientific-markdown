@@ -1115,13 +1115,14 @@ export function parseMd(markdown: string): MdToken[] {
     const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
     const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
     if (!fontSizeMatch && !fontMatch) continue;
-    // Look for the next table token
+    // Look for the next table token; only assign if not already set (nearest wins)
     if (i + 1 < result.length && result[i + 1].type === 'table') {
-      if (fontSizeMatch) {
+      if (fontSizeMatch && result[i + 1].tableFontSize === undefined) {
         const n = parseFloat(fontSizeMatch[1]);
         if (isFinite(n) && n > 0) result[i + 1].tableFontSize = n;
       }
-      if (fontMatch) result[i + 1].tableFont = fontMatch[1];
+      const fontVal = fontMatch ? fontMatch[1].trim() : '';
+      if (fontVal && result[i + 1].tableFont === undefined) result[i + 1].tableFont = fontVal;
       result.splice(i, 1);
     }
   }

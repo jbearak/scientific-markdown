@@ -45,8 +45,9 @@ export function extractHtmlTables(html: string): HtmlTableMeta[] {
         const n = parseFloat(fontSizeMatch[1]);
         if (isFinite(n) && n > 0) meta.fontSize = n;
       }
-      const fontMatch = attrs.match(/data-font\s*=\s*["']([^"']*)["']/i);
-      if (fontMatch && fontMatch[1]) meta.font = fontMatch[1];
+      const fontMatch = attrs.match(/data-font\s*=\s*(?:["']([^"']*)["']|([^\s>"]+))/i);
+      const fontVal = fontMatch ? (fontMatch[1] ?? fontMatch[2]) : undefined;
+      if (fontVal) meta.font = fontVal;
       tables.push(meta);
     }
   }
