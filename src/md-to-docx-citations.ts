@@ -469,8 +469,8 @@ export function buildItemData(entry: BibtexEntry): any {
     // via `institution` instead of `author`; map to CSL literal name form.
     itemData.author = [{ literal: institution }];
   }
-  // Preserve institution in a custom field for roundtrip fidelity.
-  if (institution) {
+  // Preserve institution in a custom field for techreport roundtrip fidelity.
+  if (institution && entry.type.toLowerCase() === 'techreport') {
     itemData['x-institution'] = institution;
   }
 
