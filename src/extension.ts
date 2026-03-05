@@ -1239,7 +1239,7 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 			try {
 				templateDocx = new Uint8Array(await readDocxFile(existingDocxUri));
 			} catch {
-				// User cancelled the file-access dialog — abort export
+				// readDocxFile failed (user cancelled the sandbox dialog, or IO error) — abort export
 				return;
 			}
 		}
