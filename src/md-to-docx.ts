@@ -4704,6 +4704,12 @@ export async function convertMdToDocx(
     }
 
     citeprocEngine = result.engine;
+    // Register all bib entries so makeCitationCluster() can resolve items
+    // during inline citation rendering. After document generation,
+    // updateItems() is called again with only cited keys for the bibliography.
+    if (citeprocEngine && bibEntries) {
+      citeprocEngine.updateItems([...bibEntries.keys()]);
+    }
   }
 
   // Extract template parts if provided
