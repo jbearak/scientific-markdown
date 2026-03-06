@@ -3310,6 +3310,25 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
           const replyAuthor = replyRun.author ?? '';
           const replyDate = normalizeToUtcIso(replyRun.date || '', state.timezone);
           state.comments.push({ id: replyId, author: replyAuthor, date: replyDate, text: replyRun.commentText || '', paraId: replyParaId, parentParaId });
+          // Preserve reply-on-reply blocks for consecutive replies instead of
+          // dropping them; these are emitted as child comments of this reply.
+          if (replyRun.replies && replyRun.replies.length > 0) {
+            for (const nestedReply of replyRun.replies) {
+              const nestedReplyId = state.commentId++;
+              consecutiveReplyIds.push(nestedReplyId);
+              const nestedReplyParaId = generateParaId(state);
+              const nestedReplyAuthor = nestedReply.author ?? '';
+              const nestedReplyDate = normalizeToUtcIso(nestedReply.date || '', state.timezone);
+              state.comments.push({
+                id: nestedReplyId,
+                author: nestedReplyAuthor,
+                date: nestedReplyDate,
+                text: nestedReply.text,
+                paraId: nestedReplyParaId,
+                parentParaId: replyParaId
+              });
+            }
+          }
           absorbedConsecutiveReply = true;
           ri++;
         }
@@ -3900,7 +3919,7 @@ function commentsXml(comments: CommentEntry[]): string {
 
 function footnotesXml(entries: FootnoteEntry[]): string {
   let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  xml += '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
+  xml += '<w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">';
   // Separator (id=-1)
   xml += '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>';
   // Continuation separator (id=0)
@@ -3914,7 +3933,7 @@ function footnotesXml(entries: FootnoteEntry[]): string {
 
 function endnotesXml(entries: FootnoteEntry[]): string {
   let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  xml += '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
+  xml += '<w:endnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">';
   // Separator (id=-1)
   xml += '<w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>';
   // Continuation separator (id=0)
@@ -4231,9 +4250,9 @@ export async function convertMdToDocx(
   const notesMode = frontmatter.notes === 'endnotes' ? 'endnotes' as const : 'footnotes' as const;
 
   // Reserve rId slots: 1=styles, 2=numbering, 3=comments,
-  // 4+=optional notes/comment-thread rels/theme/settings/fontTable.
+  // 4+=optional notes/comment-thread rels/theme/settings/webSettings/fontTable.
   // Reserve max optional slots to avoid hyperlink rId collisions.
-  const rIdOffset = 3 + 6 + (hasTheme ? 1 : 0) + 2; // +6 optional rels (foot/end/commentsExtended/commentsIds/commentsExtensible/people), +2 fixed settings/fontTable
+  const rIdOffset = 3 + 6 + (hasTheme ? 1 : 0) + 3; // +6 optional rels (foot/end/commentsExtended/commentsIds/commentsExtensible/people), +3 fixed settings/webSettings/fontTable
 
   const state: DocxGenState = {
     commentId: 0,

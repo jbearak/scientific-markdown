@@ -1760,6 +1760,7 @@ describe('Full MD→DOCX footnote generation', () => {
     const footnotesFile = zip.file('word/footnotes.xml');
     expect(footnotesFile).not.toBeNull();
     const footnotesXml = await footnotesFile!.async('string');
+    expect(footnotesXml).toContain('xmlns:w14=');
     expect(footnotesXml).toContain('w:footnoteRef');
     expect(footnotesXml).toContain('A footnote.');
   });
@@ -1775,6 +1776,7 @@ describe('Full MD→DOCX footnote generation', () => {
     expect(endnotesFile).not.toBeNull();
     expect(zip.file('word/footnotes.xml')).toBeNull();
     const endnotesXml = await endnotesFile!.async('string');
+    expect(endnotesXml).toContain('xmlns:w14=');
     expect(endnotesXml).toContain('w:endnoteRef');
     expect(endnotesXml).toContain('An endnote.');
   });

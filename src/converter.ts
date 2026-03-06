@@ -728,9 +728,21 @@ export async function extractComments(data: Uint8Array | JSZip): Promise<Map<str
     // Collect all w:t text within this comment
     const tNodes = findAllDeep(node['w:comment'] || [], 'w:t');
     const text = tNodes.map(t => nodeText(t['w:t'] || [])).join('');
-    // Extract w14:paraId from the first <w:p> child
+    // Extract w14:paraId from the last comment paragraph. md-to-docx emits
+    // paraId on the last <w:p> (per commentsExtended linking expectations),
+    // but keep a first-paragraph fallback for third-party documents.
     const pNodes = findAllDeep(node['w:comment'] || [], 'w:p');
-    const paraId = pNodes[0]?.[':@']?.['@_w14:paraId'];
+    let paraId: string | undefined;
+    for (let i = pNodes.length - 1; i >= 0; i--) {
+      const candidate = pNodes[i]?.[':@']?.['@_w14:paraId'];
+      if (candidate) {
+        paraId = candidate;
+        break;
+      }
+    }
+    if (!paraId) {
+      paraId = pNodes[0]?.[':@']?.['@_w14:paraId'];
+    }
     comments.set(id, { author, text, date, paraId });
   }
   return comments;

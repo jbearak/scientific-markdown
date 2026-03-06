@@ -353,6 +353,21 @@ describe('Consecutive reply format preservation', () => {
     expect(result.markdown).toContain('\n  {>>@Bob');
     expect(result.markdown).toContain('\n<<}');
   });
+
+  test('consecutive replies preserve reply-on-reply entries', async () => {
+    const md = `{==some text==}{>>@Alice (2024-01-15T14:30-05:00) | Parent comment<<}{>>@Bob (2024-01-16T10:00-05:00) | Mid reply
+  {>>@Carol (2024-01-17T09:00-05:00) | Nested reply<<}
+<<}`;
+
+    const { docx } = await convertMdToDocx(md);
+    const zip = await JSZip.loadAsync(docx);
+
+    const commentsXml = await zip.file('word/comments.xml')!.async('string');
+    expect((commentsXml.match(/w:comment /g) || []).length).toBe(3);
+
+    const extXml = await zip.file('word/commentsExtended.xml')!.async('string');
+    expect((extXml.match(/w15:paraIdParent/g) || []).length).toBe(2);
+  });
 });
 
 describe('Multi-level reply chain flattening', () => {
