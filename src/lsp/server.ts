@@ -943,13 +943,15 @@ function getLocationPathKey(uri: string): string {
 
 function getEntryDetail(entry: BibtexEntry): string | undefined {
 	const author = entry.fields.get('author');
+	const institution = entry.fields.get('institution');
 	const year = entry.fields.get('year');
 	const formatted = author ? formatBibAuthorsPlain(author) : undefined;
-	if (formatted && year) {
-		return `${formatted} (${year})`;
+	const displayName = formatted || institution;
+	if (displayName && year) {
+		return `${displayName} (${year})`;
 	}
-	if (formatted) {
-		return formatted;
+	if (displayName) {
+		return displayName;
 	}
 	if (year) {
 		return year;
@@ -1002,12 +1004,14 @@ function formatBibEntryHover(entry: BibtexEntry, bibPath?: string): string {
 	const lines: string[] = [];
 
 	const author = entry.fields.get('author');
+	const institution = entry.fields.get('institution');
 	const year = entry.fields.get('year');
 	const formattedAuthors = author ? formatBibAuthors(author) : undefined;
-	if (formattedAuthors && year) {
-		lines.push(`${formattedAuthors} (${year})`);
-	} else if (formattedAuthors) {
-		lines.push(formattedAuthors);
+	const displayName = formattedAuthors || institution;
+	if (displayName && year) {
+		lines.push(`${displayName} (${year})`);
+	} else if (displayName) {
+		lines.push(displayName);
 	} else if (year) {
 		lines.push(`(${year})`);
 	}

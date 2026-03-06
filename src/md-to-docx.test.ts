@@ -1781,6 +1781,7 @@ describe('Full MD→DOCX footnote generation', () => {
     const footnotesFile = zip.file('word/footnotes.xml');
     expect(footnotesFile).not.toBeNull();
     const footnotesXml = await footnotesFile!.async('string');
+    expect(footnotesXml).toContain('xmlns:w14=');
     expect(footnotesXml).toContain('w:footnoteRef');
     expect(footnotesXml).toContain('A footnote.');
   });
@@ -1796,6 +1797,7 @@ describe('Full MD→DOCX footnote generation', () => {
     expect(endnotesFile).not.toBeNull();
     expect(zip.file('word/footnotes.xml')).toBeNull();
     const endnotesXml = await endnotesFile!.async('string');
+    expect(endnotesXml).toContain('xmlns:w14=');
     expect(endnotesXml).toContain('w:endnoteRef');
     expect(endnotesXml).toContain('An endnote.');
   });
@@ -2059,13 +2061,13 @@ describe('Code block separator between consecutive blocks', () => {
     const zip = await JSZip.loadAsync(result.docx);
     const docXml = await zip.file('word/document.xml')?.async('string');
     expect(docXml).toBeDefined();
-    // The separator should be an empty <w:p/> between the two code block groups
-    expect(docXml).toContain('<w:p/>');
+    // The separator should be an empty <w:p .../> between the two code block groups
+    expect(docXml).toMatch(/<w:p w14:paraId="[0-9A-F]+" w14:textId="[0-9A-F]+"\/>/);
   });
 });
 
 describe('Blockquote to paragraph separators in DOCX export', () => {
-  const separatorXml = '<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:p>';
+  const separatorRe = /<w:p\s[^>]*><w:pPr><w:spacing w:before="0" w:after="0" w:line="276" w:lineRule="auto"\/><\/w:pPr><\/w:p>/g;
   it('inserts empty paragraph after callout when source has blank line before paragraph', async () => {
     const md = '> [!NOTE]\n> This is a note.\n\nThis is a paragraph.';
     const result = await convertMdToDocx(md);
@@ -2075,7 +2077,7 @@ describe('Blockquote to paragraph separators in DOCX export', () => {
     expect(docXml).toBeDefined();
     expect(docXml).toContain('This is a note.');
     expect(docXml).toContain('This is a paragraph.');
-    const separatorCount = docXml!.split(separatorXml).length - 1;
+    const separatorCount = (docXml!.match(separatorRe) || []).length;
     expect(separatorCount).toBe(1);
   });
 
@@ -2088,7 +2090,7 @@ describe('Blockquote to paragraph separators in DOCX export', () => {
     expect(docXml).toBeDefined();
     expect(docXml).toContain('This is a note.');
     expect(docXml).toContain('This is a paragraph.');
-    const separatorCount = docXml!.split(separatorXml).length - 1;
+    const separatorCount = (docXml!.match(separatorRe) || []).length;
     expect(separatorCount).toBe(0);
   });
 });

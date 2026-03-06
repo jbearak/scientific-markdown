@@ -49,6 +49,21 @@ describe('extractComments', () => {
     expect(comments.get('2')?.text).toContain('which regions');
     expect(comments.get('3')?.text).toContain('framework reference');
   });
+
+  test('uses paraId from the last paragraph when comment has multiple paragraphs', async () => {
+    const docXml = wrapDocumentXml('<w:p><w:r><w:t>Body</w:t></w:r></w:p>');
+    const commentsXml = '<?xml version=\"1.0\"?>'
+      + '<w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">'
+      + '<w:comment w:id=\"1\" w:author=\"Alice\" w:date=\"2024-01-01T00:00:00Z\">'
+      + '<w:p><w:r><w:t>First para.</w:t></w:r></w:p>'
+      + '<w:p w14:paraId=\"ABCD1234\" w14:textId=\"77777777\"><w:r><w:t>Second para.</w:t></w:r></w:p>'
+      + '</w:comment>'
+      + '</w:comments>';
+
+    const buf = await buildSyntheticDocx(docXml, { 'word/comments.xml': commentsXml });
+    const comments = await extractComments(buf);
+    expect(comments.get('1')?.paraId).toBe('ABCD1234');
+  });
 });
 
 describe('DOCX table conversion', () => {
