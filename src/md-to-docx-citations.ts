@@ -42,7 +42,7 @@ function decodeHtmlEntities(text: string): string {
  * proper formatting.  Handles `<i>`, `<b>`, `<sup>`, `<sub>`, and
  * `<span style="...small-caps...">`.
  */
-export function htmlToOoxmlRuns(html: string): string {
+export function htmlToOoxmlRuns(html: string, extraRPr?: string): string {
   const runs: { text: string; italic: boolean; bold: boolean; sup: boolean; sub: boolean; smallCaps: boolean }[] = [];
 
   let pos = 0;
@@ -104,6 +104,7 @@ export function htmlToOoxmlRuns(html: string): string {
     if (run.sup) rPr.push('<w:vertAlign w:val="superscript"/>');
     if (run.sub) rPr.push('<w:vertAlign w:val="subscript"/>');
     if (run.smallCaps) rPr.push('<w:smallCaps/>');
+    if (extraRPr) rPr.push(extraRPr);
 
     const rPrXml = rPr.length > 0 ? '<w:rPr>' + rPr.join('') + '</w:rPr>' : '';
     return '<w:r>' + rPrXml + '<w:t xml:space="preserve">' + escapeXml(decodeHtmlEntities(run.text)) + '</w:t></w:r>';
@@ -319,7 +320,8 @@ function buildCitationFieldCode(
   visibleTextOverride?: string,
   usedCitationIds?: Set<string>,
   itemIdMap?: Map<string, string | number>,
-  suppressAuthorKeys?: Set<string>
+  suppressAuthorKeys?: Set<string>,
+  extraRPr?: string
 ): string {
   // Resolve visible text first so we can populate properties (Defect 2)
   // Note: visibleTextOverride bypasses suppressAuthorKeys processing — callers
@@ -389,7 +391,7 @@ function buildCitationFieldCode(
   return '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
     '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION ' + escapeXml(json) + ' </w:instrText></w:r>' +
     '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
-    htmlToOoxmlRuns(visibleText) +
+    htmlToOoxmlRuns(visibleText, extraRPr) +
     '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
 }
 
@@ -398,10 +400,12 @@ export function generateCitation(
   entries: Map<string, BibtexEntry>,
   citeprocEngine?: any,
   usedCitationIds?: Set<string>,
-  itemIdMap?: Map<string, string | number>
+  itemIdMap?: Map<string, string | number>,
+  extraRPr?: string
 ): CitationResult {
+  const rPrOpen = extraRPr ? '<w:rPr>' + extraRPr + '</w:rPr>' : '';
   if (!run.keys || run.keys.length === 0) {
-    return { xml: '<w:r><w:t>[@' + escapeXml(run.text) + ']</w:t></w:r>' };
+    return { xml: '<w:r>' + rPrOpen + '<w:t>[@' + escapeXml(run.text) + ']</w:t></w:r>' };
   }
 
   // Classify keys into resolved (have bib data) vs missing
@@ -421,7 +425,7 @@ export function generateCitation(
 
   // All resolved — emit field code (works for both Zotero and non-Zotero entries)
   if (resolvedKeys.length > 0 && missingKeys.length === 0) {
-    const xml = buildCitationFieldCode(resolvedKeys, entries, run.locators, citeprocEngine, undefined, usedCitationIds, itemIdMap, run.suppressAuthorKeys);
+    const xml = buildCitationFieldCode(resolvedKeys, entries, run.locators, citeprocEngine, undefined, usedCitationIds, itemIdMap, run.suppressAuthorKeys, extraRPr);
     return { xml };
   }
 
@@ -429,7 +433,7 @@ export function generateCitation(
   if (resolvedKeys.length === 0) {
     const missingText = '[' + missingKeys.map(k => (run.suppressAuthorKeys?.has(k) ? '-@' : '@') + k).join('; ') + ']';
     return {
-      xml: '<w:r><w:t>' + escapeXml(missingText) + '</w:t></w:r>',
+      xml: '<w:r>' + rPrOpen + '<w:t>' + escapeXml(missingText) + '</w:t></w:r>',
       warning: warnings.length > 0 ? warnings.join('; ') : undefined,
       missingKeys
     };
@@ -437,9 +441,9 @@ export function generateCitation(
 
   // Mixed (some resolved, some missing) — resolved get field code, missing get plain text
   const missingText = '[' + missingKeys.map(k => (run.suppressAuthorKeys?.has(k) ? '-@' : '@') + k).join('; ') + ']';
-  const xml = buildCitationFieldCode(resolvedKeys, entries, run.locators, citeprocEngine, undefined, usedCitationIds, itemIdMap, run.suppressAuthorKeys) +
-    '<w:r><w:t xml:space="preserve"> </w:t></w:r>' +
-    '<w:r><w:t>' + escapeXml(missingText) + '</w:t></w:r>';
+  const xml = buildCitationFieldCode(resolvedKeys, entries, run.locators, citeprocEngine, undefined, usedCitationIds, itemIdMap, run.suppressAuthorKeys, extraRPr) +
+    '<w:r>' + rPrOpen + '<w:t xml:space="preserve"> </w:t></w:r>' +
+    '<w:r>' + rPrOpen + '<w:t>' + escapeXml(missingText) + '</w:t></w:r>';
 
   return {
     xml,

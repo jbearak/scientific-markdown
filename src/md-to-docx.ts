@@ -1070,21 +1070,19 @@ export function tableFormatProps(tableFormats: Map<number, TableFormat>): Custom
   return chunkCustomProps('MANUSCRIPT_TABLE_FORMATS_', JSON.stringify(mapping));
 }
 
-export function tableFontSizeProps(sizes: Map<number, number>, defaultSizeHp?: number): CustomPropEntry[] {
-  // Only store entries where per-table value differs from document-level default
+export function tableFontSizeProps(sizes: Map<number, number>): CustomPropEntry[] {
   const mapping: Record<string, string> = {};
   for (const [idx, pt] of sizes) {
-    const hp = Math.round(pt * 2);
-    if (hp !== defaultSizeHp) mapping[String(idx)] = String(pt);
+    mapping[String(idx)] = String(pt);
   }
   if (Object.keys(mapping).length === 0) return [];
   return chunkCustomProps('MANUSCRIPT_TABLE_FONT_SIZES_', JSON.stringify(mapping));
 }
 
-export function tableFontProps(fonts: Map<number, string>, defaultFont?: string): CustomPropEntry[] {
+export function tableFontProps(fonts: Map<number, string>): CustomPropEntry[] {
   const mapping: Record<string, string> = {};
   for (const [idx, font] of fonts) {
-    if (font !== defaultFont) mapping[String(idx)] = font;
+    mapping[String(idx)] = font;
   }
   if (Object.keys(mapping).length === 0) return [];
   return chunkCustomProps('MANUSCRIPT_TABLE_FONTS_', JSON.stringify(mapping));
@@ -3338,19 +3336,20 @@ function generateInlineCriticContent(
     return generateRuns(formattedRuns, state, options, bibEntries, citeprocEngine);
   }
   const fallbackRun = mergeRunFormatting({ type: 'text', text: fallbackText }, outer, forced);
-  return generateRun(fallbackText, generateRPr(fallbackRun));
+  return generateRun(fallbackText, generateRPr(fallbackRun, state.tableRunRPrExtra || undefined));
 }
 
 function generateDeletedCriticContent(
   runs: MdRun[] | undefined,
   fallbackText: string,
   outer: MdRun,
-  forced: Partial<MdRun> = {}
+  forced: Partial<MdRun> = {},
+  extraRPr?: string
 ): string {
   const formattedRuns = formatCriticInnerRuns(runs, outer, forced);
   if (!formattedRuns || formattedRuns.length === 0) {
     const fallbackRun = mergeRunFormatting({ type: 'text', text: fallbackText }, outer, forced);
-    const rPr = generateRPr(fallbackRun);
+    const rPr = generateRPr(fallbackRun, extraRPr);
     return '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(fallbackText) + '</w:delText></w:r>';
   }
 
@@ -3365,22 +3364,22 @@ function generateDeletedCriticContent(
       continue;
     }
     if (run.type === 'critic_add' || run.type === 'critic_del') {
-      xml += generateDeletedCriticContent(run.innerRuns, run.text, run);
+      xml += generateDeletedCriticContent(run.innerRuns, run.text, run, {}, extraRPr);
       continue;
     }
     if (run.type === 'critic_sub') {
-      xml += generateDeletedCriticContent(run.oldRuns, run.text, run);
-      if (run.newText) xml += generateDeletedCriticContent(run.newRuns, run.newText, run);
+      xml += generateDeletedCriticContent(run.oldRuns, run.text, run, {}, extraRPr);
+      if (run.newText) xml += generateDeletedCriticContent(run.newRuns, run.newText, run, {}, extraRPr);
       continue;
     }
     if (run.type === 'critic_highlight' || run.type === 'critic_comment') {
       if (run.type === 'critic_highlight' && run.text) {
-        xml += generateDeletedCriticContent(run.innerRuns, run.text, run);
+        xml += generateDeletedCriticContent(run.innerRuns, run.text, run, {}, extraRPr);
       }
       continue;
     }
     if (run.type !== 'text' || !run.text) continue;
-    const rPr = generateRPr(run);
+    const rPr = generateRPr(run, extraRPr);
     xml += '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(run.text) + '</w:delText></w:r>';
   }
   return xml;
@@ -3416,13 +3415,13 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
       const author = run.author || options?.authorName || 'Unknown';
       const date = normalizeToUtcIso(run.date || '', state.timezone);
       const dateAttr = date ? ' w:date="' + escapeXml(date) + '"' : '';
-      const deletedXml = generateDeletedCriticContent(run.innerRuns, run.text, run);
+      const deletedXml = generateDeletedCriticContent(run.innerRuns, run.text, run, {}, state.tableRunRPrExtra || undefined);
       xml += '<w:del w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + deletedXml + '</w:del>';
     } else if (run.type === 'critic_sub') {
       const author = run.author || options?.authorName || 'Unknown';
       const date = normalizeToUtcIso(run.date || '', state.timezone);
       const dateAttr = date ? ' w:date="' + escapeXml(date) + '"' : '';
-      const deletedXml = generateDeletedCriticContent(run.oldRuns, run.text, run);
+      const deletedXml = generateDeletedCriticContent(run.oldRuns, run.text, run, {}, state.tableRunRPrExtra || undefined);
       const insertedXml = generateInlineCriticContent(run.newRuns, run.newText || '', run, state, options, bibEntries, citeprocEngine);
       xml += '<w:del w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + deletedXml + '</w:del>';
       xml += '<w:ins w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + insertedXml + '</w:ins>';
@@ -3576,15 +3575,16 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
         noteId = state.footnoteId++;
         state.footnoteLabelToId.set(label, noteId);
       }
+      const noteExtraRPr = state.tableRunRPrExtra || '';
       if (state.notesMode === 'endnotes') {
-        xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/></w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
+        xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/>' + noteExtraRPr + '</w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
         state.hasEndnotes = true;
       } else {
-        xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
+        xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>' + noteExtraRPr + '</w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
         state.hasFootnotes = true;
       }
     } else if (run.type === 'citation') {
-      const result = generateCitation(run, bibEntries || new Map(), citeprocEngine, state.citationIds, state.citationItemIds);
+      const result = generateCitation(run, bibEntries || new Map(), citeprocEngine, state.citationIds, state.citationItemIds, state.tableRunRPrExtra || undefined);
       xml += result.xml;
       if (result.warning) state.warnings.push(result.warning);
       if (result.missingKeys) {
@@ -4681,8 +4681,8 @@ export async function convertMdToDocx(
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
   customProps.push(...imageFormatProps(state.imageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
-  customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
-  customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
+  customProps.push(...tableFontSizeProps(state.tableFontSizes));
+  customProps.push(...tableFontProps(state.tableFonts));
   customProps.push(...listIndentProps(state));
   customProps.push(...consecutiveReplyProps(state));
   customProps.push(...htmlCommentGapProps(state.htmlCommentGaps));

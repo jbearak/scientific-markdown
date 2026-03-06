@@ -466,8 +466,8 @@ describe('Font customization unit tests', () => {
       const JSZip = (await import('jszip')).default;
       const zip = await JSZip.loadAsync(result.docx);
       const docContent = await zip.file('word/document.xml')!.async('string');
-      // Per-table override: 7pt = 14hp, should appear as inline rPr
-      expect(docContent).toContain('w:val="14"');
+      // Per-table override: 7pt = 14hp, should appear as w:sz inside w:rPr
+      expect(docContent).toMatch(/<w:rPr>[^]*?<w:sz w:val="14"\/>/);
     });
 
     it('HTML table data-font-size applies to cell paragraphs', async () => {
@@ -476,8 +476,17 @@ describe('Font customization unit tests', () => {
       const JSZip = (await import('jszip')).default;
       const zip = await JSZip.loadAsync(result.docx);
       const docContent = await zip.file('word/document.xml')!.async('string');
-      // 8pt = 16hp
-      expect(docContent).toContain('w:val="16"');
+      // 8pt = 16hp, should appear as w:sz inside w:rPr
+      expect(docContent).toMatch(/<w:rPr>[^]*?<w:sz w:val="16"\/>/);
+    });
+
+    it('table-font family is written to styles.xml', async () => {
+      const markdown = '---\ntable-font: "O\'Brien Sans"\ntable-font-size: 8\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const stylesContent = await zip.file('word/styles.xml')!.async('string');
+      expect(stylesContent).toMatch(/w:rFonts[^>]*O'Brien Sans/);
     });
   });
 
@@ -534,8 +543,8 @@ describe('Font customization unit tests', () => {
       const JSZip = (await import('jszip')).default;
       const zip = await JSZip.loadAsync(result.docx);
       const docXml = await zip.file('word/document.xml')!.async('string');
-      // Runs in the 8pt table must have inline w:sz val=16 (not just pPr > rPr)
-      expect(docXml).toContain('<w:r><w:rPr><w:sz w:val="16"/>');
+      // Runs in the 8pt table must have inline w:sz inside w:rPr (not just pPr > rPr)
+      expect(docXml).toMatch(/<w:r><w:rPr>[^]*?<w:sz w:val="16"\/>/);
     });
 
     it('round-trips per-table font-size directive for pipe tables', async () => {
@@ -552,6 +561,20 @@ describe('Font customization unit tests', () => {
       const { convertDocx } = await import('./converter');
       const converted = await convertDocx(result.docx);
       expect(converted.markdown).toContain('data-font-size="7"');
+    });
+
+    it('round-trips per-table font override with apostrophe in name', async () => {
+      const markdown = '---\ntable-font-size: 9\n---\n\n<!-- table-font: O\'Brien Sans -->\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docXml = await zip.file('word/document.xml')!.async('string');
+      // Per-table font should produce w:rFonts in run rPr
+      expect(docXml).toMatch(/w:rFonts[^>]*O'Brien Sans/);
+      // Round-trip: convert back to markdown and check the directive is preserved
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain("table-font: O'Brien Sans");
     });
   });
 });

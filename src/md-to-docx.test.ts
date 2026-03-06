@@ -178,6 +178,10 @@ describe('GFM support in Markdown→DOCX parser', () => {
     const outerItem = items.find(i => i.level === 1);
     expect(outerItem).toBeDefined();
     expect(outerItem!.runs.map(r => r.text).join('')).toBe('');
+    // The nested child item should exist and contain the expected text
+    const childItem = items.find(i => i.level === 2);
+    expect(childItem).toBeDefined();
+    expect(childItem!.runs.map(r => r.text).join('')).toBe('child only');
   });
 
   it('escapes GFM-disallowed raw HTML tags into literal text runs', () => {
