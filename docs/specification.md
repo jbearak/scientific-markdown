@@ -44,7 +44,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `font-size` | Body font size in points. Default: 11. |
 | `code-font-size` | Code font size in points. Default: 10. When `font-size` is specified without `code-font-size`, the code font size is automatically set to 1pt less than the body font size, preserving the default size difference. |
 | `table-font` | Table font family. Falls back to `font` if not set. |
-| `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size` or `table-font`, the table font size is automatically set to 2pt less than the body font size. |
+| `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size`, the table font size is automatically set to 2pt less than the body font size. |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
 | `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `normal`, or hyphenated combinations (e.g., `bold-italic`). Default: `bold`. |

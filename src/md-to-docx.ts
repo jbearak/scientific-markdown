@@ -4443,6 +4443,21 @@ export async function convertMdToDocx(
   }
 
   const hasTheme = !!templateParts?.has('word/theme/theme1.xml');
+
+  // Recompute auto-shrink baseline from template Normal style BEFORE document
+  // generation so generateTable() compares per-table sizes against the correct
+  // document-level default (not the hardcoded DEFAULT_BODY_HP fallback).
+  if (fontOverrides.tableSizeFromDefault && templateParts?.has('word/styles.xml')) {
+    const stylesXml = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
+    const normalMatch = /<w:style\b[^>]*\bw:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/.exec(stylesXml);
+    if (normalMatch) {
+      const szMatch = /<w:sz\s+w:val="(\d+)"/.exec(normalMatch[0]);
+      if (szMatch) {
+        fontOverrides.tableSizeHp = Math.max(1, parseInt(szMatch[1], 10) - 4);
+      }
+    }
+  }
+
   const notesMode = frontmatter.notes === 'endnotes' ? 'endnotes' as const : 'footnotes' as const;
 
   // Reserve rId slots: 1=styles, 2=numbering, 3=comments,
@@ -4563,15 +4578,23 @@ export async function convertMdToDocx(
       const t = bodyTokens[ti];
       if (ti === 0) {
         if (t.type === 'table') {
+          if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
+          if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
+          if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + runs + '</w:p>';
         }
       } else {
         if (t.type === 'table') {
+          if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
+          if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
+          if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
           bodyXml += '<w:p>' + paragraphPPr + runs + '</w:p>';

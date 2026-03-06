@@ -467,7 +467,7 @@ describe('Font customization unit tests', () => {
       const zip = await JSZip.loadAsync(result.docx);
       const docContent = await zip.file('word/document.xml')!.async('string');
       // Per-table override: 7pt = 14hp, should appear as w:sz inside w:rPr
-      expect(docContent).toMatch(/<w:rPr>[^]*?<w:sz w:val="14"\/>/);
+      expect(docContent).toMatch(/<w:rPr>[\s\S]*?<w:sz w:val="14"\/>/);
     });
 
     it('HTML table data-font-size applies to cell paragraphs', async () => {
@@ -477,7 +477,7 @@ describe('Font customization unit tests', () => {
       const zip = await JSZip.loadAsync(result.docx);
       const docContent = await zip.file('word/document.xml')!.async('string');
       // 8pt = 16hp, should appear as w:sz inside w:rPr
-      expect(docContent).toMatch(/<w:rPr>[^]*?<w:sz w:val="16"\/>/);
+      expect(docContent).toMatch(/<w:rPr>[\s\S]*?<w:sz w:val="16"\/>/);
     });
 
     it('table-font family is written to styles.xml', async () => {
@@ -544,7 +544,7 @@ describe('Font customization unit tests', () => {
       const zip = await JSZip.loadAsync(result.docx);
       const docXml = await zip.file('word/document.xml')!.async('string');
       // Runs in the 8pt table must have inline w:sz inside w:rPr (not just pPr > rPr)
-      expect(docXml).toMatch(/<w:r><w:rPr>[^]*?<w:sz w:val="16"\/>/);
+      expect(docXml).toMatch(/<w:r><w:rPr>[\s\S]*?<w:sz w:val="16"\/>/);
     });
 
     it('round-trips per-table font-size directive for pipe tables', async () => {
