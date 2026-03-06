@@ -4015,6 +4015,12 @@ export function buildMarkdown(
         output.push('\n\n');
       }
       output.push('<!-- references -->');
+      lastListType = undefined;
+      lastAlertParagraphKey = undefined;
+      pendingAlertPrefixStrip = undefined;
+      pendingAlertInlineLevelForHardBreak = undefined;
+      lastBlockquoteAlertType = undefined;
+      lastBlockquoteLevel = undefined;
       i++;
       continue;
     }

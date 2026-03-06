@@ -4491,17 +4491,21 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   }
 
   let prevToken: MdToken | undefined;
+  let preserveCloseForNextToken = false;
   for (const token of tokens) {
     // Any close sentinel directly preceding any open sentinel skips the open's break
     // to avoid an empty intermediate section that renders as a blank page.
-    const prevWasClose = prevToken?.landscapeClose || prevToken?.portraitClose;
+    const prevWasClose: boolean = !!(preserveCloseForNextToken || prevToken?.landscapeClose || prevToken?.portraitClose);
+    preserveCloseForNextToken = false;
 
     // Bibliography marker: emit placeholder that will be replaced after the loop
     // once all citedKeys have been collected.
-    // Do NOT update prevToken — preserve close-sentinel status for the
+    // Preserve close-sentinel status across the marker for the
     // consecutive-section-block invariant (e.g. <!-- /landscape --><!-- references --><!-- landscape -->).
     if (token.bibliographyMarker) {
       body += BIBL_PLACEHOLDER;
+      preserveCloseForNextToken = !!prevWasClose;
+      prevToken = token;
       continue;
     }
 
