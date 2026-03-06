@@ -56,8 +56,10 @@ export function extractHtmlTables(html: string): HtmlTableMeta[] {
         if (normalized) meta.font = normalized;
       }
       // data-orientation: "landscape" or "portrait"
-      const orientMatch = attrs.match(/data-orientation\s*=\s*["']?(landscape|portrait)["']?/i);
-      if (orientMatch) meta.orientation = orientMatch[1].toLowerCase() as 'landscape' | 'portrait';
+      // Uses separate quote branches (like data-font) so whitespace-padded values are handled.
+      const orientMatch = attrs.match(/data-orientation\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"]+))/i);
+      const orientVal = (orientMatch?.[1] ?? orientMatch?.[2] ?? orientMatch?.[3])?.trim().toLowerCase();
+      if (orientVal === 'landscape' || orientVal === 'portrait') meta.orientation = orientVal;
       tables.push(meta);
     }
   }

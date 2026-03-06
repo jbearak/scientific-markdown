@@ -4052,6 +4052,41 @@ describe('Portrait section round-trip', () => {
     const closeCount = (result.markdown.match(/<!-- \/portrait -->/g) || []).length;
     expect(openCount).toBe(2);
     expect(closeCount).toBe(2);
+
+    // DOCX-level verification: check section breaks have portrait dimensions
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const docXml = await zip.file('word/document.xml')!.async('string');
+    // Portrait sections: w:w="12240" w:h="15840", no orient attribute
+    const sectPrMatches = docXml.match(/<w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>/g) || [];
+    // At least 2 paragraph-level sectPr for the two portrait close breaks
+    const portraitSectPrs = sectPrMatches.filter(s =>
+      s.includes('w:w="12240"') && s.includes('w:h="15840"') && !s.includes('w:orient="landscape"')
+    );
+    expect(portraitSectPrs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('consecutive landscape blocks round-trip with DOCX verification', async () => {
+    const md = 'Before\n\n<!-- landscape -->\n\nBlock A\n\n<!-- /landscape -->\n\n<!-- landscape -->\n\nBlock B\n\n<!-- /landscape -->\n\nAfter';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('Block A');
+    expect(result.markdown).toContain('Block B');
+    const openCount = (result.markdown.match(/<!-- landscape -->/g) || []).length;
+    const closeCount = (result.markdown.match(/<!-- \/landscape -->/g) || []).length;
+    expect(openCount).toBe(2);
+    expect(closeCount).toBe(2);
+
+    // DOCX-level verification: check section breaks have landscape dimensions
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const docXml = await zip.file('word/document.xml')!.async('string');
+    const sectPrMatches = docXml.match(/<w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>/g) || [];
+    // Landscape sections: w:orient="landscape" with w:w="15840" w:h="12240"
+    const landscapeSectPrs = sectPrMatches.filter(s =>
+      s.includes('w:orient="landscape"') && s.includes('w:w="15840"') && s.includes('w:h="12240"')
+    );
+    expect(landscapeSectPrs.length).toBeGreaterThanOrEqual(2);
   });
 });
 

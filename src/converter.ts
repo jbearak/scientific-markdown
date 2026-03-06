@@ -1017,7 +1017,7 @@ export async function extractTableFontMapping(data: Uint8Array | JSZip): Promise
 }
 
 export async function extractLandscapeTableMapping(data: Uint8Array | JSZip): Promise<Set<number> | null> {
-  const mapping = await extractIdMappingFromCustomXml(data, 'MANUSCRIPT_LANDSCAPE_TABLES');
+  const mapping = await extractIdMappingFromCustomXml(data, 'MANUSCRIPT_LANDSCAPE_TABLES_');
   if (!mapping) return null;
   const result = new Set<number>();
   for (const [key, val] of mapping) {
@@ -1030,7 +1030,7 @@ export async function extractLandscapeTableMapping(data: Uint8Array | JSZip): Pr
 }
 
 export async function extractPortraitTableMapping(data: Uint8Array | JSZip): Promise<Set<number> | null> {
-  const mapping = await extractIdMappingFromCustomXml(data, 'MANUSCRIPT_PORTRAIT_TABLES');
+  const mapping = await extractIdMappingFromCustomXml(data, 'MANUSCRIPT_PORTRAIT_TABLES_');
   if (!mapping) return null;
   const result = new Set<number>();
   for (const [key, val] of mapping) {
@@ -2149,6 +2149,7 @@ export async function extractDocumentContent(
           let isCodeBlock = false;
           let paraFormatting = currentFormatting;
           let isSpacerParagraph = false;
+          let isSectionBreakHandled = false;
 
           const paraChildren = Array.isArray(node[key]) ? node[key] : [node[key]];
           for (const child of paraChildren) {
@@ -2198,7 +2199,8 @@ export async function extractDocumentContent(
                   // Push landscape_close after this paragraph
                   target.push({ type: 'landscape_close' });
                   sectionStartIndex = target.length;
-                  continue; // skip normal paragraph processing below
+                  isSectionBreakHandled = true;
+                  break;
                 }
                 // Portrait section break: check if this ordinal is a portrait fence close
                 if (portraitBreakOrdinals?.has(currentOrdinal)) {
@@ -2206,7 +2208,8 @@ export async function extractDocumentContent(
                   walk(paraChildren, paraFormatting, target, inTableCell, currentRevision);
                   target.push({ type: 'portrait_close' });
                   sectionStartIndex = target.length;
-                  continue;
+                  isSectionBreakHandled = true;
+                  break;
                 }
                 // Regular portrait section break: just update section start for next section
                 // and skip this paragraph (it's typically an empty section-break carrier)
@@ -2214,7 +2217,8 @@ export async function extractDocumentContent(
                 // Check if paragraph has any content runs (not just sectPr)
                 const hasContent = paraChildren.some((c: any) => c['w:r'] !== undefined || c['w:hyperlink'] !== undefined);
                 if (!hasContent) {
-                  continue; // skip empty section-break paragraph
+                  isSectionBreakHandled = true;
+                  break;
                 }
               }
 
@@ -2232,7 +2236,7 @@ export async function extractDocumentContent(
               break;
             }
           }
-          if (isSpacerParagraph) {
+          if (isSpacerParagraph || isSectionBreakHandled) {
             continue; // skip spacer paragraph entirely
           }
 
