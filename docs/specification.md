@@ -124,7 +124,7 @@ code-font-size: 10
 
 The `table-font` and `table-font-size` frontmatter fields control table typography independently of body text.
 
-**Auto-shrink behavior**: When `font-size` is specified without `table-font-size` or `table-font`, tables automatically use a font size 2pt smaller than the body font size. For example, `font-size: 12` produces 10pt table text. Setting either `table-font` or `table-font-size` explicitly disables auto-shrink.
+**Auto-shrink behavior**: When `font-size` is specified without an explicit `table-font-size`, tables automatically use a font size 2pt smaller than the body font size. For example, `font-size: 12` produces 10pt table text. Setting `table-font-size` explicitly disables auto-shrink. Setting `table-font` alone does not affect the 2pt reduction — it only changes the font family while auto-shrink still applies to the size.
 
 **Per-table overrides** allow individual tables to use different font settings. Two mechanisms are supported:
 

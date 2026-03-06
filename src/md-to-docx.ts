@@ -2383,6 +2383,14 @@ const TABLE_STYLE_IDS = new Set(['TableParagraph']);
  * style's <w:rPr> section. Styles not present in the template are
  * silently skipped.
  */
+/** Extract the Normal style's font size (in half-points) from styles XML. */
+function extractNormalStyleSizeHp(stylesXml: string): number | undefined {
+  const normalMatch = /<w:style\b[^>]*\bw:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/.exec(stylesXml);
+  if (!normalMatch) return undefined;
+  const szMatch = /<w:sz\s+w:val="(\d+)"/.exec(normalMatch[0]);
+  return szMatch ? parseInt(szMatch[1], 10) : undefined;
+}
+
 export function applyFontOverridesToTemplate(
   stylesXmlBytes: Uint8Array,
   overrides: FontOverrides
@@ -2391,13 +2399,9 @@ export function applyFontOverridesToTemplate(
 
   // Recompute auto-shrink from template's Normal style size when no explicit font-size
   if (overrides.tableSizeFromDefault) {
-    const normalMatch = /<w:style\b[^>]*\bw:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/.exec(xml);
-    if (normalMatch) {
-      const szMatch = /<w:sz\s+w:val="(\d+)"/.exec(normalMatch[0]);
-      if (szMatch) {
-        const templateBodyHp = parseInt(szMatch[1], 10);
-        overrides.tableSizeHp = Math.max(1, templateBodyHp - 4);
-      }
+    const templateBodyHp = extractNormalStyleSizeHp(xml);
+    if (templateBodyHp !== undefined) {
+      overrides.tableSizeHp = Math.max(1, templateBodyHp - 4);
     }
   }
 
@@ -4448,13 +4452,11 @@ export async function convertMdToDocx(
   // generation so generateTable() compares per-table sizes against the correct
   // document-level default (not the hardcoded DEFAULT_BODY_HP fallback).
   if (fontOverrides.tableSizeFromDefault && templateParts?.has('word/styles.xml')) {
-    const stylesXml = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
-    const normalMatch = /<w:style\b[^>]*\bw:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/.exec(stylesXml);
-    if (normalMatch) {
-      const szMatch = /<w:sz\s+w:val="(\d+)"/.exec(normalMatch[0]);
-      if (szMatch) {
-        fontOverrides.tableSizeHp = Math.max(1, parseInt(szMatch[1], 10) - 4);
-      }
+    const templateBodyHp = extractNormalStyleSizeHp(
+      new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!)
+    );
+    if (templateBodyHp !== undefined) {
+      fontOverrides.tableSizeHp = Math.max(1, templateBodyHp - 4);
     }
   }
 

@@ -3322,16 +3322,25 @@ function renderTableOrFallback(
   // Build per-table font directive prefix for pipe/grid tables
   let fontPrefix = '';
   let htmlFontAttrs = '';
+  // Font values containing --> cannot be safely embedded in HTML comments;
+  // force HTML table output so the value is preserved losslessly in data-font.
+  let forceHtmlTable = false;
   if (tableIndex !== undefined && renderOpts) {
     const fontSize = renderOpts.tableFontSizeMapping?.get(String(tableIndex));
     const font = renderOpts.tableFontMapping?.get(String(tableIndex));
     if (fontSize) fontPrefix += '<!-- table-font-size: ' + fontSize + ' -->\n\n';
-    if (font) fontPrefix += '<!-- table-font: ' + font.replace(/-->/g, '—>') + ' -->\n\n';
+    if (font) {
+      if (font.includes('-->')) {
+        forceHtmlTable = true;
+      } else {
+        fontPrefix += '<!-- table-font: ' + font + ' -->\n\n';
+      }
+    }
     if (fontSize) htmlFontAttrs += ' data-font-size="' + escapeHtmlAttr(fontSize) + '"';
     if (font) htmlFontAttrs += ' data-font="' + escapeHtmlAttr(font) + '"';
   }
-  // If the original format was HTML, emit HTML directly
-  if (storedFormat === 'html') {
+  // If the original format was HTML or font value is comment-unsafe, emit HTML directly
+  if (storedFormat === 'html' || forceHtmlTable) {
     return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
   }
   // If original was grid, try grid first to preserve format
@@ -3942,7 +3951,9 @@ export function buildMarkdown(
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
-          bodyParts.push(renderTableOrFallback(item, comments, options, renderOpts));
+          const noteStoredFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
+          bodyParts.push(renderTableOrFallback(item, comments, options, renderOpts, noteStoredFormat, tableIndex));
+          tableIndex++;
           partStart = bi + 1;
         }
       }
