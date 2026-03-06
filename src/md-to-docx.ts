@@ -10,7 +10,7 @@ import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
-import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun } from './html-table-parser';
+import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun, type HtmlTableMeta } from './html-table-parser';
 export { preprocessGridTables } from './grid-table-preprocess';
 export { extractHtmlTables } from './html-table-parser';
 
@@ -42,6 +42,8 @@ export interface MdToken {
   rows?: MdTableRow[];      // for tables
   language?: string;        // for code blocks
   sourceFormat?: TableFormat; // original table format for round-trip
+  tableFontSize?: number;   // per-table font size override (pt)
+  tableFont?: string;       // per-table font name override
 }
 
 export interface MdTableCell {
@@ -1068,8 +1070,26 @@ export function tableFormatProps(tableFormats: Map<number, TableFormat>): Custom
   return chunkCustomProps('MANUSCRIPT_TABLE_FORMATS_', JSON.stringify(mapping));
 }
 
+export function tableFontSizeProps(sizes: Map<number, number>): CustomPropEntry[] {
+  const mapping: Record<string, string> = {};
+  for (const [idx, pt] of sizes) {
+    mapping[String(idx)] = String(pt);
+  }
+  if (Object.keys(mapping).length === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_TABLE_FONT_SIZES_', JSON.stringify(mapping));
+}
 
-export function parseMd(markdown: string): MdToken[] {
+export function tableFontProps(fonts: Map<number, string>): CustomPropEntry[] {
+  const mapping: Record<string, string> = {};
+  for (const [idx, font] of fonts) {
+    mapping[String(idx)] = font;
+  }
+  if (Object.keys(mapping).length === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_TABLE_FONTS_', JSON.stringify(mapping));
+}
+
+
+export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const md = createMarkdownIt();
   // Preserve explicit source semantics for blockquotes by disabling markdown-it
   // lazy continuation behavior (where a non-`>` line can be absorbed into a
@@ -1081,8 +1101,30 @@ export function parseMd(markdown: string): MdToken[] {
   const processed = preprocessCriticMarkup(wrapped);
   const tokens = md.parse(processed, {});
 
-  const result = convertTokens(tokens);
+  const result = convertTokens(tokens, 0, 0, warnings);
   annotateBlockquoteBoundaries(result);
+
+  // Post-process: transfer table-font directives from HTML comment tokens to table tokens
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
+    const run = result[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+    const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
+    const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
+    if (!fontSizeMatch && !fontMatch) continue;
+    // Look for the next table token; only assign if not already set (nearest wins)
+    if (i + 1 < result.length && result[i + 1].type === 'table') {
+      if (fontSizeMatch && result[i + 1].tableFontSize === undefined) {
+        const n = parseFloat(fontSizeMatch[1]);
+        if (isFinite(n) && n > 0) result[i + 1].tableFontSize = n;
+      }
+      const fontVal = fontMatch ? fontMatch[1].trim() : '';
+      if (fontVal && result[i + 1].tableFont === undefined) result[i + 1].tableFont = fontVal;
+      result.splice(i, 1);
+    }
+  }
+
   return result;
 }
 
@@ -1253,7 +1295,7 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
   return result;
 }
 
-function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdToken[] {
+function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnings?: string[]): MdToken[] {
   const result: MdToken[] = [];
   let i = 0;
   
@@ -1284,18 +1326,18 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdTok
       case 'ordered_list_open':
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
-        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel);
+        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings);
         result.push(...listItems);
         i = listClose + 1;
         break;
-        
+
       case 'blockquote_open':
         const blockquoteClose = findClosingToken(tokens, i, 'blockquote_close');
         const bqLevel = blockquoteLevel + 1;
         // Intentionally reset listLevel inside blockquotes.
         // In Markdown, `> - item` starts a new list context within the quote,
         // so numbering/indentation should not inherit from outer lists.
-        const blockquoteTokens = convertTokens(tokens.slice(i + 1, blockquoteClose), 0, bqLevel);
+        const blockquoteTokens = convertTokens(tokens.slice(i + 1, blockquoteClose), 0, bqLevel, warnings);
         result.push(...annotateBlockquoteAlert(blockquoteTokens, bqLevel));
         i = blockquoteClose + 1;
         break;
@@ -1421,17 +1463,20 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0): MdTok
         } else {
           const htmlTables = extractHtmlTables(htmlContent);
           if (htmlTables.length > 0) {
-            for (const rows of htmlTables) {
-              if (rows.length > 0) {
+            for (const meta of htmlTables) {
+              if (meta.rows.length > 0) {
                 // Keep this mapping explicit so HtmlTableRun/MdRun shape changes
                 // cannot silently alter assignability behavior.
-                const mappedRows = mapHtmlTableRowsToMdTableRows(rows);
-                result.push({
+                const mappedRows = mapHtmlTableRowsToMdTableRows(meta.rows);
+                const tableToken: MdToken = {
                   type: 'table',
                   runs: [],
                   rows: mappedRows,
                   sourceFormat: 'html',
-                });
+                };
+                if (meta.fontSize) tableToken.tableFontSize = meta.fontSize;
+                if (meta.font) tableToken.tableFont = meta.font;
+                result.push(tableToken);
               }
             }
           } else {
@@ -1799,24 +1844,57 @@ function findClosingToken(tokens: any[], start: number, closeType: string): numb
   return tokens.length;
 }
 
-function extractListItems(tokens: any[], ordered: boolean, level: number): MdToken[] {
+// Block token types that are silently dropped when they appear inside list
+// continuation (e.g. a fenced code block indented under a list item).
+// The md-to-docx converter only preserves the first paragraph and nested
+// sublists; all other block content is lost.
+const DROPPED_LIST_BLOCK_TYPES = new Set([
+  'fence', 'code_block', 'html_block', 'blockquote_open', 'table_open',
+]);
+
+function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[]): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
-  
+
   while (i < tokens.length) {
     if (tokens[i].type === 'list_item_open') {
       const closePos = findClosingToken(tokens, i, 'list_item_close');
       const itemTokens = tokens.slice(i + 1, closePos);
       let runs: MdRun[] = [];
-      
+      let foundFirstParagraph = false;
+      // Track nested list depth so we only capture the parent item's own
+      // paragraph — not paragraphs belonging to child list items.
+      let nestedListDepth = 0;
       for (let j = 0; j < itemTokens.length; j++) {
+        if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
+          nestedListDepth++;
+          continue;
+        }
+        if (itemTokens[j].type === 'bullet_list_close' || itemTokens[j].type === 'ordered_list_close') {
+          nestedListDepth--;
+          continue;
+        }
+        if (nestedListDepth > 0) continue;
         if (itemTokens[j].type === 'paragraph_open') {
           const paragraphClose = findClosingToken(itemTokens, j, 'paragraph_close');
-          runs = processInlineChildren(itemTokens.slice(j + 1, paragraphClose));
-          break;
-        } else if (itemTokens[j].type === 'inline') {
+          if (!foundFirstParagraph) {
+            runs = processInlineChildren(itemTokens.slice(j + 1, paragraphClose));
+            foundFirstParagraph = true;
+          } else if (warnings) {
+            warnings.push('Continuation paragraph inside list item dropped during conversion (not supported). Move the content outside the list for round-trip fidelity.');
+          }
+          j = paragraphClose;
+        } else if (itemTokens[j].type === 'inline' && !foundFirstParagraph) {
           runs = processInlineChildren([itemTokens[j]]);
-          break;
+          foundFirstParagraph = true;
+        } else if (warnings && DROPPED_LIST_BLOCK_TYPES.has(itemTokens[j].type)) {
+          const kind = itemTokens[j].type === 'fence' ? 'Code block'
+            : itemTokens[j].type === 'code_block' ? 'Indented code block'
+            : itemTokens[j].type === 'html_block' ? 'HTML block'
+            : itemTokens[j].type === 'blockquote_open' ? 'Blockquote'
+            : itemTokens[j].type === 'table_open' ? 'Table'
+            : 'Block element';
+          warnings.push(kind + ' inside list item dropped during conversion (not supported). Move the content outside the list for round-trip fidelity.');
         }
       }
 
@@ -1828,23 +1906,23 @@ function extractListItems(tokens: any[], ordered: boolean, level: number): MdTok
         runs: taskInfo?.runs ?? runs,
         taskChecked: taskInfo?.checked,
       });
-      
+
       // Extract nested sublists
       for (let j = 0; j < itemTokens.length; j++) {
         if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
           const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
           const subOrdered = itemTokens[j].type === 'ordered_list_open';
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1));
+          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings));
           j = subClose;
         }
       }
-      
+
       i = closePos + 1;
     } else {
       i++;
     }
   }
-  
+
   return items;
 }
 
@@ -1999,9 +2077,13 @@ export interface DocxGenState {
   nextImageDocPrId: number;
   tableIndex: number;
   tableFormats: Map<number, TableFormat>; // table index -> source format
+  tableFontSizes: Map<number, number>; // table index -> per-table font size (pt)
+  tableFonts: Map<number, string>;     // table index -> per-table font name
+  fontOverrides?: FontOverrides;       // document-level font overrides for table default resolution
   listIndent: 'tab' | 'spaces'; // indentation style for nested list items
   consecutiveReplyParaIds: Set<string>; // parent paraIds whose replies were in consecutive format
   htmlCommentGaps: Map<number, number>; // blank-line-before count per HTML comment index (non-default only)
+  tableRunRPrExtra: string; // extra rPr elements injected into every run inside a table cell (per-table font/size overrides)
 }
 
 interface CommentEntry {
@@ -2174,6 +2256,9 @@ export interface FontOverrides {
   titleFonts?: string[];
   titleSizesHp?: number[];
   titleStyles?: string[];
+  tableFont?: string;
+  tableSizeHp?: number;
+  tableSizeFromDefault?: boolean; // true when tableSizeHp was auto-computed from DEFAULT_BODY_HP
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -2189,13 +2274,7 @@ export interface CodeBlockConfig {
   codeBlockInset?: number;
 }
 
-export function resolveFontOverrides(fm: Frontmatter): FontOverrides | undefined {
-  const hasAnyField = !!fm.font || !!fm.codeFont ||
-    fm.fontSize !== undefined || fm.codeFontSize !== undefined ||
-    !!fm.headerFont || !!fm.headerFontSize || !!fm.headerFontStyle ||
-    !!fm.titleFont || !!fm.titleFontSize || !!fm.titleFontStyle;
-  if (!hasAnyField) return undefined;
-
+export function resolveFontOverrides(fm: Frontmatter): FontOverrides {
   const overrides: FontOverrides = {};
 
   if (fm.font) {
@@ -2268,6 +2347,21 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides | undefined
     overrides.titleStyles = fm.titleFontStyle;
   }
 
+  // Table font overrides
+  if (fm.tableFont) {
+    overrides.tableFont = fm.tableFont;
+  }
+  if (fm.tableFontSize !== undefined) {
+    overrides.tableSizeHp = Math.round(fm.tableFontSize * 2);
+  } else if (fm.fontSize !== undefined) {
+    // Auto-shrink: tables use body - 2pt (4hp)
+    overrides.tableSizeHp = Math.max(1, Math.round(fm.fontSize * 2) - 4);
+  } else {
+    // Auto-shrink from default body size; may be recomputed from template Normal
+    overrides.tableSizeHp = Math.max(1, DEFAULT_BODY_HP - 4);
+    overrides.tableSizeFromDefault = true;
+  }
+
   return overrides;
 }
 
@@ -2279,6 +2373,8 @@ const BODY_STYLE_IDS = new Set([
 ]);
 // Style IDs that receive code font/size overrides
 const CODE_STYLE_IDS = new Set(['CodeChar', 'CodeBlock']);
+// Style IDs that receive table font/size overrides
+const TABLE_STYLE_IDS = new Set(['TableParagraph']);
 
 /**
  * Apply font overrides to a template's word/styles.xml content.
@@ -2287,14 +2383,53 @@ const CODE_STYLE_IDS = new Set(['CodeChar', 'CodeBlock']);
  * style's <w:rPr> section. Styles not present in the template are
  * silently skipped.
  */
+/** Extract the Normal style's font size (in half-points) from styles XML. */
+function extractNormalStyleSizeHp(stylesXml: string): number | undefined {
+  const normalMatch = /<w:style\b[^>]*\bw:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/.exec(stylesXml);
+  if (!normalMatch) return undefined;
+  const szMatch = /<w:sz\s+w:val="(\d+)"/.exec(normalMatch[0]);
+  return szMatch ? parseInt(szMatch[1], 10) : undefined;
+}
+
 export function applyFontOverridesToTemplate(
   stylesXmlBytes: Uint8Array,
   overrides: FontOverrides
 ): string {
   let xml = new TextDecoder('utf-8').decode(stylesXmlBytes);
 
+  // Recompute auto-shrink from template's Normal style size when no explicit font-size
+  if (overrides.tableSizeFromDefault) {
+    const templateBodyHp = extractNormalStyleSizeHp(xml);
+    if (templateBodyHp !== undefined) {
+      overrides.tableSizeHp = Math.max(1, templateBodyHp - 4);
+    }
+  }
+
+  // Inject TableParagraph style if table overrides exist but the template lacks it
+  if (overrides.tableSizeHp || overrides.tableFont) {
+    if (!xml.includes('w:styleId="TableParagraph"')) {
+      // Insert before </w:styles>
+      const tableRpr = '<w:rPr>' +
+        (overrides.tableFont
+          ? '<w:rFonts w:ascii="' + escapeXml(overrides.tableFont) + '" w:hAnsi="' + escapeXml(overrides.tableFont) + '"/>'
+          : (overrides.bodyFont
+            ? '<w:rFonts w:ascii="' + escapeXml(overrides.bodyFont) + '" w:hAnsi="' + escapeXml(overrides.bodyFont) + '"/>'
+            : '')) +
+        (overrides.tableSizeHp
+          ? '<w:sz w:val="' + overrides.tableSizeHp + '"/><w:szCs w:val="' + overrides.tableSizeHp + '"/>'
+          : '') +
+        '</w:rPr>';
+      const tableStyle = '<w:style w:type="paragraph" w:styleId="TableParagraph">' +
+        '<w:name w:val="Table Paragraph"/>' +
+        '<w:basedOn w:val="Normal"/>' +
+        tableRpr +
+        '</w:style>';
+      xml = xml.replace('</w:styles>', tableStyle + '</w:styles>');
+    }
+  }
+
   // Collect all style IDs we want to modify
-  const allTargetIds = new Set([...BODY_STYLE_IDS, ...CODE_STYLE_IDS]);
+  const allTargetIds = new Set([...BODY_STYLE_IDS, ...CODE_STYLE_IDS, ...TABLE_STYLE_IDS]);
 
   for (const styleId of allTargetIds) {
     // Find the <w:style ...w:styleId="ID"...> ... </w:style> block
@@ -2309,13 +2444,16 @@ export function applyFontOverridesToTemplate(
     const closeTag = styleMatch[3];
 
     const isCodeStyle = CODE_STYLE_IDS.has(styleId);
+    const isTableStyle = TABLE_STYLE_IDS.has(styleId);
     const isHeading = /^Heading[1-6]$/.test(styleId);
     const isTitle = styleId === 'Title';
 
-    // Determine font: heading-specific > title-specific > body/code font
+    // Determine font: heading-specific > title-specific > table > body/code font
     let font: string | undefined;
     if (isCodeStyle) {
       font = overrides.codeFont;
+    } else if (isTableStyle) {
+      font = overrides.tableFont ?? overrides.bodyFont;
     } else if (isHeading && overrides.headingFonts?.has(styleId)) {
       font = overrides.headingFonts.get(styleId);
     } else if (isTitle && overrides.titleFonts?.[0]) {
@@ -2328,6 +2466,8 @@ export function applyFontOverridesToTemplate(
     let sizeHp: number | undefined;
     if (isCodeStyle) {
       if (styleId === 'CodeBlock') sizeHp = overrides.codeSizeHp;
+    } else if (isTableStyle) {
+      sizeHp = overrides.tableSizeHp;
     } else if (isTitle && overrides.titleSizesHp?.[0]) {
       sizeHp = overrides.titleSizesHp[0];
     } else if (overrides.headingSizesHp && overrides.headingSizesHp.has(styleId)) {
@@ -2711,6 +2851,19 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:name w:val="endnote reference"/>\n' +
     '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>\n' +
     '</w:style>\n' +
+    // TableParagraph: table-specific font/size style (only when overrides exist)
+    (overrides?.tableSizeHp || overrides?.tableFont
+      ? '<w:style w:type="paragraph" w:styleId="TableParagraph">\n' +
+        '<w:name w:val="Table Paragraph"/>\n' +
+        '<w:basedOn w:val="Normal"/>\n' +
+        '<w:rPr>' +
+        (overrides.tableFont
+          ? '<w:rFonts w:ascii="' + escapeXml(overrides.tableFont) + '" w:hAnsi="' + escapeXml(overrides.tableFont) + '"/>'
+          : bodyFontStr) +
+        (overrides.tableSizeHp ? szPair(overrides.tableSizeHp) : '') +
+        '</w:rPr>\n' +
+        '</w:style>\n'
+      : '') +
     '<w:style w:type="character" w:styleId="CommentReference">\n' +
     '<w:name w:val="annotation reference"/>\n' +
     '<w:basedOn w:val="DefaultParagraphFont"/>\n' +
@@ -3083,9 +3236,9 @@ function documentRelsXml(opts: DocumentRelsOptions): string {
   return xml;
 }
 
-export function generateRPr(run: MdRun): string {
+export function generateRPr(run: MdRun, extraRPr?: string): string {
   const parts: string[] = [];
-  
+
   if (run.code) parts.push('<w:rStyle w:val="CodeChar"/>');
   if (run.bold) parts.push('<w:b/>');
   if (run.italic) parts.push('<w:i/>');
@@ -3097,7 +3250,8 @@ export function generateRPr(run: MdRun): string {
   }
   if (run.superscript) parts.push('<w:vertAlign w:val="superscript"/>');
   else if (run.subscript) parts.push('<w:vertAlign w:val="subscript"/>');
-  
+  if (extraRPr) parts.push(extraRPr);
+
   return parts.length > 0 ? '<w:rPr>' + parts.join('') + '</w:rPr>' : '';
 }
 
@@ -3186,19 +3340,20 @@ function generateInlineCriticContent(
     return generateRuns(formattedRuns, state, options, bibEntries, citeprocEngine);
   }
   const fallbackRun = mergeRunFormatting({ type: 'text', text: fallbackText }, outer, forced);
-  return generateRun(fallbackText, generateRPr(fallbackRun));
+  return generateRun(fallbackText, generateRPr(fallbackRun, state.tableRunRPrExtra || undefined));
 }
 
 function generateDeletedCriticContent(
   runs: MdRun[] | undefined,
   fallbackText: string,
   outer: MdRun,
-  forced: Partial<MdRun> = {}
+  forced: Partial<MdRun> = {},
+  extraRPr?: string
 ): string {
   const formattedRuns = formatCriticInnerRuns(runs, outer, forced);
   if (!formattedRuns || formattedRuns.length === 0) {
     const fallbackRun = mergeRunFormatting({ type: 'text', text: fallbackText }, outer, forced);
-    const rPr = generateRPr(fallbackRun);
+    const rPr = generateRPr(fallbackRun, extraRPr);
     return '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(fallbackText) + '</w:delText></w:r>';
   }
 
@@ -3213,22 +3368,22 @@ function generateDeletedCriticContent(
       continue;
     }
     if (run.type === 'critic_add' || run.type === 'critic_del') {
-      xml += generateDeletedCriticContent(run.innerRuns, run.text, run);
+      xml += generateDeletedCriticContent(run.innerRuns, run.text, run, {}, extraRPr);
       continue;
     }
     if (run.type === 'critic_sub') {
-      xml += generateDeletedCriticContent(run.oldRuns, run.text, run);
-      if (run.newText) xml += generateDeletedCriticContent(run.newRuns, run.newText, run);
+      xml += generateDeletedCriticContent(run.oldRuns, run.text, run, {}, extraRPr);
+      if (run.newText) xml += generateDeletedCriticContent(run.newRuns, run.newText, run, {}, extraRPr);
       continue;
     }
     if (run.type === 'critic_highlight' || run.type === 'critic_comment') {
       if (run.type === 'critic_highlight' && run.text) {
-        xml += generateDeletedCriticContent(run.innerRuns, run.text, run);
+        xml += generateDeletedCriticContent(run.innerRuns, run.text, run, {}, extraRPr);
       }
       continue;
     }
     if (run.type !== 'text' || !run.text) continue;
-    const rPr = generateRPr(run);
+    const rPr = generateRPr(run, extraRPr);
     xml += '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(run.text) + '</w:delText></w:r>';
   }
   return xml;
@@ -3240,7 +3395,7 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
     const run = inputRuns[ri];
     const nextRun = inputRuns[ri + 1];
     if (run.type === 'text') {
-      const rPr = generateRPr(run);
+      const rPr = generateRPr(run, state.tableRunRPrExtra || undefined);
       if (run.href) {
         let rId = state.relationships.get(run.href);
         if (!rId) {
@@ -3264,13 +3419,13 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
       const author = run.author || options?.authorName || 'Unknown';
       const date = normalizeToUtcIso(run.date || '', state.timezone);
       const dateAttr = date ? ' w:date="' + escapeXml(date) + '"' : '';
-      const deletedXml = generateDeletedCriticContent(run.innerRuns, run.text, run);
+      const deletedXml = generateDeletedCriticContent(run.innerRuns, run.text, run, {}, state.tableRunRPrExtra || undefined);
       xml += '<w:del w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + deletedXml + '</w:del>';
     } else if (run.type === 'critic_sub') {
       const author = run.author || options?.authorName || 'Unknown';
       const date = normalizeToUtcIso(run.date || '', state.timezone);
       const dateAttr = date ? ' w:date="' + escapeXml(date) + '"' : '';
-      const deletedXml = generateDeletedCriticContent(run.oldRuns, run.text, run);
+      const deletedXml = generateDeletedCriticContent(run.oldRuns, run.text, run, {}, state.tableRunRPrExtra || undefined);
       const insertedXml = generateInlineCriticContent(run.newRuns, run.newText || '', run, state, options, bibEntries, citeprocEngine);
       xml += '<w:del w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + deletedXml + '</w:del>';
       xml += '<w:ins w:id="' + (state.commentId++) + '" w:author="' + escapeXml(author) + '"' + dateAttr + '>' + insertedXml + '</w:ins>';
@@ -3424,15 +3579,16 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
         noteId = state.footnoteId++;
         state.footnoteLabelToId.set(label, noteId);
       }
+      const noteExtraRPr = state.tableRunRPrExtra || '';
       if (state.notesMode === 'endnotes') {
-        xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/></w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
+        xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/>' + noteExtraRPr + '</w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
         state.hasEndnotes = true;
       } else {
-        xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
+        xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>' + noteExtraRPr + '</w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
         state.hasFootnotes = true;
       }
     } else if (run.type === 'citation') {
-      const result = generateCitation(run, bibEntries || new Map(), citeprocEngine, state.citationIds, state.citationItemIds);
+      const result = generateCitation(run, bibEntries || new Map(), citeprocEngine, state.citationIds, state.citationItemIds, state.tableRunRPrExtra || undefined);
       xml += result.xml;
       if (result.warning) state.warnings.push(result.warning);
       if (result.missingKeys) {
@@ -3707,6 +3863,35 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 export function generateTable(token: MdToken, state: DocxGenState, options?: MdToDocxOptions, bibEntries?: Map<string, BibtexEntry>, citeprocEngine?: any): string {
   if (!token.rows) return '';
 
+  // Resolve effective table font/size: per-table token > document-level overrides
+  const fo = state.fontOverrides;
+  const effectiveTableSizeHp = token.tableFontSize !== undefined
+    ? Math.round(token.tableFontSize * 2)
+    : fo?.tableSizeHp;
+  const effectiveTableFont = token.tableFont ?? fo?.tableFont;
+  // Build pPr for table cell paragraphs (style ref + inline overrides for per-table diffs)
+  let tablePPr = '';
+  let tableRunRPr = '';
+  if (effectiveTableSizeHp || effectiveTableFont) {
+    const hasDocLevelStyle = !!(fo?.tableSizeHp || fo?.tableFont);
+    // Per-table overrides that differ from doc-level require inline rPr on both pPr and runs
+    const needsInlineFont = effectiveTableFont && effectiveTableFont !== fo?.tableFont;
+    const needsInlineSize = effectiveTableSizeHp && effectiveTableSizeHp !== fo?.tableSizeHp;
+    let pPrInner = '';
+    if (hasDocLevelStyle) pPrInner += '<w:pStyle w:val="TableParagraph"/>';
+    let rPrInner = '';
+    if (needsInlineFont || (!hasDocLevelStyle && effectiveTableFont)) {
+      rPrInner += '<w:rFonts w:ascii="' + escapeXml(effectiveTableFont!) + '" w:hAnsi="' + escapeXml(effectiveTableFont!) + '"/>';
+    }
+    if (needsInlineSize || (!hasDocLevelStyle && effectiveTableSizeHp)) {
+      rPrInner += '<w:sz w:val="' + effectiveTableSizeHp + '"/><w:szCs w:val="' + effectiveTableSizeHp + '"/>';
+    }
+    tablePPr = '<w:pPr>' + pPrInner + (rPrInner ? '<w:rPr>' + rPrInner + '</w:rPr>' : '') + '</w:pPr>';
+    // Run-level rPr: same inline overrides so runs inherit per-table font/size
+    // (pPr > rPr only sets the paragraph mark, not run properties)
+    tableRunRPr = rPrInner;
+  }
+
   // Compute total grid columns by simulating grid occupancy (accounts for
   // columns implicitly occupied by rowspan cells from previous rows).
   let totalCols = 0;
@@ -3768,6 +3953,10 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   // Track pending vertical merges: gridCol -> { remaining: number; colspan: number }
   const mergeMap = new Map<number, { remaining: number; colspan: number }>();
 
+  // Set per-table run rPr so generateRuns injects font/size on each run
+  const prevRunRPrExtra = state.tableRunRPrExtra;
+  state.tableRunRPrExtra = tableRunRPr;
+
   for (const row of token.rows) {
     xml += '<w:tr>';
     if (row.header) {
@@ -3818,7 +4007,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         mergeMap.set(gridCol, { remaining: rs - 1, colspan: cs });
       }
 
-      xml += '<w:tc>' + tcPr + '<w:p>';
+      xml += '<w:tc>' + tcPr + '<w:p>' + tablePPr;
       // Auto-bold header cells to match Word's default table header styling.
       // Word applies bold to header rows via table styles; we reproduce that here.
       const cellRuns = row.header
@@ -3830,6 +4019,8 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     }
     xml += '</w:tr>';
   }
+
+  state.tableRunRPrExtra = prevRunRPrExtra;
 
   xml += '</w:tbl>';
   return xml;
@@ -4089,8 +4280,14 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.sourceFormat) {
         state.tableFormats.set(state.tableIndex, token.sourceFormat);
       }
-      state.tableIndex++;
+      if (token.tableFontSize !== undefined) {
+        state.tableFontSizes.set(state.tableIndex, token.tableFontSize);
+      }
+      if (token.tableFont) {
+        state.tableFonts.set(state.tableIndex, token.tableFont);
+      }
       body += generateTable(token, state, options, bibEntries, citeprocEngine);
+      state.tableIndex++;
     } else {
       body += generateParagraph(token, state, options, bibEntries, citeprocEngine);
     }
@@ -4165,7 +4362,8 @@ export async function convertMdToDocx(
 
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
-  const tokens = parseMd(bodyWithoutFootnotes);
+  const parseWarnings: string[] = [];
+  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings);
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.
@@ -4184,7 +4382,7 @@ export async function convertMdToDocx(
 
   // Create citeproc engine if CSL style specified in frontmatter
   let citeprocEngine: any;
-  const earlyWarnings: string[] = [];
+  const earlyWarnings: string[] = [...parseWarnings];
   if (frontmatter.csl && bibEntries) {
     let styleName = frontmatter.csl;
 
@@ -4249,6 +4447,19 @@ export async function convertMdToDocx(
   }
 
   const hasTheme = !!templateParts?.has('word/theme/theme1.xml');
+
+  // Recompute auto-shrink baseline from template Normal style BEFORE document
+  // generation so generateTable() compares per-table sizes against the correct
+  // document-level default (not the hardcoded DEFAULT_BODY_HP fallback).
+  if (fontOverrides.tableSizeFromDefault && templateParts?.has('word/styles.xml')) {
+    const templateBodyHp = extractNormalStyleSizeHp(
+      new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!)
+    );
+    if (templateBodyHp !== undefined) {
+      fontOverrides.tableSizeHp = Math.max(1, templateBodyHp - 4);
+    }
+  }
+
   const notesMode = frontmatter.notes === 'endnotes' ? 'endnotes' as const : 'footnotes' as const;
 
   // Reserve rId slots: 1=styles, 2=numbering, 3=comments,
@@ -4300,9 +4511,13 @@ export async function convertMdToDocx(
     nextImageDocPrId: 1,
     tableIndex: 0,
     tableFormats: new Map(),
+    tableFontSizes: new Map(),
+    tableFonts: new Map(),
+    fontOverrides,
     listIndent: detectListIndent(bodyWithoutFootnotes),
     consecutiveReplyParaIds: new Set(),
     htmlCommentGaps,
+    tableRunRPrExtra: '',
   };
 
   // Pre-scan footnote definitions for citation keys so the bibliography
@@ -4353,7 +4568,7 @@ export async function convertMdToDocx(
       continue;
     }
     // Parse the definition body into tokens and generate OOXML
-    const bodyTokens = parseMd(bodyText);
+    const bodyTokens = parseMd(bodyText, state.warnings);
     // Generate paragraph OOXML for the note body
     const selfRefTag = state.notesMode === 'endnotes' ? 'w:endnoteRef' : 'w:footnoteRef';
     const pStyle = state.notesMode === 'endnotes' ? 'EndnoteText' : 'FootnoteText';
@@ -4365,15 +4580,23 @@ export async function convertMdToDocx(
       const t = bodyTokens[ti];
       if (ti === 0) {
         if (t.type === 'table') {
+          if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
+          if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
+          if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + runs + '</w:p>';
         }
       } else {
         if (t.type === 'table') {
+          if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
+          if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
+          if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
           bodyXml += '<w:p>' + paragraphPPr + runs + '</w:p>';
@@ -4483,6 +4706,8 @@ export async function convertMdToDocx(
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
   customProps.push(...imageFormatProps(state.imageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
+  customProps.push(...tableFontSizeProps(state.tableFontSizes));
+  customProps.push(...tableFontProps(state.tableFonts));
   customProps.push(...listIndentProps(state));
   customProps.push(...consecutiveReplyProps(state));
   customProps.push(...htmlCommentGapProps(state.htmlCommentGaps));

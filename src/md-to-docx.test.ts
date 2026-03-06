@@ -159,6 +159,31 @@ describe('GFM support in Markdown→DOCX parser', () => {
     expect(listItems[1].runs.map(r => r.text).join('')).not.toContain('[ ]');
   });
 
+  it('does not promote nested sublist paragraph to parent list item', () => {
+    // Parent has no direct text — only a nested sublist.
+    // The child's paragraph must NOT be captured as the parent's runs.
+    const tokens = parseMd('- parent\n  - child text\n');
+    const items = tokens.filter(t => t.type === 'list_item');
+    expect(items).toHaveLength(2);
+    expect(items[0].runs.map(r => r.text).join('')).toBe('parent');
+    expect(items[1].runs.map(r => r.text).join('')).toBe('child text');
+  });
+
+  it('parent list item with only a nested sublist gets empty runs', () => {
+    // A list item whose only content is a nested sublist should have empty runs.
+    const md = '- - child only\n';
+    const tokens = parseMd(md);
+    const items = tokens.filter(t => t.type === 'list_item');
+    // The outer item should have no text runs (it has no direct paragraph)
+    const outerItem = items.find(i => i.level === 1);
+    expect(outerItem).toBeDefined();
+    expect(outerItem!.runs.map(r => r.text).join('')).toBe('');
+    // The nested child item should exist and contain the expected text
+    const childItem = items.find(i => i.level === 2);
+    expect(childItem).toBeDefined();
+    expect(childItem!.runs.map(r => r.text).join('')).toBe('child only');
+  });
+
   it('escapes GFM-disallowed raw HTML tags into literal text runs', () => {
     const tokens = parseMd('<script>alert(1)</script>');
     expect(tokens).toHaveLength(1);

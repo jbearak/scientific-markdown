@@ -4,9 +4,11 @@ import {
   resolveFontOverrides,
   applyFontOverridesToTemplate,
   convertMdToDocx,
+  parseMd,
   type FontOverrides,
 } from './md-to-docx';
-import { parseFrontmatter } from './frontmatter';
+import { parseFrontmatter, serializeFrontmatter } from './frontmatter';
+import { extractHtmlTables } from './html-table-parser';
 
 // Helper: extract a <w:style ...styleId="X"...>...</w:style> block from styles XML
 function extractStyleBlock(xml: string, styleId: string): string | null {
@@ -148,9 +150,12 @@ describe('Font customization unit tests', () => {
   // Validates: Requirement 4.2
   // ---------------------------------------------------------------
   describe('template passthrough', () => {
-    it('returns undefined overrides when no font fields set', () => {
+    it('returns auto-shrink overrides even when no font fields set', () => {
       const overrides = resolveFontOverrides({});
-      expect(overrides).toBeUndefined();
+      expect(overrides).toBeDefined();
+      // Default auto-shrink: 22hp - 4 = 18hp (9pt)
+      expect(overrides.tableSizeHp).toBe(18);
+      expect(overrides.tableSizeFromDefault).toBe(true);
     });
 
     it('leaves template unmodified when overrides have no applicable values', () => {
@@ -230,7 +235,7 @@ describe('Font customization unit tests', () => {
       expect(extractSzVal(codeBlock)).toBe(26);
     });
 
-    it('uses default styles when no font frontmatter is present', async () => {
+    it('uses default styles with auto-shrink TableParagraph when no font frontmatter is present', async () => {
       const markdown = 'Just plain text';
       const result = await convertMdToDocx(markdown);
 
@@ -238,9 +243,10 @@ describe('Font customization unit tests', () => {
       const zip = await JSZip.loadAsync(result.docx);
       const stylesContent = await zip.file('word/styles.xml')!.async('string');
 
-      // Should match default stylesXml() output
-      const defaultXml = stylesXml();
-      expect(stylesContent).toBe(defaultXml);
+      // Auto-shrink always applies: TableParagraph with sz=18 (9pt = 11pt body - 2pt)
+      const tablePara = extractStyleBlock(stylesContent, 'TableParagraph')!;
+      expect(tablePara).toBeDefined();
+      expect(extractSzVal(tablePara)).toBe(18);
     });
 
     it('applies code-font override to code styles', async () => {
@@ -269,6 +275,306 @@ describe('Font customization unit tests', () => {
       expect(docContent).toContain('w:ascii="Fira Code"');
       expect(docContent).toContain('w:hAnsi="Fira Code"');
       expect(docContent).not.toContain('w:ascii="Consolas"');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 7. Table font frontmatter parsing
+  // ---------------------------------------------------------------
+  describe('table font frontmatter', () => {
+    it('parses table-font and table-font-size', () => {
+      const { metadata } = parseFrontmatter('---\ntable-font: Arial\ntable-font-size: 9\n---\n');
+      expect(metadata.tableFont).toBe('Arial');
+      expect(metadata.tableFontSize).toBe(9);
+    });
+
+    it('ignores invalid table-font-size', () => {
+      const { metadata } = parseFrontmatter('---\ntable-font-size: abc\n---\n');
+      expect(metadata.tableFontSize).toBeUndefined();
+    });
+
+    it('serializes table-font and table-font-size', () => {
+      const fm = serializeFrontmatter({ tableFont: 'Arial', tableFontSize: 9 });
+      expect(fm).toContain('table-font: Arial');
+      expect(fm).toContain('table-font-size: 9');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 8. resolveFontOverrides with table fields
+  // ---------------------------------------------------------------
+  describe('resolveFontOverrides table fields', () => {
+    it('sets tableSizeHp from explicit table-font-size', () => {
+      const overrides = resolveFontOverrides({ tableFontSize: 9 })!;
+      expect(overrides).toBeDefined();
+      expect(overrides.tableSizeHp).toBe(18);
+    });
+
+    it('sets tableFont from table-font', () => {
+      const overrides = resolveFontOverrides({ tableFont: 'Arial' })!;
+      expect(overrides).toBeDefined();
+      expect(overrides.tableFont).toBe('Arial');
+    });
+
+    it('auto-shrinks: body - 2pt when only font-size is set', () => {
+      const overrides = resolveFontOverrides({ fontSize: 12 })!;
+      expect(overrides).toBeDefined();
+      // body = 24hp, auto-shrink = 24 - 4 = 20hp = 10pt
+      expect(overrides.tableSizeHp).toBe(20);
+    });
+
+    it('does not auto-shrink when table-font-size is explicit', () => {
+      const overrides = resolveFontOverrides({ fontSize: 12, tableFontSize: 11 })!;
+      expect(overrides.tableSizeHp).toBe(22);
+    });
+
+    it('auto-shrinks when table-font is set without table-font-size', () => {
+      const overrides = resolveFontOverrides({ fontSize: 12, tableFont: 'Arial' })!;
+      // auto-shrink applies regardless of tableFont: body 24hp - 4 = 20hp
+      expect(overrides.tableSizeHp).toBe(20);
+    });
+
+    it('clamps auto-shrink to minimum 1hp', () => {
+      const overrides = resolveFontOverrides({ fontSize: 1 })!;
+      // body = 2hp, auto-shrink = max(1, 2 - 4) = 1
+      expect(overrides.tableSizeHp).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 9. stylesXml TableParagraph style output
+  // ---------------------------------------------------------------
+  describe('stylesXml TableParagraph', () => {
+    it('includes TableParagraph when table overrides exist', () => {
+      const overrides = resolveFontOverrides({ tableFontSize: 9 })!;
+      const xml = stylesXml(overrides);
+      const block = extractStyleBlock(xml, 'TableParagraph');
+      expect(block).toBeDefined();
+      expect(extractSzVal(block!)).toBe(18);
+    });
+
+    it('includes tableFont in TableParagraph', () => {
+      const overrides = resolveFontOverrides({ tableFont: 'Arial', tableFontSize: 9 })!;
+      const xml = stylesXml(overrides);
+      const block = extractStyleBlock(xml, 'TableParagraph')!;
+      expect(extractRFontsAscii(block)).toBe('Arial');
+    });
+
+    it('omits TableParagraph when no table overrides', () => {
+      const xml = stylesXml();
+      const block = extractStyleBlock(xml, 'TableParagraph');
+      expect(block).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 10. Per-table directive comment parsing in parseMd
+  // ---------------------------------------------------------------
+  describe('per-table directive parsing', () => {
+    it('transfers table-font-size directive to table token', () => {
+      const tokens = parseMd('<!-- table-font-size: 8 -->\n\n| A | B |\n|---|---|\n| 1 | 2 |');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableFontSize).toBe(8);
+      // Directive comment should be spliced out
+      expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment' && r.text.includes('table-font-size')))).toHaveLength(0);
+    });
+
+    it('transfers table-font directive to table token', () => {
+      const tokens = parseMd('<!-- table-font: Times New Roman -->\n\n| A |\n|---|\n| 1 |');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableFont).toBe('Times New Roman');
+    });
+
+    it('ignores directives not followed by a table', () => {
+      const tokens = parseMd('<!-- table-font-size: 8 -->\n\nHello');
+      expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment'))).toHaveLength(1);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 11. HTML table data-font-size / data-font attribute parsing
+  // ---------------------------------------------------------------
+  describe('HTML table font attributes', () => {
+    it('extracts data-font-size from <table> tag', () => {
+      const tables = extractHtmlTables('<table data-font-size="8"><tr><td>A</td></tr></table>');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].fontSize).toBe(8);
+    });
+
+    it('extracts data-font from <table> tag', () => {
+      const tables = extractHtmlTables('<table data-font="Arial"><tr><td>A</td></tr></table>');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].font).toBe('Arial');
+    });
+
+    it('preserves apostrophes in double-quoted data-font value', () => {
+      const tables = extractHtmlTables('<table data-font="O\'Brien Sans"><tr><td>A</td></tr></table>');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].font).toBe("O'Brien Sans");
+    });
+
+    it('preserves double quotes in single-quoted data-font value', () => {
+      const tables = extractHtmlTables("<table data-font='My \"Special\" Font'><tr><td>A</td></tr></table>");
+      expect(tables).toHaveLength(1);
+      expect(tables[0].font).toBe('My "Special" Font');
+    });
+
+    it('parseMd transfers HTML table data attributes to MdToken', () => {
+      const tokens = parseMd('<table data-font-size="8" data-font="Arial"><tr><td>A</td></tr></table>');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableFontSize).toBe(8);
+      expect(tables[0].tableFont).toBe('Arial');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 12. Integration: table cell paragraphs get font styling in docx
+  // ---------------------------------------------------------------
+  describe('integration: table font in docx output', () => {
+    it('applies table-font-size to table cell paragraphs', async () => {
+      const markdown = '---\ntable-font-size: 9\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docContent = await zip.file('word/document.xml')!.async('string');
+      // Should have TableParagraph style reference and size 18hp (9pt)
+      expect(docContent).toContain('w:val="TableParagraph"');
+      const stylesContent = await zip.file('word/styles.xml')!.async('string');
+      const block = extractStyleBlock(stylesContent, 'TableParagraph')!;
+      expect(block).toBeDefined();
+      expect(extractSzVal(block)).toBe(18);
+    });
+
+    it('auto-shrinks table font when font-size is set', async () => {
+      const markdown = '---\nfont-size: 12\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const stylesContent = await zip.file('word/styles.xml')!.async('string');
+      const block = extractStyleBlock(stylesContent, 'TableParagraph')!;
+      expect(block).toBeDefined();
+      // 12pt body = 24hp, auto-shrink = 20hp = 10pt
+      expect(extractSzVal(block)).toBe(20);
+    });
+
+    it('per-table directive overrides document-level table font', async () => {
+      const markdown = '---\ntable-font-size: 9\n---\n\n<!-- table-font-size: 7 -->\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docContent = await zip.file('word/document.xml')!.async('string');
+      // Per-table override: 7pt = 14hp, should appear as w:sz inside w:rPr
+      expect(docContent).toMatch(/<w:rPr>[\s\S]*?<w:sz w:val="14"\/>/);
+    });
+
+    it('HTML table data-font-size applies to cell paragraphs', async () => {
+      const markdown = '<table data-font-size="8"><tr><td>A</td></tr></table>';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docContent = await zip.file('word/document.xml')!.async('string');
+      // 8pt = 16hp, should appear as w:sz inside w:rPr
+      expect(docContent).toMatch(/<w:rPr>[\s\S]*?<w:sz w:val="16"\/>/);
+    });
+
+    it('table-font family is written to styles.xml', async () => {
+      const markdown = '---\ntable-font: "O\'Brien Sans"\ntable-font-size: 8\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const stylesContent = await zip.file('word/styles.xml')!.async('string');
+      expect(stylesContent).toMatch(/w:rFonts[^>]*O'Brien Sans/);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 13. Round-trip: md → docx → md
+  // ---------------------------------------------------------------
+  describe('round-trip table font', () => {
+    it('round-trips document-level table-font-size', async () => {
+      // Use 8pt (16hp) which differs from auto-shrink default (18hp) to survive suppression
+      const markdown = '---\ntable-font-size: 8\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      expect(metadata.tableFontSize).toBe(8);
+    });
+
+    it('round-trips document-level table-font', async () => {
+      // Use 8pt to avoid auto-shrink suppression
+      const markdown = '---\ntable-font: Arial\ntable-font-size: 8\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      expect(metadata.tableFont).toBe('Arial');
+      expect(metadata.tableFontSize).toBe(8);
+    });
+
+    it('auto-shrink value is suppressed on round-trip (auto-shrink reproduces it)', async () => {
+      const markdown = '---\nfont-size: 12\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      // Auto-shrink = 10pt = auto default, suppressed since auto-shrink reproduces it
+      expect(metadata.tableFontSize).toBeUndefined();
+    });
+
+    it('auto-shrink applies when table-font is set without explicit table-font-size', async () => {
+      // body 12pt + table-font: Arial → auto-shrink gives tables 10pt
+      const markdown = '---\nfont-size: 12\ntable-font: Arial\n---\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      expect(metadata.tableFont).toBe('Arial');
+      // Auto-shrink = 10pt = auto default, suppressed since auto-shrink reproduces it
+      expect(metadata.tableFontSize).toBeUndefined();
+    });
+
+    it('per-table font-size directive applies inline rPr on runs', async () => {
+      const markdown = '---\ntable-font-size: 10\n---\n\n<!-- table-font-size: 8 -->\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docXml = await zip.file('word/document.xml')!.async('string');
+      // Runs in the 8pt table must have inline w:sz inside w:rPr (not just pPr > rPr)
+      expect(docXml).toMatch(/<w:r><w:rPr>[\s\S]*?<w:sz w:val="16"\/>/);
+    });
+
+    it('round-trips per-table font-size directive for pipe tables', async () => {
+      const markdown = '---\ntable-font-size: 9\n---\n\n<!-- table-font-size: 7 -->\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain('<!-- table-font-size: 7 -->');
+    });
+
+    it('round-trips per-table font-size for HTML tables via data-font-size', async () => {
+      const markdown = '---\ntable-font-size: 9\npipe-table-max-line-width: 0\n---\n\n<table data-font-size="7">\n  <tr>\n    <td>\n      <p>A</p>\n    </td>\n  </tr>\n</table>';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain('data-font-size="7"');
+    });
+
+    it('round-trips per-table font override with apostrophe in name', async () => {
+      const markdown = '---\ntable-font-size: 9\n---\n\n<!-- table-font: O\'Brien Sans -->\n\n| A |\n|---|\n| 1 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docXml = await zip.file('word/document.xml')!.async('string');
+      // Per-table font should produce w:rFonts in run rPr
+      expect(docXml).toMatch(/w:rFonts[^>]*O'Brien Sans/);
+      // Round-trip: convert back to markdown and check the directive is preserved
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain("table-font: O'Brien Sans");
     });
   });
 });

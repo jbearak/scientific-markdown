@@ -22,16 +22,40 @@ export interface HtmlTableRow {
   header: boolean;
 }
 
-export function extractHtmlTables(html: string): HtmlTableRow[][] {
-  const tables: HtmlTableRow[][] = [];
+export interface HtmlTableMeta {
+  rows: HtmlTableRow[];
+  fontSize?: number;   // from data-font-size attribute
+  font?: string;       // from data-font attribute
+}
+
+export function extractHtmlTables(html: string): HtmlTableMeta[] {
+  const tables: HtmlTableMeta[] = [];
   // Regex-based extraction intentionally does not support nested <table> blocks.
   // This parser targets simple manuscript tables (<table>/<tr>/<th>/<td>).
-  const tableRegex = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+  const tableRegex = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi;
   let tableMatch: RegExpExecArray | null;
   while ((tableMatch = tableRegex.exec(html)) !== null) {
-    const rows = extractHtmlTableRows(tableMatch[1]);
+    const attrs = tableMatch[1];
+    const rows = extractHtmlTableRows(tableMatch[2]);
     // Invariant: only non-empty row sets are returned to callers.
-    if (rows.length > 0) tables.push(rows);
+    if (rows.length > 0) {
+      const meta: HtmlTableMeta = { rows };
+      const fontSizeMatch = attrs.match(/data-font-size\s*=\s*["']?(\d+(?:\.\d+)?)["']?/i);
+      if (fontSizeMatch) {
+        const n = parseFloat(fontSizeMatch[1]);
+        if (isFinite(n) && n > 0) meta.fontSize = n;
+      }
+      // data-font regex: separate double-quoted and single-quoted branches so that
+      // apostrophes inside double-quoted values (e.g. "O'Brien Sans") are preserved.
+      // After extraction the value is HTML-entity-decoded and whitespace-normalized.
+      const fontMatch = attrs.match(/data-font\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"]+))/i);
+      const fontVal = fontMatch ? (fontMatch[1] ?? fontMatch[2] ?? fontMatch[3]) : undefined;
+      if (fontVal) {
+        const normalized = decodeHtmlEntities(fontVal).trim().replace(/\s+/g, ' ');
+        if (normalized) meta.font = normalized;
+      }
+      tables.push(meta);
+    }
   }
   return tables;
 }
