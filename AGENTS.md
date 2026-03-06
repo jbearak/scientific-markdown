@@ -19,7 +19,9 @@ LSP: `src/lsp/server.ts` (language server — diagnostics, completions)
 - Inline code in HTML-table cells: choose a backtick fence longer than the longest backtick run in cell text (and add fence padding only when content starts/ends with backticks) to preserve literal backticks.
 - Pipe-table escaping invariant: when emitting HTML-table cell text to pipe tables, ensure each literal `|` has an odd number of preceding backslashes so parser splitting does not create extra columns.
 - Regex parity invariant: keep navigation (`src/changes.ts`) plain-highlight lookaround logic in lockstep with `syntaxes/manuscript-markdown.json` and mirrored regex test copies.
-
+- Comment paraId invariant: md→docx writes comment `w14:paraId` on the last `<w:p>` in each comment; docx→md must read the last available paraId (with first-paragraph fallback for third-party files) so threading round-trips.
+- Consecutive reply invariant: when consuming consecutive `critic_comment` runs, preserve any nested reply blocks (`replyRun.replies`) as child comments instead of dropping them.
+- Notes namespace invariant: any XML part that may receive injected `w14:paraId` attributes (document/footnotes/endnotes) must declare `xmlns:w14`.
 Per-module learnings live as comments in the corresponding source files.
 
 ## Quick commands

@@ -194,8 +194,15 @@ describe('Comment reply threads: MD→DOCX', () => {
     expect(contentTypesXml).toContain('/word/commentsExtensible.xml');
     expect(contentTypesXml).toContain('/word/people.xml');
 
-    // Check that w14:paraId is on the first <w:p> of each comment
-    expect(commentsXml).toContain('w14:paraId');
+    // Check that w14:paraId is on the last <w:p> of each <w:comment>
+    const commentBlocks = commentsXml.match(/<w:comment[\s\S]*?<\/w:comment>/g)!;
+    expect(commentBlocks.length).toBeGreaterThan(0);
+    for (const block of commentBlocks) {
+      const paragraphs = block.match(/<w:p[^>]*>/g)!;
+      expect(paragraphs.length).toBeGreaterThan(0);
+      const lastP = paragraphs[paragraphs.length - 1];
+      expect(lastP).toContain('w14:paraId');
+    }
   });
 
   test('anchors parent and reply comment ranges in document.xml', async () => {
@@ -353,6 +360,21 @@ describe('Consecutive reply format preservation', () => {
     expect(result.markdown).toContain('\n  {>>@Bob');
     expect(result.markdown).toContain('\n<<}');
   });
+
+  test('consecutive replies preserve reply-on-reply entries', async () => {
+    const md = `{==some text==}{>>@Alice (2024-01-15T14:30-05:00) | Parent comment<<}{>>@Bob (2024-01-16T10:00-05:00) | Mid reply
+  {>>@Carol (2024-01-17T09:00-05:00) | Nested reply<<}
+<<}`;
+
+    const { docx } = await convertMdToDocx(md);
+    const zip = await JSZip.loadAsync(docx);
+
+    const commentsXml = await zip.file('word/comments.xml')!.async('string');
+    expect((commentsXml.match(/w:comment /g) || []).length).toBe(3);
+
+    const extXml = await zip.file('word/commentsExtended.xml')!.async('string');
+    expect((extXml.match(/w15:paraIdParent/g) || []).length).toBe(2);
+  });
 });
 
 describe('Multi-level reply chain flattening', () => {
@@ -406,5 +428,76 @@ describe('No-reply regression', () => {
     expect(md).toContain('<<}');
     // Should NOT have nested reply pattern
     expect(md).not.toContain('\n  {>>');
+  });
+});
+
+describe('Real-world multi-thread comment export (no duplicates, threaded replies)', () => {
+  // Threads modeled on user's manuscript patterns
+  const md = [
+    // Thread 1: simple highlight + comment with 1 reply
+    '{==goals ==}{>>@Megan Kavanaugh (2025-12-10 10:18) | reproductive goals?',
+    '  {>>@Jonathan Bearak (2026-03-02 11:54) | Life goals is broader than reproductive goals.<<}',
+    '<<}',
+    '',
+    // Thread 2: highlight + comment with 2 replies
+    '{==Typical-person==}{>>@Megan Kavanaugh (2025-12-10 10:38) | similar to comment in the abstract',
+    '  {>>@Kathryn Kost (2026-03-01 02:04) | See if this works.<<}',
+    '  {>>@Jonathan Bearak (2026-03-03 04:21) | I appreciate the attempt to address this comment here.<<}',
+    '<<}',
+    '',
+    // Thread 3: highlight with track changes inside + comment with 2 replies
+    '{==Our model simultaneously fits {--the probabilities of abortion--}{++the monthly probability of conceiving a pregnancy ending in abortion++} to both data sources==}{>>@Isaac Maddow-Zimet (2025-12-12 11:16) | What is this probability referring to?',
+    '  {>>@Kathryn Kost (2026-03-01 02:45) | If IMZ language is correct, put it in.<<}',
+    '  {>>@Jonathan Bearak (2026-03-03 08:18) | Revised to clarify.<<}',
+    '<<}',
+    '',
+    // Thread 4: simple highlight + comment with 1 reply
+    '{==abortions==}{>>@Isaac Maddow-Zimet (2025-12-15 05:10) | Why are we bounding the uniform prior at 0.01?',
+    '  {>>@Kathryn Kost (2026-03-01 07:06) | Add explanatory sentence here.<<}',
+    '<<}',
+  ].join('\n');
+
+  test('produces exactly 10 comments (4 parents + 6 replies), no duplicates', async () => {
+    const { docx } = await convertMdToDocx(md);
+    const zip = await JSZip.loadAsync(docx);
+
+    const commentsXml = await zip.file('word/comments.xml')!.async('string');
+    const commentMatches = commentsXml.match(/w:comment /g) || [];
+    expect(commentMatches.length).toBe(10);
+
+    // No duplicate comment IDs
+    const idMatches = [...commentsXml.matchAll(/w:comment [^>]*w:id="(\d+)"/g)];
+    const ids = idMatches.map(m => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test('all replies are threaded (have paraIdParent in commentsExtended.xml)', async () => {
+    const { docx } = await convertMdToDocx(md);
+    const zip = await JSZip.loadAsync(docx);
+
+    const extXml = await zip.file('word/commentsExtended.xml')!.async('string');
+    // 6 replies should have paraIdParent
+    const parentMatches = extXml.match(/w15:paraIdParent/g) || [];
+    expect(parentMatches.length).toBe(6);
+
+    // 10 total commentEx entries (4 parents + 6 replies)
+    const exMatches = extXml.match(/w15:commentEx /g) || [];
+    expect(exMatches.length).toBe(10);
+  });
+
+  test('reply comment anchors in document.xml match allocated reply IDs', async () => {
+    const { docx } = await convertMdToDocx(md);
+    const zip = await JSZip.loadAsync(docx);
+
+    const commentsXml = await zip.file('word/comments.xml')!.async('string');
+    const docXml = await zip.file('word/document.xml')!.async('string');
+
+    // Extract all comment IDs from comments.xml
+    const commentIds = [...commentsXml.matchAll(/w:comment [^>]*w:id="(\d+)"/g)].map(m => m[1]);
+
+    // Every comment ID should have a commentReference in document.xml
+    for (const id of commentIds) {
+      expect(docXml).toContain('w:commentReference w:id="' + id + '"');
+    }
   });
 });
