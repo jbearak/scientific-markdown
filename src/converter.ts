@@ -1160,6 +1160,28 @@ export async function extractPipeTableMaxLineWidth(data: Uint8Array | JSZip): Pr
   return null;
 }
 
+export async function extractGridTableMaxLineWidth(data: Uint8Array | JSZip): Promise<number | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== 'MANUSCRIPT_GRID_TABLE_MAX_LINE_WIDTH') continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
+      if (child['vt:lpwstr'] !== undefined) {
+        const raw = nodeText(child['vt:lpwstr'] || []).trim();
+        if (!/^\d+$/.test(raw)) continue;
+        return parseInt(raw, 10);
+      }
+    }
+  }
+  return null;
+}
+
 // Extract blockquote gap metadata from custom XML properties.
 // Returns a Map<number, number> mapping group index → blank-line count between
 // that group and the next.  Uses the same chunked-JSON pattern as code block
@@ -3289,7 +3311,9 @@ function tryRenderGridTable(
   table: { rows: TableRow[] },
   comments: Map<string, Comment>,
   renderOpts?: RenderOpts,
+  maxLineWidth?: number,
 ): string | null {
+  if (maxLineWidth !== undefined && maxLineWidth <= 0) return null;
   const rows = table.rows;
   if (rows.length === 0) return null;
 
@@ -3355,6 +3379,12 @@ function tryRenderGridTable(
     }
   }
 
+  // Check width limit (separator line is always the widest)
+  if (maxLineWidth !== undefined && Number.isFinite(maxLineWidth)) {
+    const totalWidth = colWidths.reduce((s, w) => s + w + 3, 1);
+    if (totalWidth > maxLineWidth) { rollback(); return null; }
+  }
+
   // Build separator line
   const makeSep = (ch: string) =>
     '+' + colWidths.map(w => ch.repeat(w + 2)).join('+') + '+';
@@ -3416,7 +3446,7 @@ function tryRenderGridTable(
 function renderTableOrFallback(
   item: { rows: TableRow[] },
   comments: Map<string, Comment>,
-  options?: { pipeTableMaxLineWidth?: number; tableIndent?: string },
+  options?: { pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; tableIndent?: string },
   renderOpts?: RenderOpts,
   storedFormat?: string,
   tableIndex?: number,
@@ -3451,10 +3481,11 @@ function renderTableOrFallback(
   if (storedFormat === 'html' || forceHtmlTable) {
     return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
   }
-  // If original was grid, try grid first to preserve format
+  // If original was grid, try grid then fall back to HTML (skip pipe)
   if (storedFormat === 'grid') {
-    const gridResult = tryRenderGridTable(item, comments, renderOpts);
+    const gridResult = tryRenderGridTable(item, comments, renderOpts, options?.gridTableMaxLineWidth);
     if (gridResult !== null) return fontPrefix + gridResult;
+    return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
   }
   // When the original was a pipe table, skip the width check to preserve format
   const pipeMax = storedFormat === 'pipe' ? Infinity : (options?.pipeTableMaxLineWidth ?? 120);
@@ -3462,13 +3493,18 @@ function renderTableOrFallback(
   if (pipeResult !== null) {
     return fontPrefix + pipeResult;
   }
+  // For tables without a stored format, try grid before falling back to HTML
+  if (storedFormat !== 'pipe') {
+    const gridResult = tryRenderGridTable(item, comments, renderOpts, options?.gridTableMaxLineWidth);
+    if (gridResult !== null) return fontPrefix + gridResult;
+  }
   return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
 }
 
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -4572,10 +4608,10 @@ function extractFontOverridesFromStyles(stylesXml: string): Partial<Frontmatter>
 export async function convertDocx(
   data: Uint8Array,
   format: CitationKeyFormat = 'authorYearTitle',
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; existingBibtex?: string },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4594,6 +4630,7 @@ export async function convertDocx(
     extractTableFontSizeMapping(zip),
     extractTableFontMapping(zip),
     extractPipeTableMaxLineWidth(zip),
+    extractGridTableMaxLineWidth(zip),
     extractListIndent(zip),
     extractConsecutiveReplyParaIds(zip),
     extractFrontmatterBlankLines(zip),
@@ -4612,6 +4649,11 @@ export async function convertDocx(
   const resolvedPipeTableMaxLineWidth = validWidth(options?.pipeTableMaxLineWidth)
     ?? validWidth(storedPipeTableMaxLineWidth)
     ?? validWidth(options?.pipeTableMaxLineWidthDefault)
+    ?? 120;
+
+  const resolvedGridTableMaxLineWidth = validWidth(options?.gridTableMaxLineWidth)
+    ?? validWidth(storedGridTableMaxLineWidth)
+    ?? validWidth(options?.gridTableMaxLineWidthDefault)
     ?? 120;
 
   // Group reply comments under their parents and get IDs to exclude from ranges
@@ -4714,6 +4756,7 @@ export async function convertDocx(
     tableIndent: options?.tableIndent,
     alwaysUseCommentIds: options?.alwaysUseCommentIds,
     pipeTableMaxLineWidth: resolvedPipeTableMaxLineWidth,
+    gridTableMaxLineWidth: resolvedGridTableMaxLineWidth,
     commentIdMapping,
     notes: notesMap.size > 0 ? { map: notesMap, assignedLabels } : undefined,
     codeBlockLangs: codeBlockLangMapping,
@@ -4786,6 +4829,9 @@ export async function convertDocx(
   // so that an intentional `pipe-table-max-line-width: 120` survives round-trip.
   if (resolvedPipeTableMaxLineWidth !== 120 || storedPipeTableMaxLineWidth != null || validWidth(options?.pipeTableMaxLineWidth) != null) {
     fm.pipeTableMaxLineWidth = resolvedPipeTableMaxLineWidth;
+  }
+  if (resolvedGridTableMaxLineWidth !== 120 || storedGridTableMaxLineWidth != null || validWidth(options?.gridTableMaxLineWidth) != null) {
+    fm.gridTableMaxLineWidth = resolvedGridTableMaxLineWidth;
   }
   const frontmatterStr = serializeFrontmatter(fm);
   if (frontmatterStr) {

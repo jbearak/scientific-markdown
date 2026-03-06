@@ -3320,6 +3320,11 @@ function pipeTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
   return [{ name: 'MANUSCRIPT_PIPE_TABLE_MAX_LINE_WIDTH', value: String(fm.pipeTableMaxLineWidth) }];
 }
 
+function gridTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
+  if (fm.gridTableMaxLineWidth === undefined) return [];
+  return [{ name: 'MANUSCRIPT_GRID_TABLE_MAX_LINE_WIDTH', value: String(fm.gridTableMaxLineWidth) }];
+}
+
 function listIndentProps(state: DocxGenState): CustomPropEntry[] {
   if (state.listIndent === 'tab') {
     return [{ name: 'MANUSCRIPT_LIST_INDENT', value: 'tab' }];
@@ -5024,6 +5029,7 @@ export async function convertMdToDocx(
   customProps.push(...codeBlockLanguageProps(state.codeBlockLanguages));
   customProps.push(...codeBlockStylingProps(frontmatter));
   customProps.push(...pipeTableMaxLineWidthProps(frontmatter));
+  customProps.push(...gridTableMaxLineWidthProps(frontmatter));
   customProps.push(...blockquoteGapProps(state.blockquoteGaps));
   customProps.push(...blockquotePreContentBlankLineProps(state.blockquotePreContentBlankLines));
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));

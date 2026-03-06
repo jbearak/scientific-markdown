@@ -24,6 +24,8 @@ export interface CliOptions {
   alwaysUseCommentIds: boolean;
   pipeTableMaxLineWidth: number;
   pipeTableMaxLineWidthExplicit: boolean;
+  gridTableMaxLineWidth: number;
+  gridTableMaxLineWidthExplicit: boolean;
   blockquoteStyle: BlockquoteStyle;
   colors: ColorScheme;
 }
@@ -42,6 +44,8 @@ export function parseArgs(argv: string[]): CliOptions {
     alwaysUseCommentIds: false,
     pipeTableMaxLineWidth: 120,
     pipeTableMaxLineWidthExplicit: false,
+    gridTableMaxLineWidth: 120,
+    gridTableMaxLineWidthExplicit: false,
     blockquoteStyle: 'GitHub',
     colors: 'guttmacher',
   };
@@ -97,6 +101,14 @@ export function parseArgs(argv: string[]): CliOptions {
       const n = parseInt(val, 10);
       options.pipeTableMaxLineWidth = n;
       options.pipeTableMaxLineWidthExplicit = true;
+    } else if (arg === '--grid-table-max-line-width') {
+      const val = requireValue('--grid-table-max-line-width');
+      if (!/^\d+$/.test(val)) {
+        throw new Error('Invalid grid table max line width "' + val + '". Use a non-negative integer');
+      }
+      const n = parseInt(val, 10);
+      options.gridTableMaxLineWidth = n;
+      options.gridTableMaxLineWidthExplicit = true;
     } else if (arg === '--blockquote-style') {
       const raw = requireValue('--blockquote-style');
       const style = normalizeBlockquoteStyle(raw);
@@ -151,6 +163,7 @@ Options:
   --csl-cache-dir <path>          CSL style cache directory
   --table-indent <n>              Spaces per indent level in HTML tables (DOCX→MD, default: 2)
   --pipe-table-max-line-width <n> Max line width for pipe tables; 0 = always HTML (DOCX→MD, default: 120)
+  --grid-table-max-line-width <n> Max line width for grid tables; 0 = always skip grid (DOCX→MD, default: 120)
   --always-use-comment-ids        Always use ID-based comment syntax (DOCX→MD)
   --blockquote-style <style>      Blockquote style: Quote, IntenseQuote, GitHub (MD→DOCX, default: GitHub)
   --colors <scheme>               Alert color scheme: GitHub, Guttmacher (MD→DOCX, default: Guttmacher)`);
@@ -214,6 +227,9 @@ async function runDocxToMd(options: CliOptions) {
     ...(options.pipeTableMaxLineWidthExplicit
       ? { pipeTableMaxLineWidth: options.pipeTableMaxLineWidth }
       : { pipeTableMaxLineWidthDefault: options.pipeTableMaxLineWidth }),
+    ...(options.gridTableMaxLineWidthExplicit
+      ? { gridTableMaxLineWidth: options.gridTableMaxLineWidth }
+      : { gridTableMaxLineWidthDefault: options.gridTableMaxLineWidth }),
   });
   fs.writeFileSync(mdPath, result.markdown);
   console.log(mdPath);

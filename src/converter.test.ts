@@ -67,7 +67,34 @@ describe('extractComments', () => {
 });
 
 describe('DOCX table conversion', () => {
-  test('renders DOCX table as HTML table with paragraph boundaries', async () => {
+  test('renders DOCX table as HTML table with paragraph boundaries when grid disabled', async () => {
+    const xml = wrapDocumentXml(
+      '<w:tbl>'
+      + '<w:tblPr><w:tblLook w:firstRow=\"1\"/></w:tblPr>'
+      + '<w:tr>'
+      + '<w:tc><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc>'
+      + '<w:tc><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc>'
+      + '</w:tr>'
+      + '<w:tr>'
+      + '<w:tc>'
+      + '<w:p><w:r><w:t>first paragraph</w:t></w:r></w:p>'
+      + '<w:p><w:r><w:t>second paragraph</w:t></w:r></w:p>'
+      + '</w:tc>'
+      + '<w:tc><w:p><w:r><w:t>value</w:t></w:r></w:p></w:tc>'
+      + '</w:tr>'
+      + '</w:tbl>'
+    );
+    const buf = await buildSyntheticDocx(xml);
+    const result = await convertDocx(buf, 'authorYearTitle', { gridTableMaxLineWidth: 0 });
+
+    expect(result.markdown).toContain('<table>');
+    expect(result.markdown).toContain('<th>');
+    expect(result.markdown).toContain('<td>');
+    expect(result.markdown).toContain('<p>first paragraph</p>');
+    expect(result.markdown).toContain('<p>second paragraph</p>');
+  });
+
+  test('renders DOCX table with multi-paragraph cell as grid table', async () => {
     const xml = wrapDocumentXml(
       '<w:tbl>'
       + '<w:tblPr><w:tblLook w:firstRow=\"1\"/></w:tblPr>'
@@ -87,11 +114,10 @@ describe('DOCX table conversion', () => {
     const buf = await buildSyntheticDocx(xml);
     const result = await convertDocx(buf);
 
-    expect(result.markdown).toContain('<table>');
-    expect(result.markdown).toContain('<th>');
-    expect(result.markdown).toContain('<td>');
-    expect(result.markdown).toContain('<p>first paragraph</p>');
-    expect(result.markdown).toContain('<p>second paragraph</p>');
+    expect(result.markdown).toContain('+');
+    expect(result.markdown).toContain('first paragraph');
+    expect(result.markdown).toContain('second paragraph');
+    expect(result.markdown).not.toContain('<table>');
   });
 
   test('preserves comments, highlights, citations, and math inside table cells', async () => {
@@ -164,8 +190,8 @@ describe('DOCX table conversion', () => {
       + '</w:tbl>'
     );
 
-    const withHeaderMd = (await convertDocx(await buildSyntheticDocx(withHeader), 'authorYearTitle', { pipeTableMaxLineWidth: 0 })).markdown;
-    const withoutHeaderMd = (await convertDocx(await buildSyntheticDocx(withoutHeader), 'authorYearTitle', { pipeTableMaxLineWidth: 0 })).markdown;
+    const withHeaderMd = (await convertDocx(await buildSyntheticDocx(withHeader), 'authorYearTitle', { pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 })).markdown;
+    const withoutHeaderMd = (await convertDocx(await buildSyntheticDocx(withoutHeader), 'authorYearTitle', { pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 })).markdown;
 
     expect(withHeaderMd).toContain('<th>');
     expect(withoutHeaderMd).not.toContain('<th>');
@@ -181,7 +207,7 @@ describe('DOCX table conversion', () => {
       + '</w:tbl>'
     );
     const buf = await buildSyntheticDocx(xml);
-    const result = await convertDocx(buf, 'authorYearTitle', { pipeTableMaxLineWidth: 0 });
+    const result = await convertDocx(buf, 'authorYearTitle', { pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 });
 
     const tableHtml = result.markdown.match(/<table>[\s\S]*?<\/table>/)?.[0] ?? '';
     expect(tableHtml).toContain('\n  <tr>');
@@ -201,7 +227,7 @@ describe('DOCX table conversion', () => {
       + '</w:tbl>'
     );
     const buf = await buildSyntheticDocx(xml);
-    const result = await convertDocx(buf, 'authorYearTitle', { tableIndent: '\t', pipeTableMaxLineWidth: 0 });
+    const result = await convertDocx(buf, 'authorYearTitle', { tableIndent: '\t', pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 });
 
     const tableHtml = result.markdown.match(/<table>[\s\S]*?<\/table>/)?.[0] ?? '';
     expect(tableHtml).toContain('\n\t<tr>');
@@ -218,7 +244,7 @@ describe('DOCX table conversion', () => {
       + '</w:tbl>'
     );
     const buf = await buildSyntheticDocx(xml);
-    const result = await convertDocx(buf, 'authorYearTitle', { tableIndent: '', pipeTableMaxLineWidth: 0 });
+    const result = await convertDocx(buf, 'authorYearTitle', { tableIndent: '', pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 });
 
     const tableHtml = result.markdown.match(/<table>[\s\S]*?<\/table>/)?.[0] ?? '';
     expect(tableHtml).toContain('\n<tr>');
@@ -320,6 +346,7 @@ describe('DOCX table conversion', () => {
       comments,
     );
 
+    // Force HTML so we can extract cell content from <p> tags
     const tableMarkdown = buildMarkdown(
       [
         {
@@ -333,6 +360,7 @@ describe('DOCX table conversion', () => {
         },
       ] as any,
       comments,
+      { pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 },
     );
 
     const paraMatch = tableMarkdown.match(/<p>([\s\S]*?)<\/p>/);
@@ -361,7 +389,7 @@ describe('DOCX table conversion', () => {
         },
       ] as any,
       comments,
-      { alwaysUseCommentIds: true, pipeTableMaxLineWidth: 0 },
+      { alwaysUseCommentIds: true, pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 },
     );
 
     const paraMatch = tableMarkdown.match(/<p>([\s\S]*?)<\/p>/);
@@ -499,7 +527,7 @@ describe('Pipe table rendering', () => {
     expect(result.markdown).toContain('rowspan="2"');
   });
 
-  test('table with multi-paragraph cell falls back to HTML', async () => {
+  test('table with multi-paragraph cell falls back to grid', async () => {
     const result = await buildAndConvertTable(
       '<w:tbl>'
       + '<w:tr>'
@@ -511,12 +539,13 @@ describe('Pipe table rendering', () => {
       + '</w:tbl>'
     );
 
-    expect(result.markdown).toContain('<table>');
-    expect(result.markdown).toContain('<p>para one</p>');
-    expect(result.markdown).toContain('<p>para two</p>');
+    expect(result.markdown).toContain('+');
+    expect(result.markdown).toContain('para one');
+    expect(result.markdown).toContain('para two');
+    expect(result.markdown).not.toContain('<table>');
   });
 
-  test('line width exceeding limit falls back to HTML', async () => {
+  test('line width exceeding pipe limit falls back to grid', async () => {
     const maxWidth = 80;
     const longText = 'x'.repeat(maxWidth);
     const result = await buildAndConvertTable(
@@ -526,6 +555,23 @@ describe('Pipe table rendering', () => {
       + '</w:tr>'
       + '</w:tbl>',
       { pipeTableMaxLineWidth: maxWidth },
+    );
+
+    expect(result.markdown).toContain('+');
+    expect(result.markdown).toContain(longText);
+    expect(result.markdown).not.toContain('<table>');
+  });
+
+  test('line width exceeding both pipe and grid limits falls back to HTML', async () => {
+    const maxWidth = 80;
+    const longText = 'x'.repeat(maxWidth);
+    const result = await buildAndConvertTable(
+      '<w:tbl>'
+      + '<w:tr>'
+      + '<w:tc><w:p><w:r><w:t>' + longText + '</w:t></w:r></w:p></w:tc>'
+      + '</w:tr>'
+      + '</w:tbl>',
+      { pipeTableMaxLineWidth: maxWidth, gridTableMaxLineWidth: maxWidth },
     );
 
     expect(result.markdown).toContain('<table>');
@@ -548,7 +594,7 @@ describe('Pipe table rendering', () => {
     expect(result.markdown).toContain('| ' + fittingText + ' |');
   });
 
-  test('pipeTableMaxLineWidth=0 always uses HTML', async () => {
+  test('pipeTableMaxLineWidth=0 falls back to grid', async () => {
     const result = await buildAndConvertTable(
       '<w:tbl>'
       + '<w:tr>'
@@ -556,6 +602,22 @@ describe('Pipe table rendering', () => {
       + '</w:tr>'
       + '</w:tbl>',
       { pipeTableMaxLineWidth: 0 },
+    );
+
+    expect(result.markdown).toContain('+');
+    expect(result.markdown).toContain('A');
+    expect(result.markdown).not.toContain('| A |');
+    expect(result.markdown).not.toContain('<table>');
+  });
+
+  test('pipeTableMaxLineWidth=0 and gridTableMaxLineWidth=0 always uses HTML', async () => {
+    const result = await buildAndConvertTable(
+      '<w:tbl>'
+      + '<w:tr>'
+      + '<w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>'
+      + '</w:tr>'
+      + '</w:tbl>',
+      { pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 },
     );
 
     expect(result.markdown).toContain('<table>');
@@ -633,11 +695,11 @@ describe('Pipe table rendering', () => {
       + '</w:tc>'
       + '</w:tr>'
       + '</w:tbl>',
-      { alwaysUseCommentIds: true, pipeTableMaxLineWidth: 0 },
+      { alwaysUseCommentIds: true, pipeTableMaxLineWidth: 0, gridTableMaxLineWidth: 0 },
       { 'word/comments.xml': commentsXml },
     );
 
-    // Multi-paragraph cell forces HTML fallback
+    // Multi-paragraph cell forces HTML fallback (both pipe and grid disabled)
     expect(result.markdown).toContain('<table>');
     // Comment body text appears exactly once
     const bodyMatches = result.markdown.match(/unique review note/g) || [];
@@ -687,6 +749,44 @@ describe('Pipe table rendering', () => {
 
     // Even though 120 equals the default, it was explicitly stored and must survive
     expect(mdResult.markdown).toMatch(/pipe-table-max-line-width:\s*120/);
+  });
+
+  test('frontmatter grid-table-max-line-width round-trips through MD→DOCX→MD', async () => {
+    const md = [
+      '---',
+      'grid-table-max-line-width: 80',
+      '---',
+      '',
+      '| H1 | H2 |',
+      '| --- | --- |',
+      '| A | B |',
+      '',
+    ].join('\n');
+
+    const docxResult = await convertMdToDocx(md);
+    const mdResult = await convertDocx(docxResult.docx, 'authorYearTitle', {
+      gridTableMaxLineWidthDefault: 120,
+    });
+
+    expect(mdResult.markdown).toMatch(/grid-table-max-line-width:\s*80/);
+  });
+
+  test('explicit grid-table-max-line-width: 120 survives round-trip', async () => {
+    const md = [
+      '---',
+      'grid-table-max-line-width: 120',
+      '---',
+      '',
+      '| H1 | H2 |',
+      '| --- | --- |',
+      '| A | B |',
+      '',
+    ].join('\n');
+
+    const docxResult = await convertMdToDocx(md);
+    const mdResult = await convertDocx(docxResult.docx, 'authorYearTitle');
+
+    expect(mdResult.markdown).toMatch(/grid-table-max-line-width:\s*120/);
   });
 });
 

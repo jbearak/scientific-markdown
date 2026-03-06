@@ -722,6 +722,12 @@
           "minimum": 0,
           "description": "Maximum line width for pipe tables in DOCX→MD conversion. Tables exceeding this width, or containing colspans/rowspans/line breaks, fall back to HTML. Set to 0 to always use HTML tables."
         },
+        "manuscriptMarkdown.gridTableMaxLineWidth": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 0,
+          "description": "Maximum line width for grid tables in DOCX→MD conversion. Tables exceeding this width fall back to HTML. Set to 0 to always skip grid table format."
+        },
         "manuscriptMarkdown.citationKeyFormat": {
           "type": "string",
           "enum": [

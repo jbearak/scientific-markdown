@@ -105,6 +105,7 @@ export interface Frontmatter {
   codeFontColor?: string;
   codeBlockInset?: number;
   pipeTableMaxLineWidth?: number;
+  gridTableMaxLineWidth?: number;
   tableFont?: string;
   tableFontSize?: number;
   blockquoteStyle?: BlockquoteStyle;
@@ -252,6 +253,13 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         }
         break;
       }
+      case 'grid-table-max-line-width': {
+        const n = parseInt(value, 10);
+        if (Number.isInteger(n) && n >= 0 && value.trim() === String(n)) {
+          metadata.gridTableMaxLineWidth = n;
+        }
+        break;
+      }
       case 'blockquote-style': {
         const style = normalizeBlockquoteStyle(value);
         if (style) metadata.blockquoteStyle = style;
@@ -315,6 +323,7 @@ export function serializeFrontmatter(metadata: Frontmatter): string {
   if (metadata.codeFontColor) lines.push('code-font-color: ' + metadata.codeFontColor);
   if (metadata.codeBlockInset !== undefined) lines.push('code-block-inset: ' + metadata.codeBlockInset);
   if (metadata.pipeTableMaxLineWidth !== undefined) lines.push('pipe-table-max-line-width: ' + metadata.pipeTableMaxLineWidth);
+  if (metadata.gridTableMaxLineWidth !== undefined) lines.push('grid-table-max-line-width: ' + metadata.gridTableMaxLineWidth);
   if (metadata.blockquoteStyle) lines.push('blockquote-style: ' + metadata.blockquoteStyle);
   if (metadata.colors) lines.push('colors: ' + metadata.colors);
   if (lines.length === 0) return '';

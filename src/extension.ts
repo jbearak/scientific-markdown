@@ -427,6 +427,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const tableIndentSpaces = config.get<number>('tableIndent', 2);
 				const alwaysUseCommentIds = config.get<boolean>('alwaysUseCommentIds', false);
 				const pipeTableMaxLineWidth = config.get<number>('pipeTableMaxLineWidth', 120);
+				const gridTableMaxLineWidth = config.get<number>('gridTableMaxLineWidth', 120);
 				const basePath = uri.fsPath.replace(/\.docx$/i, '');
 				// Read existing .bib before conversion so Layer 3 can preserve
 				// uncited entries and original ordering. This happens before the
@@ -441,6 +442,7 @@ export function activate(context: vscode.ExtensionContext) {
 					alwaysUseCommentIds,
 					existingBibtex,
 					pipeTableMaxLineWidthDefault: pipeTableMaxLineWidth,
+					gridTableMaxLineWidthDefault: gridTableMaxLineWidth,
 				});
 				let mdUri = vscode.Uri.file(basePath + '.md');
 				let bibUri = vscode.Uri.file(basePath + '.bib');
