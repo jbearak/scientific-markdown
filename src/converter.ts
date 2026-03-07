@@ -3721,6 +3721,7 @@ export function buildMarkdown(
   let htmlCommentIndex = 0;
   let lastRenderedHtmlCommentIndex: number | undefined;
   let lastWasSectionSentinel = false; // true after landscape/portrait open/close rendering
+  let lastSentinelAfterGapKey: string | undefined; // after-gap key of the last rendered sentinel
   let skipNextLandscapeClose = false;
   let skipNextPortraitClose = false;
   const sentinelGaps = options?.sentinelGaps;
@@ -3774,8 +3775,15 @@ export function buildMarkdown(
       }
       lastRenderedHtmlCommentIndex = undefined;
     } else if (lastWasSectionSentinel) {
-      incomingSep = '\n';
+      // Use after-gap metadata from the last sentinel if available
+      const afterGap = lastSentinelAfterGapKey && sentinelGaps ? sentinelGaps[lastSentinelAfterGapKey] : undefined;
+      if (afterGap !== undefined) {
+        incomingSep = '\n' + '\n'.repeat(afterGap);
+      } else {
+        incomingSep = '\n';
+      }
       lastWasSectionSentinel = false;
+      lastSentinelAfterGapKey = undefined;
     }
 
     if (item.type === 'para') {
@@ -4098,15 +4106,16 @@ export function buildMarkdown(
           continue;
         }
       }
-      if (incomingSep !== null) {
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (!emitSentinelSep(gapKey)) {
-        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-          output.push('\n\n');
-        }
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
       }
       output.push('<!-- landscape -->');
       lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('lo', 'loa');
       i++;
       continue;
     }
@@ -4118,15 +4127,16 @@ export function buildMarkdown(
         i++;
         continue;
       }
-      if (incomingSep !== null) {
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (!emitSentinelSep(gapKey)) {
-        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-          output.push('\n\n');
-        }
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
       }
       output.push('<!-- /landscape -->');
       lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('lc', 'lca');
       i++;
       continue;
     }
@@ -4143,15 +4153,16 @@ export function buildMarkdown(
           continue;
         }
       }
-      if (incomingSep !== null) {
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (!emitSentinelSep(gapKey)) {
-        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-          output.push('\n\n');
-        }
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
       }
       output.push('<!-- portrait -->');
       lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('po', 'poa');
       i++;
       continue;
     }
@@ -4163,15 +4174,16 @@ export function buildMarkdown(
         i++;
         continue;
       }
-      if (incomingSep !== null) {
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (!emitSentinelSep(gapKey)) {
-        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-          output.push('\n\n');
-        }
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
       }
       output.push('<!-- /portrait -->');
       lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('pc', 'pca');
       i++;
       continue;
     }
