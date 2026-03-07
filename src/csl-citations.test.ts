@@ -126,6 +126,16 @@ describe('serializeFrontmatter', () => {
     expect(result).not.toContain('locale');
     expect(result).not.toContain('zotero-notes');
   });
+
+  test('does not emit duplicate when fieldOrder has canonical before alias', () => {
+    const result = serializeFrontmatter(
+      { zoteroNotes: 'endnotes' },
+      ['zotero-notes', 'note-type'],
+    );
+    expect(result).toBe('---\nzotero-notes: endnotes\n---\n');
+    // Should appear exactly once
+    expect(result.match(/zotero-notes/g)?.length).toBe(1);
+  });
 });
 
 // ============================================================================

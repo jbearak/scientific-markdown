@@ -358,6 +358,12 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'code-color': 'code-font-color',
   };
 
+  const canonicalToAliases: Record<string, string[]> = {};
+  for (const [alias, canonical] of Object.entries(aliasToCanonical)) {
+    if (!canonicalToAliases[canonical]) canonicalToAliases[canonical] = [];
+    canonicalToAliases[canonical].push(alias);
+  }
+
   const order = fieldOrder && fieldOrder.length > 0 ? fieldOrder : defaultOrder;
   const emitted = new Set<string>();
 
@@ -366,6 +372,8 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     emitted.add(key);
     const canonical = aliasToCanonical[key];
     if (canonical) emitted.add(canonical);
+    const aliases = canonicalToAliases[key];
+    if (aliases) for (const a of aliases) emitted.add(a);
     const emitter = emitters[key];
     if (emitter) emitter();
   }

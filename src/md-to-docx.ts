@@ -5329,11 +5329,17 @@ export async function convertMdToDocx(
   let finalDocumentXml = documentXml;
   if (actualFixedCount < state.rIdOffset) {
     const shift = state.rIdOffset - actualFixedCount;
-    // Remap dynamic rId references in document XML
-    finalDocumentXml = finalDocumentXml.replace(/rId(\d+)/g, (match, numStr) => {
+    // Remap dynamic rId references in XML attribute contexts only
+    const rIdAttrRe = /(?<=r:id="|r:embed="|r:link=")rId(\d+)/g;
+    const remapRId = (match: string, numStr: string) => {
       const n = parseInt(numStr, 10);
       return n > state.rIdOffset ? 'rId' + (n - shift) : match;
-    });
+    };
+    finalDocumentXml = finalDocumentXml.replace(rIdAttrRe, remapRId);
+    // Remap rId references in footnote/endnote body XML
+    for (const entry of state.footnoteEntries) {
+      entry.bodyXml = entry.bodyXml.replace(rIdAttrRe, remapRId);
+    }
     // Remap relationship maps
     for (const [url, relId] of state.relationships) {
       const m = relId.match(/^rId(\d+)$/);
