@@ -371,7 +371,11 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     if (emitted.has(key)) continue;
     emitted.add(key);
     const canonical = aliasToCanonical[key];
-    if (canonical) emitted.add(canonical);
+    if (canonical) {
+      emitted.add(canonical);
+      const siblingAliases = canonicalToAliases[canonical];
+      if (siblingAliases) for (const a of siblingAliases) emitted.add(a);
+    }
     const aliases = canonicalToAliases[key];
     if (aliases) for (const a of aliases) emitted.add(a);
     const emitter = emitters[key];
