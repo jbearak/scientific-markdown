@@ -4318,9 +4318,11 @@ export function buildMarkdown(
             break;
           }
         }
-        // Ensure proper separator before the directive prefix
         const needsSep = insertIdx > 0 && !output[insertIdx - 1].endsWith('\n\n');
-        output.splice(insertIdx, 0, (needsSep ? '\n\n' : '') + tableResult.directivePrefix);
+        // If the next entry is a separator, don't add trailing newlines to the prefix
+        const nextIsSep = insertIdx < output.length && /^\s*$/.test(output[insertIdx]);
+        const prefix = tableResult.directivePrefix.replace(/\n+$/, '') + (nextIsSep ? '' : '\n\n');
+        output.splice(insertIdx, 0, (needsSep ? '\n\n' : '') + prefix);
       }
       output.push(tableResult.body);
       tableIndex++;
