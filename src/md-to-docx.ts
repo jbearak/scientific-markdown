@@ -1259,18 +1259,24 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
         if (inLandscape) {
           // Nested landscape: warn and treat as close + open
           if (warnings) warnings.push('Nested <!-- landscape --> treated as <!-- /landscape --><!-- landscape -->');
+          const closeSentinel: MdToken = { type: 'paragraph', runs: [], landscapeClose: true };
+          closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
           result.splice(i, 1,
-            { type: 'paragraph', runs: [], landscapeClose: true },
+            closeSentinel,
             { type: 'paragraph', runs: [], landscapeOpen: true },
           );
           i++; // skip past both sentinels
         } else {
-          result.splice(i, 1, { type: 'paragraph', runs: [], landscapeOpen: true });
+          const sentinel: MdToken = { type: 'paragraph', runs: [], landscapeOpen: true };
+          sentinel.blankLinesBefore = result[i].blankLinesBefore;
+          result.splice(i, 1, sentinel);
           inLandscape = true;
         }
       } else if (/^<!--\s*\/landscape\s*-->$/i.test(text)) {
         if (inLandscape) {
-          result.splice(i, 1, { type: 'paragraph', runs: [], landscapeClose: true });
+          const sentinel: MdToken = { type: 'paragraph', runs: [], landscapeClose: true };
+          sentinel.blankLinesBefore = result[i].blankLinesBefore;
+          result.splice(i, 1, sentinel);
           inLandscape = false;
         }
         // If not in landscape, leave the comment as-is (user error, but harmless)
@@ -1289,18 +1295,24 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
       if (/^<!--\s*portrait\s*-->$/i.test(text)) {
         if (inPortrait) {
           if (warnings) warnings.push('Nested <!-- portrait --> treated as <!-- /portrait --><!-- portrait -->');
+          const closeSentinel: MdToken = { type: 'paragraph', runs: [], portraitClose: true };
+          closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
           result.splice(i, 1,
-            { type: 'paragraph', runs: [], portraitClose: true },
+            closeSentinel,
             { type: 'paragraph', runs: [], portraitOpen: true },
           );
           i++;
         } else {
-          result.splice(i, 1, { type: 'paragraph', runs: [], portraitOpen: true });
+          const sentinel: MdToken = { type: 'paragraph', runs: [], portraitOpen: true };
+          sentinel.blankLinesBefore = result[i].blankLinesBefore;
+          result.splice(i, 1, sentinel);
           inPortrait = true;
         }
       } else if (/^<!--\s*\/portrait\s*-->$/i.test(text)) {
         if (inPortrait) {
-          result.splice(i, 1, { type: 'paragraph', runs: [], portraitClose: true });
+          const sentinel: MdToken = { type: 'paragraph', runs: [], portraitClose: true };
+          sentinel.blankLinesBefore = result[i].blankLinesBefore;
+          result.splice(i, 1, sentinel);
           inPortrait = false;
         }
       }
@@ -2390,6 +2402,7 @@ export interface DocxGenState {
   sectionBreakOrdinal: number;  // counter for paragraph-level sectPr emissions (for portrait round-trip)
   portraitBreakOrdinals: Set<number>; // ordinals of portrait-fence close section breaks
   templateSectPr?: string;      // trailing <w:sectPr> from template document.xml
+  sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
 }
 
 interface CommentEntry {
@@ -4750,6 +4763,9 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
 
   let prevToken: MdToken | undefined;
   let preserveCloseForNextToken = false;
+  // Track before-gap for each sentinel type (sequential index → blankLinesBefore)
+  let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  const sentinelGaps: Record<string, number> = {};
   for (const token of tokens) {
     // Any close sentinel directly preceding any open sentinel skips the open's break
     // to avoid an empty intermediate section that renders as a blank page.
@@ -4769,6 +4785,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
 
     // Landscape sentinels: emit section break paragraphs
     if (token.landscapeOpen) {
+      if (token.blankLinesBefore !== undefined && token.blankLinesBefore !== 1) {
+        sentinelGaps['lo' + sentinelLoIdx] = token.blankLinesBefore;
+      }
+      sentinelLoIdx++;
       if (!prevWasClose) {
         emitPortraitBreak();
       }
@@ -4777,6 +4797,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       continue;
     }
     if (token.landscapeClose) {
+      if (token.blankLinesBefore !== undefined && token.blankLinesBefore !== 1) {
+        sentinelGaps['lc' + sentinelLcIdx] = token.blankLinesBefore;
+      }
+      sentinelLcIdx++;
       // End the landscape section with an empty paragraph carrying landscape sectPr
       emitLandscapeBreak();
       state.inLandscapeSection = false;
@@ -4786,6 +4810,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
 
     // Portrait sentinels: emit portrait section break paragraphs (same page dims, own page)
     if (token.portraitOpen) {
+      if (token.blankLinesBefore !== undefined && token.blankLinesBefore !== 1) {
+        sentinelGaps['po' + sentinelPoIdx] = token.blankLinesBefore;
+      }
+      sentinelPoIdx++;
       if (!prevWasClose) {
         emitPortraitBreak();
       }
@@ -4794,6 +4822,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       continue;
     }
     if (token.portraitClose) {
+      if (token.blankLinesBefore !== undefined && token.blankLinesBefore !== 1) {
+        sentinelGaps['pc' + sentinelPcIdx] = token.blankLinesBefore;
+      }
+      sentinelPcIdx++;
       // Record the ordinal of this portrait close break for round-trip detection
       state.portraitBreakOrdinals.add(state.sectionBreakOrdinal);
       emitPortraitBreak();
@@ -4887,6 +4919,9 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   } else {
     body += biblXml;
   }
+
+  // Store sentinel gap metadata on state for custom property emission
+  state.sentinelGaps = sentinelGaps;
 
   // Append body-closing sectPr (preserves template page layout)
   const closingSectPr = bodyClosingSectPrXml(pgSz, margins, state.templateSectPr, state.rsid);
@@ -5102,6 +5137,7 @@ export async function convertMdToDocx(
     sectionBreakOrdinal: 0,
     portraitBreakOrdinals: new Set(),
     templateSectPr,
+    sentinelGaps: {},
   };
 
   // Pre-scan footnote definitions for citation keys so the bibliography
@@ -5302,6 +5338,9 @@ export async function convertMdToDocx(
   customProps.push(...consecutiveReplyProps(state));
   customProps.push(...htmlCommentGapProps(state.htmlCommentGaps));
   customProps.push(...htmlCommentAfterGapProps(state.htmlCommentAfterGaps));
+  if (Object.keys(state.sentinelGaps).length > 0) {
+    customProps.push(...chunkCustomProps('MANUSCRIPT_SENTINEL_GAPS_', JSON.stringify(state.sentinelGaps)));
+  }
   if (frontmatter.tableFontSize !== undefined) {
     customProps.push({ name: 'MANUSCRIPT_EXPLICIT_TABLE_FONT_SIZE', value: '1' });
   }

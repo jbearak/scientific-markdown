@@ -78,6 +78,7 @@ function makeState(): DocxGenState {
     sectionBreakOrdinal: 0,
     portraitBreakOrdinals: new Set(),
     blockquotePreContentBlankLines: new Map(),
+    sentinelGaps: {},
   };
 }
 

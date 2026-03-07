@@ -1141,6 +1141,22 @@ export async function extractHtmlCommentAfterGapMapping(data: Uint8Array | JSZip
   }
 }
 
+export async function extractSentinelGapMapping(data: Uint8Array | JSZip): Promise<Record<string, number> | null> {
+  const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_SENTINEL_GAPS_');
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const result: Record<string, number> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (typeof val === 'number' && Number.isInteger(val) && val >= 0) result[key] = val;
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function extractFrontmatterFieldOrder(data: Uint8Array | JSZip): Promise<string[] | null> {
   const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_FRONTMATTER_FIELD_ORDER_');
   if (!json) return null;
@@ -3554,7 +3570,7 @@ function renderTableOrFallback(
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -3707,6 +3723,43 @@ export function buildMarkdown(
   let lastWasSectionSentinel = false; // true after landscape/portrait open/close rendering
   let skipNextLandscapeClose = false;
   let skipNextPortraitClose = false;
+  const sentinelGaps = options?.sentinelGaps;
+  let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  // Emit separator before a sentinel using stored gap metadata.
+  // Returns true if a gap-aware separator was emitted, false otherwise.
+  function emitSentinelSep(gapKey: string): boolean {
+    if (!sentinelGaps) return false;
+    const gapCount = sentinelGaps[gapKey];
+    if (gapCount === undefined) return false;
+    const desiredNewlines = gapCount + 1;
+    let existingNewlines = 0;
+    for (let oi = output.length - 1; oi >= 0; oi--) {
+      const s = output[oi];
+      let j = s.length - 1;
+      while (j >= 0 && s[j] === '\n') { existingNewlines++; j--; }
+      if (j >= 0) break;
+    }
+    const needed = desiredNewlines - existingNewlines;
+    if (needed > 0) {
+      output.push('\n'.repeat(needed));
+    } else if (needed < 0) {
+      let toRemove = -needed;
+      while (toRemove > 0 && output.length > 0) {
+        const last = output[output.length - 1];
+        let trailingNL = 0;
+        for (let j = last.length - 1; j >= 0 && last[j] === '\n'; j--) trailingNL++;
+        if (trailingNL === 0) break;
+        const removeFromThis = Math.min(toRemove, trailingNL);
+        if (removeFromThis === last.length) {
+          output.pop();
+        } else {
+          output[output.length - 1] = last.slice(0, last.length - removeFromThis);
+        }
+        toRemove -= removeFromThis;
+      }
+    }
+    return true;
+  }
 
   while (i < mergedContent.length) {
     const item = mergedContent[i];
@@ -4028,6 +4081,8 @@ export function buildMarkdown(
     }
 
     if (item.type === 'landscape_open') {
+      const gapKey = 'lo' + sentinelLoIdx;
+      sentinelLoIdx++;
       // Check if this is a single-table landscape section (table-only, no title/notes).
       // If the custom property says so, suppress the fences and let the table's
       // data-orientation attribute handle it instead.
@@ -4045,8 +4100,10 @@ export function buildMarkdown(
       }
       if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-        output.push('\n\n');
+      } else if (!emitSentinelSep(gapKey)) {
+        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+          output.push('\n\n');
+        }
       }
       output.push('<!-- landscape -->');
       lastWasSectionSentinel = true;
@@ -4054,6 +4111,8 @@ export function buildMarkdown(
       continue;
     }
     if (item.type === 'landscape_close') {
+      const gapKey = 'lc' + sentinelLcIdx;
+      sentinelLcIdx++;
       if (skipNextLandscapeClose) {
         skipNextLandscapeClose = false;
         i++;
@@ -4061,8 +4120,10 @@ export function buildMarkdown(
       }
       if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-        output.push('\n\n');
+      } else if (!emitSentinelSep(gapKey)) {
+        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+          output.push('\n\n');
+        }
       }
       output.push('<!-- /landscape -->');
       lastWasSectionSentinel = true;
@@ -4071,6 +4132,8 @@ export function buildMarkdown(
     }
 
     if (item.type === 'portrait_open') {
+      const gapKey = 'po' + sentinelPoIdx;
+      sentinelPoIdx++;
       if (renderOpts?.portraitTableIndices?.has(tableIndex)) {
         const nextItem = i + 1 < mergedContent.length ? mergedContent[i + 1] : undefined;
         const afterTable = i + 2 < mergedContent.length ? mergedContent[i + 2] : undefined;
@@ -4082,8 +4145,10 @@ export function buildMarkdown(
       }
       if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-        output.push('\n\n');
+      } else if (!emitSentinelSep(gapKey)) {
+        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+          output.push('\n\n');
+        }
       }
       output.push('<!-- portrait -->');
       lastWasSectionSentinel = true;
@@ -4091,6 +4156,8 @@ export function buildMarkdown(
       continue;
     }
     if (item.type === 'portrait_close') {
+      const gapKey = 'pc' + sentinelPcIdx;
+      sentinelPcIdx++;
       if (skipNextPortraitClose) {
         skipNextPortraitClose = false;
         i++;
@@ -4098,8 +4165,10 @@ export function buildMarkdown(
       }
       if (incomingSep !== null) {
         output.push(incomingSep);
-      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
-        output.push('\n\n');
+      } else if (!emitSentinelSep(gapKey)) {
+        if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+          output.push('\n\n');
+        }
       }
       output.push('<!-- /portrait -->');
       lastWasSectionSentinel = true;
@@ -4726,7 +4795,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4758,6 +4827,7 @@ export async function convertDocx(
     extractExplicitTableFontSize(zip),
     extractFrontmatterFieldOrder(zip),
     extractHtmlCommentAfterGapMapping(zip),
+    extractSentinelGapMapping(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -4891,6 +4961,7 @@ export async function convertDocx(
     listIndent: storedListIndent ?? 'spaces',
     htmlCommentGaps: htmlCommentGapMapping,
     htmlCommentAfterGaps: htmlCommentAfterGapMapping,
+    sentinelGaps: sentinelGapMapping,
   });
 
   // Strip Sources section if present (fallback for docs without ZOTERO_BIBL field codes)
