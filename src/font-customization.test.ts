@@ -652,6 +652,21 @@ describe('Font customization unit tests', () => {
       expect(converted.markdown).toContain('data-col-widths="2 1"');
     });
 
+    it('directives appear before sentinel comments on round-trip', async () => {
+      // Use table-font-size: 8 (differs from auto-shrink default of 9pt) so it survives round-trip
+      const markdown = '---\ntable-font-size: 10\n---\n\n<!-- table-font-size: 8 -->\n\n<!-- Begin Table -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const lines = converted.markdown.split('\n');
+      const fontSizeLine = lines.findIndex(l => l.includes('table-font-size: 8'));
+      const sentinelLine = lines.findIndex(l => l.includes('Begin Table'));
+      expect(fontSizeLine).toBeGreaterThanOrEqual(0);
+      expect(sentinelLine).toBeGreaterThanOrEqual(0);
+      // Directive must come before the sentinel, preserving original order
+      expect(fontSizeLine).toBeLessThan(sentinelLine);
+    });
+
     it('auto directive overrides frontmatter default', async () => {
       const markdown = '---\ntable-col-widths: 2 1\n---\n\n<!-- table-col-widths: auto -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
       const result = await convertMdToDocx(markdown);

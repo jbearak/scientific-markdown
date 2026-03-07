@@ -3566,7 +3566,8 @@ function tryRenderGridTable(
   return result;
 }
 
-/** Render a table as a grid table, GFM pipe table, or HTML fallback, depending on feasibility and stored format. */
+/** Render a table as a grid table, GFM pipe table, or HTML fallback, depending on feasibility and stored format.
+ *  Returns { directivePrefix, body } so callers can position directives before preceding HTML comments. */
 function renderTableOrFallback(
   item: { rows: TableRow[] },
   comments: Map<string, Comment>,
@@ -3574,7 +3575,7 @@ function renderTableOrFallback(
   renderOpts?: RenderOpts,
   storedFormat?: string,
   tableIndex?: number,
-): string {
+): { directivePrefix: string; body: string } {
   // Build per-table font directive prefix for pipe/grid tables
   let fontPrefix = '';
   let htmlFontAttrs = '';
@@ -3610,29 +3611,30 @@ function renderTableOrFallback(
     if (isLandscapeTable) htmlFontAttrs += ' data-orientation="landscape"';
     if (isPortraitTable) htmlFontAttrs += ' data-orientation="portrait"';
   }
+  const r = (body: string) => ({ directivePrefix: fontPrefix, body });
   // If the original format was HTML or font value is comment-unsafe, emit HTML directly
   if (storedFormat === 'html' || forceHtmlTable) {
-    return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
+    return r(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
   }
   // If original was grid, try grid then fall back to HTML (skip pipe, skip width check to preserve format)
   if (storedFormat === 'grid') {
     const gridResult = tryRenderGridTable(item, comments, renderOpts);
-    if (gridResult !== null) return fontPrefix + gridResult;
-    return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
+    if (gridResult !== null) return r(gridResult);
+    return r(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
   }
   // When the original was a pipe table, skip the width check to preserve format
   const pipeMax = storedFormat === 'pipe' ? Infinity : (options?.pipeTableMaxLineWidth ?? 120);
   const pipeAligned = tableIndex !== undefined && renderOpts?.pipeTableAlignedMapping?.get(String(tableIndex)) === 'true';
   const pipeResult = tryRenderPipeTable(item, pipeMax, comments, renderOpts, pipeAligned);
   if (pipeResult !== null) {
-    return fontPrefix + pipeResult;
+    return r(pipeResult);
   }
   // For tables without a stored format, try grid before falling back to HTML
   if (storedFormat !== 'pipe') {
     const gridResult = tryRenderGridTable(item, comments, renderOpts, options?.gridTableMaxLineWidth);
-    if (gridResult !== null) return fontPrefix + gridResult;
+    if (gridResult !== null) return r(gridResult);
   }
-  return renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs);
+  return r(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
 }
 
 export function buildMarkdown(
@@ -4298,7 +4300,29 @@ export function buildMarkdown(
         output.push('\n\n');
       }
       const storedFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
-      output.push(renderTableOrFallback(item, comments, options, renderOpts, storedFormat, tableIndex));
+      const tableResult = renderTableOrFallback(item, comments, options, renderOpts, storedFormat, tableIndex);
+      // Insert directive prefix before any immediately-preceding HTML comment entries
+      // so that directives appear above user sentinel comments (preserving original order).
+      if (tableResult.directivePrefix) {
+        let insertIdx = output.length;
+        while (insertIdx > 0) {
+          const prev = output[insertIdx - 1];
+          // Skip separator-only entries (whitespace/newlines)
+          if (/^\s*$/.test(prev)) {
+            insertIdx--;
+            continue;
+          }
+          if (/^<!--[\s\S]*?-->$/.test(prev.trim())) {
+            insertIdx--;
+          } else {
+            break;
+          }
+        }
+        // Ensure proper separator before the directive prefix
+        const needsSep = insertIdx > 0 && !output[insertIdx - 1].endsWith('\n\n');
+        output.splice(insertIdx, 0, (needsSep ? '\n\n' : '') + tableResult.directivePrefix);
+      }
+      output.push(tableResult.body);
       tableIndex++;
       lastListType = undefined;
       lastAlertParagraphKey = undefined;
@@ -4443,7 +4467,8 @@ export function buildMarkdown(
             deferredAll.push(...part.deferredComments);
           }
           const noteStoredFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
-          bodyParts.push(renderTableOrFallback(item, comments, options, renderOpts, noteStoredFormat, tableIndex));
+          const noteTableResult = renderTableOrFallback(item, comments, options, renderOpts, noteStoredFormat, tableIndex);
+          bodyParts.push(noteTableResult.directivePrefix + noteTableResult.body);
           tableIndex++;
           partStart = bi + 1;
         }
