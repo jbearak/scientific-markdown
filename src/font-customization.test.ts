@@ -387,6 +387,30 @@ describe('Font customization unit tests', () => {
       expect(tables[0].tableFont).toBe('Times New Roman');
     });
 
+    it('transfers table-font-size directive when intervening HTML comment exists', () => {
+      const tokens = parseMd('<!-- table-font-size: 8 -->\n\n<!-- some comment -->\n\n| A | B |\n|---|---|\n| 1 | 2 |');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableFontSize).toBe(8);
+      // Directive comment should be spliced out, but the other comment remains
+      expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment' && r.text.includes('table-font-size')))).toHaveLength(0);
+      expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment' && r.text.includes('some comment')))).toHaveLength(1);
+    });
+
+    it('transfers table-font directive when intervening HTML comment exists', () => {
+      const tokens = parseMd('<!-- table-font: Times New Roman -->\n\n<!-- Begin Table -->\n\n| A |\n|---|\n| 1 |');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableFont).toBe('Times New Roman');
+    });
+
+    it('transfers table-orientation directive when intervening HTML comment exists', () => {
+      const tokens = parseMd('<!-- table-orientation: landscape -->\n\n<!-- Supplemental Table -->\n\n| A |\n|---|\n| 1 |');
+      const tables = tokens.filter(t => t.type === 'table');
+      expect(tables).toHaveLength(1);
+      expect(tables[0].tableOrientation).toBe('landscape');
+    });
+
     it('ignores directives not followed by a table', () => {
       const tokens = parseMd('<!-- table-font-size: 8 -->\n\nHello');
       expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment'))).toHaveLength(1);

@@ -310,7 +310,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'locale': () => { if (metadata.locale) lines.push(`locale: ${metadata.locale}`); },
     'zotero-notes': () => { if (metadata.zoteroNotes) lines.push(`zotero-notes: ${metadata.zoteroNotes}`); },
     'note-type': () => emitters['zotero-notes'](),
-    'notes': () => { if (metadata.notes === 'endnotes') lines.push(`notes: endnotes`); },
+    'notes': () => { if (metadata.notes) lines.push(`notes: ${metadata.notes}`); },
     'timezone': () => { if (metadata.timezone) lines.push(`timezone: ${metadata.timezone}`); },
     'bibliography': () => { if (metadata.bibliography) lines.push(`bibliography: ${metadata.bibliography}`); },
     'bib': () => emitters['bibliography'](),

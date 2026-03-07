@@ -1253,14 +1253,19 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
     const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
     if (!fontSizeMatch && !fontMatch) continue;
-    // Look for the next table token; only assign if not already set (nearest wins)
-    if (i + 1 < result.length && result[i + 1].type === 'table') {
-      if (fontSizeMatch && result[i + 1].tableFontSize === undefined) {
+    // Look for the next table token, skipping intervening HTML comment paragraphs
+    let target = i + 1;
+    while (target < result.length && result[target].type === 'paragraph'
+        && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
+      target++;
+    }
+    if (target < result.length && result[target].type === 'table') {
+      if (fontSizeMatch && result[target].tableFontSize === undefined) {
         const n = parseFloat(fontSizeMatch[1]);
-        if (isFinite(n) && n > 0) result[i + 1].tableFontSize = n;
+        if (isFinite(n) && n > 0) result[target].tableFontSize = n;
       }
       const fontVal = fontMatch ? fontMatch[1].trim() : '';
-      if (fontVal && result[i + 1].tableFont === undefined) result[i + 1].tableFont = fontVal;
+      if (fontVal && result[target].tableFont === undefined) result[target].tableFont = fontVal;
       result.splice(i, 1);
     }
   }
@@ -1273,9 +1278,14 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const text = run.text.trim();
     const orientMatch = text.match(/^<!--\s*table-orientation:\s*(landscape|portrait)\s*-->$/i);
     if (!orientMatch) continue;
-    if (i + 1 < result.length && result[i + 1].type === 'table') {
-      if (result[i + 1].tableOrientation === undefined) {
-        result[i + 1].tableOrientation = orientMatch[1].toLowerCase() as 'landscape' | 'portrait';
+    let target = i + 1;
+    while (target < result.length && result[target].type === 'paragraph'
+        && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
+      target++;
+    }
+    if (target < result.length && result[target].type === 'table') {
+      if (result[target].tableOrientation === undefined) {
+        result[target].tableOrientation = orientMatch[1].toLowerCase() as 'landscape' | 'portrait';
       }
       result.splice(i, 1);
     }
