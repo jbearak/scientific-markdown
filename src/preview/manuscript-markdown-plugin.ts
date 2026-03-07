@@ -948,7 +948,7 @@ function gridTableBlockRule(state: StateBlock, startLine: number, endLine: numbe
       for (const cellText of row.cells) {
         state.push('th_open', 'th', 1);
         const inlineTok = state.push('inline', '', 0);
-        inlineTok.content = cellText;
+        inlineTok.content = cellText.replace(/\n/g, '  \n');
         inlineTok.children = [];
         state.push('th_close', 'th', -1);
       }
@@ -965,7 +965,7 @@ function gridTableBlockRule(state: StateBlock, startLine: number, endLine: numbe
         const tag = headerRows.length === 0 && bodyRows.indexOf(row) === 0 ? 'th' : 'td';
         state.push(tag + '_open', tag, 1);
         const inlineTok = state.push('inline', '', 0);
-        inlineTok.content = cellText;
+        inlineTok.content = cellText.replace(/\n/g, '  \n');
         inlineTok.children = [];
         state.push(tag + '_close', tag, -1);
       }
