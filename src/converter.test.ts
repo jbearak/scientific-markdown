@@ -1063,6 +1063,22 @@ describe('HTML comment blank line round-trip', () => {
     expect(result.markdown).not.toContain('<!-- Begin Table 1 -->\n\n+');
   });
 
+  test('tight comment after-gap (0 blank lines after comment)', async () => {
+    const md = '<!-- comment -->\nNext paragraph.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- comment -->\nNext paragraph');
+    expect(result.markdown).not.toContain('<!-- comment -->\n\nNext paragraph');
+  });
+
+  test('default comment after-gap (1 blank line) is preserved', async () => {
+    const md = '<!-- comment -->\n\nNext paragraph.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- comment -->\n\nNext paragraph');
+    expect(result.markdown).not.toContain('<!-- comment -->\n\n\nNext paragraph');
+  });
+
   test('multiline HTML comments preserve internal newlines', async () => {
     const md = 'Before\n\n<!--\n\nLine one\n\nLine two\n\n-->\n\nAfter';
     const { docx } = await convertMdToDocx(md);
@@ -1113,6 +1129,64 @@ describe('HTML comment blank line round-trip', () => {
     const buf = await buildSyntheticDocx(xml);
     const result = await convertDocx(buf);
     expect(result.markdown).toContain('<!--\nLine one\n-->');
+  });
+});
+
+describe('Sentinel gap round-trip', () => {
+  test('portrait sentinel with no blank line after opening', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n## Table 1\n\nSome text.\n\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- portrait -->\n## Table 1');
+    expect(result.markdown).not.toContain('<!-- portrait -->\n\n## Table 1');
+  });
+
+  test('portrait sentinel with blank line after opening', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n\n## Table 1\n\nSome text.\n\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- portrait -->\n\n## Table 1');
+    expect(result.markdown).not.toContain('<!-- portrait -->\n\n\n## Table 1');
+  });
+
+  test('tight /portrait before-gap (no blank line before close)', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n\nSome text.\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('Some text.\n<!-- /portrait -->');
+    expect(result.markdown).not.toContain('Some text.\n\n<!-- /portrait -->');
+  });
+
+  test('blank line before /portrait', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n\nSome text.\n\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('Some text.\n\n<!-- /portrait -->');
+    expect(result.markdown).not.toContain('Some text.\n\n\n<!-- /portrait -->');
+  });
+
+  test('tight consecutive portrait close then open', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n\nFirst section.\n\n<!-- /portrait -->\n<!-- portrait -->\n\nSecond section.\n\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- /portrait -->\n<!-- portrait -->');
+    expect(result.markdown).not.toContain('<!-- /portrait -->\n\n<!-- portrait -->');
+  });
+
+  test('blank line between portrait close and open', async () => {
+    const md = 'Before.\n\n<!-- portrait -->\n\nFirst section.\n\n<!-- /portrait -->\n\n<!-- portrait -->\n\nSecond section.\n\n<!-- /portrait -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- /portrait -->\n\n<!-- portrait -->');
+    expect(result.markdown).not.toContain('<!-- /portrait -->\n\n\n<!-- portrait -->');
+  });
+
+  test('landscape sentinel gaps preserved', async () => {
+    const md = 'Before.\n\n<!-- landscape -->\n## Wide Table\n\nContent.\n<!-- /landscape -->\n\nAfter.';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- landscape -->\n## Wide Table');
+    expect(result.markdown).toContain('Content.\n<!-- /landscape -->');
   });
 });
 
