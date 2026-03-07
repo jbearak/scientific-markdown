@@ -24,7 +24,7 @@ export const hasNoSpecialSyntax = (s: string) => {
  *  Pass colorScheme to override the module-level default (e.g. 'github' to suppress the
  *  color marker span in tests that don't care about color scheme behavior). */
 export function renderWithPlugin(input: string, colorScheme?: string): string {
-  const md = new MarkdownIt();
+  const md = new MarkdownIt({ html: true });
   if (colorScheme !== undefined) (md as any).manuscriptColors = colorScheme;
   md.use(manuscriptMarkdownPlugin);
   return md.render(input);

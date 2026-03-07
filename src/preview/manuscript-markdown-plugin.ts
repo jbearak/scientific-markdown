@@ -994,8 +994,10 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
   });
 
-  // Register grid table block rule before heading to intercept placeholders
-  md.block.ruler.before('heading', 'manuscript_grid_table_block', gridTableBlockRule);
+  // Register grid table block rule before html_block so the placeholder comment
+  // is consumed before markdown-it's html_block rule can swallow it (VS Code's
+  // preview enables html: true).
+  md.block.ruler.before('html_block', 'manuscript_grid_table_block', gridTableBlockRule);
 
   // Register the block-level rule to handle multi-line patterns with empty lines
   // This must run very early, before heading and paragraph parsing
