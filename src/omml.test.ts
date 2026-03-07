@@ -884,6 +884,37 @@ describe('Unit tests: OMML construct translation', () => {
       expect(result).toContain('^n');
       expect(result).toContain('i');
     });
+
+    it('omits empty superscript when m:sup is absent or empty', () => {
+      const node = {
+        'm:nary': [
+          { 'm:naryPr': [
+            { 'm:chr': [], ':@': { '@_m:val': '∑' } },
+            { 'm:limLoc': [], ':@': { '@_m:val': 'undOvr' } },
+          ]},
+          { 'm:sub': [makeRun('w')] },
+          { 'm:sup': [] },
+          { 'm:e': [makeRun('x')] },
+        ],
+      };
+      const result = ommlToLatex([node]);
+      expect(result).toBe('\\sum\\limits_wx');
+      expect(result).not.toContain('^');
+    });
+
+    it('omits empty subscript when m:sub is absent or empty', () => {
+      const node = {
+        'm:nary': [
+          { 'm:naryPr': [{ 'm:chr': [], ':@': { '@_m:val': '∑' } }] },
+          { 'm:sub': [] },
+          { 'm:sup': [makeRun('n')] },
+          { 'm:e': [makeRun('x')] },
+        ],
+      };
+      const result = ommlToLatex([node]);
+      expect(result).toBe('\\sum^nx');
+      expect(result).not.toContain('_');
+    });
   });
 
   // --- Delimiter (m:d) --- Req 3.8

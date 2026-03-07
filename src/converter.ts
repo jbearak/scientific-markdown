@@ -1009,6 +1009,10 @@ export async function extractTableFormatMapping(data: Uint8Array | JSZip): Promi
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FORMATS');
 }
 
+export async function extractPipeTableAlignedMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_PIPE_TABLE_ALIGNED');
+}
+
 export async function extractTableFontSizeMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FONT_SIZES');
 }
@@ -3167,7 +3171,7 @@ function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comm
   return lines.join('\n');
 }
 
-type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number> };
+type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; pipeTableAlignedMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number> };
 
 // East Asian Wide / Fullwidth code-point ranges (UAX #11).  Characters in
 // these ranges occupy two terminal columns; everything else is treated as
@@ -3208,7 +3212,7 @@ function getDisplayWidth(str: string): number {
  * one pass so that renderInlineSegment side-effects (e.g. emittedIdCommentBodies)
  * are not duplicated.
  */
-function tryRenderPipeTable(table: { rows: TableRow[] }, maxLineWidth: number, comments: Map<string, Comment>, renderOpts?: RenderOpts): string | null {
+function tryRenderPipeTable(table: { rows: TableRow[] }, maxLineWidth: number, comments: Map<string, Comment>, renderOpts?: RenderOpts, aligned?: boolean): string | null {
   if (maxLineWidth <= 0) return null;
   const rows = table.rows;
   if (rows.length === 0) return null;
@@ -3291,10 +3295,27 @@ function tryRenderPipeTable(table: { rows: TableRow[] }, maxLineWidth: number, c
   // Build pipe table lines
   const lines: string[] = [];
   const deferredAll: string[] = [];
+
+  // Compute column widths for aligned mode
+  let colWidths: number[] | undefined;
+  if (aligned) {
+    colWidths = new Array(numCols).fill(3); // minimum separator width
+    for (const row of rendered) {
+      for (let ci = 0; ci < row.length; ci++) {
+        const w = getDisplayWidth(row[ci].text);
+        if (w > colWidths[ci]) colWidths[ci] = w;
+      }
+    }
+  }
+
   const formatPipeRow = (cells: { text: string; deferred: string[] }[]): string => {
     let line = '|';
-    for (const c of cells) {
-      if (c.text.length === 0) {
+    for (let ci = 0; ci < cells.length; ci++) {
+      const c = cells[ci];
+      if (colWidths) {
+        const pad = colWidths[ci] - getDisplayWidth(c.text);
+        line += ' ' + c.text + ' '.repeat(pad) + ' |';
+      } else if (c.text.length === 0) {
         line += ' |';
       } else {
         line += ' ' + c.text + ' |';
@@ -3309,7 +3330,15 @@ function tryRenderPipeTable(table: { rows: TableRow[] }, maxLineWidth: number, c
   lines.push(formatPipeRow(headerCells));
   for (const c of headerCells) deferredAll.push(...c.deferred);
 
-  lines.push('| ' + Array(numCols).fill('---').join(' | ') + ' |');
+  if (colWidths) {
+    let sep = '|';
+    for (let ci = 0; ci < numCols; ci++) {
+      sep += ' ' + '-'.repeat(colWidths[ci]) + ' |';
+    }
+    lines.push(sep);
+  } else {
+    lines.push('| ' + Array(numCols).fill('---').join(' | ') + ' |');
+  }
 
   for (let i = 1; i < rendered.length; i++) {
     const rowCells = rendered[i];
@@ -3555,7 +3584,8 @@ function renderTableOrFallback(
   }
   // When the original was a pipe table, skip the width check to preserve format
   const pipeMax = storedFormat === 'pipe' ? Infinity : (options?.pipeTableMaxLineWidth ?? 120);
-  const pipeResult = tryRenderPipeTable(item, pipeMax, comments, renderOpts);
+  const pipeAligned = tableIndex !== undefined && renderOpts?.pipeTableAlignedMapping?.get(String(tableIndex)) === 'true';
+  const pipeResult = tryRenderPipeTable(item, pipeMax, comments, renderOpts, pipeAligned);
   if (pipeResult !== null) {
     return fontPrefix + pipeResult;
   }
@@ -3570,7 +3600,7 @@ function renderTableOrFallback(
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -3686,6 +3716,7 @@ export function buildMarkdown(
     noteLabels,
     imageFormatMapping: options?.imageFormatMapping ?? undefined,
     tableFormatMapping: options?.tableFormatMapping ?? undefined,
+    pipeTableAlignedMapping: options?.pipeTableAlignedMapping ?? undefined,
     tableFontSizeMapping: options?.tableFontSizeMapping ?? undefined,
     tableFontMapping: options?.tableFontMapping ?? undefined,
     landscapeTableIndices: options?.landscapeTableIndices ?? undefined,
@@ -4807,7 +4838,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4823,6 +4854,7 @@ export async function convertDocx(
     extractBlockquoteAlertStyleMapping(zip),
     extractImageFormatMapping(zip),
     extractTableFormatMapping(zip),
+    extractPipeTableAlignedMapping(zip),
     extractTableFontSizeMapping(zip),
     extractTableFontMapping(zip),
     extractPipeTableMaxLineWidth(zip),
@@ -4966,6 +4998,7 @@ export async function convertDocx(
     blockquoteAlertInlineByGroup: blockquoteAlertStyleMapping,
     imageFormatMapping,
     tableFormatMapping,
+    pipeTableAlignedMapping,
     tableFontSizeMapping,
     tableFontMapping,
     landscapeTableIndices: landscapeTableMapping,

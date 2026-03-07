@@ -505,8 +505,8 @@ function translateNary(children: any[]): string {
 
   const subLatex = ommlToLatex(findChild(children, 'm:sub'));
   const supLatex = ommlToLatex(findChild(children, 'm:sup'));
-  const sub = subHide ? '' : '_' + scriptArg(subLatex);
-  const sup = supHide ? '' : '^' + scriptArg(supLatex);
+  const sub = (subHide || !subLatex) ? '' : '_' + scriptArg(subLatex);
+  const sup = (supHide || !supLatex) ? '' : '^' + scriptArg(supLatex);
   const body = ommlToLatex(findChild(children, 'm:e'));
   return op + limits + sub + sup + body;
 }

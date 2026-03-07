@@ -2,7 +2,7 @@ import MarkdownIt from 'markdown-it';
 import { escapeXml, generateCitation, generateMathXml, createCiteprocEngineLocal, createCiteprocEngineAsync, generateBibliographyXml, generateMissingKeysXml } from './md-to-docx-citations';
 import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
-import { isAbsolute, join, resolve, basename } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import { parseBibtex, BibtexEntry } from './bibtex-parser';
 import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme } from './frontmatter';
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
@@ -73,6 +73,7 @@ export interface MdToken {
   rows?: MdTableRow[];      // for tables
   language?: string;        // for code blocks
   sourceFormat?: TableFormat; // original table format for round-trip
+  pipeAligned?: boolean;      // pipe table was column-aligned (padded) in source
   tableFontSize?: number;   // per-table font size override (pt)
   tableFont?: string;       // per-table font name override
   landscapeOpen?: true;     // sentinel: start of landscape section
@@ -1157,6 +1158,14 @@ export function portraitBreakProps(portraitBreakOrdinals: Set<number>): CustomPr
   return chunkCustomProps('MANUSCRIPT_PORTRAIT_BREAKS_', JSON.stringify([...portraitBreakOrdinals]));
 }
 
+export function pipeTableAlignedProps(aligned: Map<number, boolean>): CustomPropEntry[] {
+  if (aligned.size === 0) return [];
+  const mapping: Record<string, string> = {};
+  for (const [idx, val] of aligned) {
+    mapping[String(idx)] = String(val);
+  }
+  return chunkCustomProps('MANUSCRIPT_PIPE_TABLE_ALIGNED_', JSON.stringify(mapping));
+}
 
 export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const md = createMarkdownIt();
@@ -1170,7 +1179,8 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const processed = preprocessCriticMarkup(wrapped);
   const tokens = md.parse(processed, {});
 
-  const result = convertTokens(tokens, 0, 0, warnings);
+  const processedLines = processed.split('\n');
+  const result = convertTokens(tokens, 0, 0, warnings, processedLines);
   annotateBlockquoteBoundaries(result);
 
   // Post-process: recompute HTML comment blankLinesBefore/After from the
@@ -1514,7 +1524,7 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
   return result;
 }
 
-function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnings?: string[]): MdToken[] {
+function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnings?: string[], sourceLines?: string[]): MdToken[] {
   const result: MdToken[] = [];
   let i = 0;
   
@@ -1590,17 +1600,35 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         break;
       }
 
-      case 'table_open':
+      case 'table_open': {
         const tableClose = findClosingToken(tokens, i, 'table_close');
         const tableData = extractTableData(tokens.slice(i + 1, tableClose));
-        result.push({
+        // Detect whether the pipe table was column-aligned (padded) in source.
+        // The separator row is the second line of the table; if any column's
+        // dash segment exceeds the minimum 3 characters, the table is aligned.
+        let pipeAligned: boolean | undefined;
+        if (sourceLines && token.map) {
+          const [startLine, endLine] = token.map;
+          // The separator row is always the second line (index 1) of the table
+          if (startLine + 1 < endLine) {
+            const sepLine = sourceLines[startLine + 1];
+            if (sepLine) {
+              const segments = sepLine.split('|').slice(1, -1); // trim leading/trailing empty from outer pipes
+              pipeAligned = segments.some(s => s.replace(/[^-]/g, '').length > 3);
+            }
+          }
+        }
+        const mdToken: MdToken = {
           type: 'table',
           runs: [],
           rows: tableData,
           sourceFormat: 'pipe',
-        });
+        };
+        if (pipeAligned) mdToken.pipeAligned = true;
+        result.push(mdToken);
         i = tableClose + 1;
         break;
+      }
       
       case 'html_block': {
         const htmlContent = token.content || '';
@@ -2408,6 +2436,7 @@ export interface DocxGenState {
   sectionBreakOrdinal: number;  // counter for paragraph-level sectPr emissions (for portrait round-trip)
   portraitBreakOrdinals: Set<number>; // ordinals of portrait-fence close section breaks
   templateSectPr?: string;      // trailing <w:sectPr> from template document.xml
+  pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
 }
 
@@ -4215,15 +4244,14 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
       const cx = pixelsToEmu(width);
       const cy = pixelsToEmu(height);
       const docPrId = state.nextImageDocPrId++;
-      const filename = basename(src);
       xml += '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
         + '<wp:extent cx="' + cx + '" cy="' + cy + '"/>'
         + '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
-        + '<wp:docPr id="' + docPrId + '" name="' + escapeXml(filename) + '" descr="' + escapeXml(alt) + '"/>'
+        + '<wp:docPr id="' + docPrId + '" name="' + escapeXml(src) + '" descr="' + escapeXml(alt) + '"/>'
         + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         + '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
         + '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-        + '<pic:nvPicPr><pic:cNvPr id="' + docPrId + '" name="' + escapeXml(filename) + '"/><pic:cNvPicPr/></pic:nvPicPr>'
+        + '<pic:nvPicPr><pic:cNvPr id="' + docPrId + '" name="' + escapeXml(src) + '"/><pic:cNvPicPr/></pic:nvPicPr>'
         + '<pic:blipFill><a:blip r:embed="' + imgEntry.rId + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
         + '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm>'
         + '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
@@ -4856,6 +4884,9 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.sourceFormat) {
         state.tableFormats.set(state.tableIndex, token.sourceFormat);
       }
+      if (token.pipeAligned) {
+        state.pipeTableAligned.set(state.tableIndex, true);
+      }
       if (token.tableFontSize !== undefined) {
         state.tableFontSizes.set(state.tableIndex, token.tableFontSize);
       }
@@ -5126,6 +5157,7 @@ export async function convertMdToDocx(
     tableFormats: new Map(),
     tableFontSizes: new Map(),
     tableFonts: new Map(),
+    pipeTableAligned: new Map(),
     fontOverrides,
     listIndent: detectListIndent(bodyWithoutFootnotes),
     consecutiveReplyParaIds: new Set(),
@@ -5331,6 +5363,7 @@ export async function convertMdToDocx(
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
   customProps.push(...imageFormatProps(state.imageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
+  customProps.push(...pipeTableAlignedProps(state.pipeTableAligned));
   customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
   customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
   customProps.push(...landscapeTableProps(state.landscapeTables));

@@ -4281,3 +4281,89 @@ describe('Portrait section round-trip', () => {
   });
 });
 
+describe('round-trip regression: image path preservation', () => {
+  // Minimal 1x1 white PNG (67 bytes)
+  const TINY_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
+    'Nl7BcQAAAABJRU5ErkJggg==', 'base64');
+
+  test('image with directory components round-trips full path', async () => {
+    const tmpDir = join(require('os').tmpdir(), 'mms-test-img-' + Date.now());
+    const { mkdirSync, writeFileSync, rmSync } = require('fs');
+    mkdirSync(join(tmpDir, 'output'), { recursive: true });
+    writeFileSync(join(tmpDir, 'output', 'figure_1.png'), TINY_PNG);
+    try {
+      // markdown references image relative to a subdir
+      const md = '![alt text](output/figure_1.png){width=200 height=150}\n';
+      const { docx } = await convertMdToDocx(md, { sourceDir: tmpDir });
+      const result = await convertDocx(docx);
+      expect(result.markdown).toContain('![alt text](output/figure_1.png)');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('image with simple filename round-trips correctly', async () => {
+    const tmpDir = join(require('os').tmpdir(), 'mms-test-img2-' + Date.now());
+    const { mkdirSync, writeFileSync, rmSync } = require('fs');
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, 'image.png'), TINY_PNG);
+    try {
+      const md = '![](image.png){width=100 height=100}\n';
+      const { docx } = await convertMdToDocx(md, { sourceDir: tmpDir });
+      const result = await convertDocx(docx);
+      expect(result.markdown).toContain('![](image.png)');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('round-trip regression: LaTeX nary subscript-only', () => {
+  test('\\sum\\limits_w does not gain spurious ^{}', async () => {
+    const md = '$\\sum\\limits_w$\n';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('\\sum\\limits_w');
+    expect(result.markdown).not.toContain('^{}');
+  });
+});
+
+describe('round-trip regression: pipe table alignment', () => {
+  test('aligned pipe table preserves column padding', async () => {
+    const md = [
+      '| Name   | Value |',
+      '| ------ | ----- |',
+      '| Alpha  | 1     |',
+      '| Beta   | 2     |',
+      '',
+    ].join('\n');
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    // The separator should have dashes longer than minimum 3
+    const lines = result.markdown.split('\n');
+    const sepLine = lines.find(l => /^\|[\s\-:|]+\|$/.test(l));
+    expect(sepLine).toBeDefined();
+    // Should have padded dashes, not minimal ---
+    const segments = sepLine!.split('|').slice(1, -1);
+    expect(segments.some(s => s.replace(/[^-]/g, '').length > 3)).toBe(true);
+  });
+
+  test('compact pipe table stays compact', async () => {
+    const md = [
+      '| Name | Value |',
+      '| --- | --- |',
+      '| A | 1 |',
+      '',
+    ].join('\n');
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    const lines = result.markdown.split('\n');
+    const sepLine = lines.find(l => /^\|[\s\-:|]+\|$/.test(l));
+    expect(sepLine).toBeDefined();
+    const segments = sepLine!.split('|').slice(1, -1);
+    // All segments should have exactly 3 dashes (compact)
+    expect(segments.every(s => s.replace(/[^-]/g, '').length === 3)).toBe(true);
+  });
+});
+
