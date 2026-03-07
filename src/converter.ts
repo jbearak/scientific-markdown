@@ -4184,6 +4184,22 @@ export function buildMarkdown(
             const needed = desiredNewlines - existingNewlines;
             if (needed > 0) {
               output.push('\n'.repeat(needed));
+            } else if (needed < 0) {
+              // Too many trailing newlines — trim excess from the output tail
+              let toRemove = -needed;
+              while (toRemove > 0 && output.length > 0) {
+                const last = output[output.length - 1];
+                let trailingNL = 0;
+                for (let j = last.length - 1; j >= 0 && last[j] === '\n'; j--) trailingNL++;
+                if (trailingNL === 0) break;
+                const removeFromThis = Math.min(toRemove, trailingNL);
+                if (removeFromThis === last.length) {
+                  output.pop();
+                } else {
+                  output[output.length - 1] = last.slice(0, last.length - removeFromThis);
+                }
+                toRemove -= removeFromThis;
+              }
             }
           } else if (!output[output.length - 1].endsWith('\n\n')) {
             output.push('\n\n');

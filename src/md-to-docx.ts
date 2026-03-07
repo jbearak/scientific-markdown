@@ -1173,6 +1173,43 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const result = convertTokens(tokens, 0, 0, warnings);
   annotateBlockquoteBoundaries(result);
 
+  // Post-process: recompute HTML comment blankLinesBefore/After from the
+  // ORIGINAL markdown lines.  preprocessGridTables inserts blank lines around
+  // grid-table placeholders which inflates the gaps computed from markdown-it
+  // token maps.  Using the original source gives correct values.
+  {
+    const origLines = markdown.split('\n');
+    let searchFrom = 0; // track position to handle duplicate comment text
+    for (const tok of result) {
+      if (tok.type !== 'paragraph' || tok.runs.length !== 1 || tok.runs[0].type !== 'html_comment') continue;
+      const commentText = tok.runs[0].text.trim();
+      // Find this comment's line in the original markdown (starting after previous match)
+      let commentLine = -1;
+      for (let li = searchFrom; li < origLines.length; li++) {
+        if (origLines[li].trim() === commentText) {
+          commentLine = li;
+          searchFrom = li + 1;
+          break;
+        }
+      }
+      if (commentLine < 0) continue;
+      // Count blank lines before: scan backwards from commentLine
+      let beforeCount = 0;
+      for (let li = commentLine - 1; li >= 0; li--) {
+        if (origLines[li].trim() === '') beforeCount++;
+        else break;
+      }
+      // Count blank lines after: scan forward from commentLine
+      let afterCount = 0;
+      for (let li = commentLine + 1; li < origLines.length; li++) {
+        if (origLines[li].trim() === '') afterCount++;
+        else break;
+      }
+      tok.blankLinesBefore = beforeCount;
+      tok.blankLinesAfter = afterCount;
+    }
+  }
+
   // Post-process: transfer table-font directives from HTML comment tokens to table tokens
   for (let i = result.length - 1; i >= 0; i--) {
     if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
