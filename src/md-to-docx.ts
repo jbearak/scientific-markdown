@@ -4568,10 +4568,13 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const hasHeaderRow = token.rows.some(row => row.header);
 
   let xml = '<w:tbl>';
+  const tblLayout = colWidthPcts
+    ? '<w:tblLayout w:type="fixed"/>'
+    : '<w:tblLayout w:type="auto"/>';
   const tblW = colWidthPcts
     ? '<w:tblW w:w="5000" w:type="pct"/>'
     : '<w:tblW w:w="0" w:type="auto"/>';
-  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
+  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>' + tblLayout + '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
 
   // Emit tblGrid (required when widths or spans are present)
   if (hasSpans || colWidthPcts) {

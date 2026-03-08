@@ -1039,8 +1039,9 @@ export async function extractDefaultTableColWidths(data: Uint8Array | JSZip): Pr
   for (const propNode of propertyNodes) {
     const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
     if (name !== 'MANUSCRIPT_DEFAULT_TABLE_COL_WIDTHS') continue;
-    const children = propNode?.property ?? propNode?.['property'] ?? (Array.isArray(propNode) ? propNode : [propNode]);
-    for (const child of (Array.isArray(children) ? children : [children])) {
+    const children = propNode['property'];
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
       if (child?.['vt:lpwstr'] !== undefined) {
         const raw = nodeText(child['vt:lpwstr'] || []).trim();
         return raw || null;
