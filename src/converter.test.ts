@@ -2796,7 +2796,7 @@ describe('Integration: comments.docx fixture', () => {
     // passes. Normalize trailing backslash-breaks and per-line trailing
     // whitespace to test semantic stability.
     const normalize = (s: string) =>
-      s.replace(/[ \t]+$/gm, '').replace(/(\\?\n)+$/, '').replace(/\\\n(?=\n*\{#\d+>>|\n*\{>>)/g, '\n').replace(/\n{2,}/g, '\n');
+      s.replace(/[ \t]+$/gm, '').replace(/(\\?\n)+$/, '').replace(/\\\n(?=\n*\{#\d+>>|\n*\{>>)/g, '\n').replace(/\n{2,}(?=\{#\d+>>|\{>>)/g, '\n');
     expect(normalize(pass2.markdown)).toBe(normalize(pass3.markdown));
   });
 });

@@ -623,7 +623,8 @@ function runsToMarkdown(runs: HtmlTableRun[]): string {
       continue;
     }
     if (run.type === 'hardbreak') {
-      result += '\\\n';
+      // Grid table cells treat bare newlines as hard breaks, so no backslash needed.
+      result += '\n';
       continue;
     }
     if (run.type !== 'text') {
