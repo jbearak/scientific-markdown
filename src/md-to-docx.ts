@@ -4570,7 +4570,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   let xml = '<w:tbl>';
   const tblLayout = colWidthPcts
     ? '<w:tblLayout w:type="fixed"/>'
-    : '<w:tblLayout w:type="auto"/>';
+    : '';
   const tblW = colWidthPcts
     ? '<w:tblW w:w="5000" w:type="pct"/>'
     : '<w:tblW w:w="0" w:type="auto"/>';
