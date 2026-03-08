@@ -23,6 +23,7 @@ function makeState(): DocxGenState {
     rIdOffset: 5,
     warnings: [],
     hasList: false,
+    listStartOverrides: [],
     hasComments: false,
     missingKeys: new Set(),
     replyRanges: [],

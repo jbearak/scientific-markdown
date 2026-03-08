@@ -59,6 +59,7 @@ export interface MdToken {
   type: 'paragraph' | 'heading' | 'list_item' | 'blockquote' | 'code_block' | 'table' | 'hr';
   level?: number;           // heading level 1-6, blockquote nesting, list nesting
   ordered?: boolean;        // for list items
+  startNumber?: number;     // for ordered lists: first item's start number (when ≠ 1)
   taskChecked?: boolean;    // for GFM task list items
   alertType?: GfmAlertType; // for GFM alerts in blockquotes
   alertLead?: boolean;      // first blockquote paragraph carrying alert header
@@ -1702,7 +1703,8 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
       case 'ordered_list_open':
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
-        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings);
+        const listStart = token.attrGet?.('start') ? parseInt(token.attrGet('start'), 10) : undefined;
+        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings, listStart);
         result.push(...listItems);
         i = listClose + 1;
         break;
@@ -2268,7 +2270,7 @@ const DROPPED_LIST_BLOCK_TYPES = new Set([
   'fence', 'code_block', 'html_block', 'blockquote_open', 'table_open',
 ]);
 
-function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[]): MdToken[] {
+function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[], startNumber?: number): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
 
@@ -2315,20 +2317,26 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
       }
 
       const taskInfo = extractTaskListItem(runs);
-      items.push({
+      const listItem: MdToken = {
         type: 'list_item',
         ordered,
         level,
         runs: taskInfo?.runs ?? runs,
         taskChecked: taskInfo?.checked,
-      });
+      };
+      // Attach startNumber only to the first item of an ordered list with start ≠ 1
+      if (items.length === 0 && startNumber !== undefined && startNumber !== 1) {
+        listItem.startNumber = startNumber;
+      }
+      items.push(listItem);
 
       // Extract nested sublists
       for (let j = 0; j < itemTokens.length; j++) {
         if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
           const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
           const subOrdered = itemTokens[j].type === 'ordered_list_open';
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings));
+          const subStart = itemTokens[j].attrGet?.('start') ? parseInt(itemTokens[j].attrGet('start'), 10) : undefined;
+          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart));
           j = subClose;
         }
       }
@@ -2546,6 +2554,7 @@ export interface DocxGenState {
   rIdOffset: number; // reserved rIds for fixed relationships (styles, numbering, comments, theme, settings)
   warnings: string[];
   hasList: boolean;
+  listStartOverrides: { numId: number; ilvl: number; start: number }[]; // ordered lists with start ≠ 1
   hasComments: boolean;
   hasFootnotes: boolean;
   hasEndnotes: boolean;
@@ -3586,7 +3595,7 @@ function randomHex8(): string {
   return Math.floor(Math.random() * 0xFFFFFFFF).toString(16).toUpperCase().padStart(8, '0');
 }
 
-function numberingXml(): string {
+function numberingXml(startOverrides?: { numId: number; ilvl: number; start: number }[]): string {
   // Generate random identifiers that Word expects on numbering definitions.
   // Without these, Word adds them on open, marking the document as modified.
   function lvlsWithTplc(lvls: string[]): string {
@@ -3625,6 +3634,13 @@ function numberingXml(): string {
     '</w:abstractNum>\n' +
     '<w:num w:numId="1" w16cid:durableId="' + durableId1 + '"><w:abstractNumId w:val="0"/></w:num>\n' +
     '<w:num w:numId="2" w16cid:durableId="' + durableId2 + '"><w:abstractNumId w:val="1"/></w:num>\n' +
+    // Emit extra w:num entries for ordered lists with custom start numbers
+    (startOverrides ?? []).map(o => {
+      const did = Math.floor(Math.random() * 2000000000);
+      return '<w:num w:numId="' + o.numId + '" w16cid:durableId="' + did + '"><w:abstractNumId w:val="1"/>' +
+        '<w:lvlOverride w:ilvl="' + o.ilvl + '"><w:startOverride w:val="' + o.start + '"/></w:lvlOverride>' +
+        '</w:num>\n';
+    }).join('') +
     '</w:numbering>';
 }
 
@@ -4597,8 +4613,14 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
         const leftIndent = 720 * (token.level || 1);
         pPr = '<w:pPr><w:ind w:left="' + leftIndent + '" w:hanging="360"/></w:pPr>';
       } else {
-        const numId = token.ordered ? '2' : '1';
+        let numId = token.ordered ? '2' : '1';
         const ilvl = (token.level || 1) - 1;
+        // Ordered lists with start ≠ 1 need a dedicated numId with lvlOverride
+        if (token.startNumber !== undefined && token.startNumber !== 1) {
+          const overrideNumId = 3 + state.listStartOverrides.length; // numIds 1,2 are reserved
+          state.listStartOverrides.push({ numId: overrideNumId, ilvl, start: token.startNumber });
+          numId = String(overrideNumId);
+        }
         pPr = '<w:pPr><w:numPr><w:ilvl w:val="' + ilvl + '"/><w:numId w:val="' + numId + '"/></w:numPr></w:pPr>';
         state.hasList = true;
       }
@@ -5587,6 +5609,7 @@ export async function convertMdToDocx(
     rIdOffset,
     warnings: [...earlyWarnings],
     hasList: false,
+    listStartOverrides: [],
     hasComments: false,
     hasFootnotes: false,
     hasEndnotes: false,
@@ -5852,7 +5875,7 @@ export async function convertMdToDocx(
     if (templateParts?.has('word/numbering.xml')) {
       zip.file('word/numbering.xml', templateParts.get('word/numbering.xml')!);
     } else {
-      zip.file('word/numbering.xml', numberingXml());
+      zip.file('word/numbering.xml', numberingXml(state.listStartOverrides));
     }
   }
 

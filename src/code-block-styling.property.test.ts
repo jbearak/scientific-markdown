@@ -262,7 +262,7 @@ describe('Code Block Styling Round-Trip Tests', () => {
     return {
       commentId: 0, comments: [], commentIdMap: new Map(),
       relationships: new Map(), nextRId: 1, rIdOffset: 3,
-      warnings: [], hasList: false, hasComments: false,
+      warnings: [], hasList: false, listStartOverrides: [], hasComments: false,
       hasFootnotes: false, hasEndnotes: false, footnoteId: 1,
       footnoteEntries: [], footnoteLabelToId: new Map(),
       notesMode: 'footnotes', missingKeys: new Set(),

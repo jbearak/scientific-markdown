@@ -172,6 +172,7 @@ function hasFormatting(fmt: RunFormatting): boolean {
 export interface ListMeta {
   type: 'bullet' | 'ordered';
   level: number; // 0-based indentation level
+  startNumber?: number; // ordered list start number (when ≠ 1)
 }
 
 export const DEFAULT_FORMATTING: Readonly<RunFormatting> = Object.freeze({
@@ -215,6 +216,14 @@ function escapeSensitiveHtmlLikeTags(text: string): string {
     if (!MARKDOWN_HTML_SENSITIVE_TAGS.has(tagName.toLowerCase())) return fullMatch;
     return fullMatch.replace(/</g, '&lt;').replace(/>/g, '&gt;');
   });
+}
+
+/** Escape markdown-sensitive characters that would otherwise be interpreted as formatting. */
+function escapeMarkdownChars(text: string): string {
+  // Escape * which always triggers bold/italic in CommonMark.
+  // Do NOT escape _ (only triggers emphasis in flanking contexts — blanket escaping
+  // changes visible text) or ~ (rare, only triggers strikethrough with ~~).
+  return text.replace(/\*/g, '\\*');
 }
 
 export type RevisionInfo = { type: 'addition' | 'deletion'; author: string; date: string };
@@ -262,7 +271,8 @@ interface NoteBodyContext {
   relationshipMap: Map<string, string>;
   zoteroCitations: ZoteroCitation[];
   keyMap: Map<string, string>;
-  numberingDefs: Map<string, Map<string, 'bullet' | 'ordered'>>;
+  numberingDefs: NumberingDefs;
+  numberingStartOverrides?: NumberingStartOverrides;
   format: CitationKeyFormat;
 }
 
@@ -359,24 +369,28 @@ export async function extractImageFormatMapping(data: Uint8Array | JSZip): Promi
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_IMAGE_FORMATS');
 }
 
-export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string, Map<string, 'bullet' | 'ordered'>>> {
-  const numberingDefs = new Map<string, Map<string, 'bullet' | 'ordered'>>();
+export type NumberingDefs = Map<string, Map<string, 'bullet' | 'ordered'>>;
+export type NumberingStartOverrides = Map<string, Map<string, number>>; // numId → ilvl → start
+
+export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: NumberingDefs; startOverrides: NumberingStartOverrides }> {
+  const numberingDefs: NumberingDefs = new Map();
+  const startOverrides: NumberingStartOverrides = new Map();
   const parsed = await readZipXml(zip, 'word/numbering.xml');
-  if (!parsed) { return numberingDefs; }
+  if (!parsed) { return { defs: numberingDefs, startOverrides }; }
 
   // Build abstractNumId → levels map
   const abstractNums = new Map<string, Map<string, 'bullet' | 'ordered'>>();
   for (const node of findAllDeep(parsed, 'w:abstractNum')) {
     const abstractNum = node['w:abstractNum'];
     if (!abstractNum) continue;
-    
+
     const abstractNumId = getAttr(node, 'abstractNumId');
     const levels = new Map<string, 'bullet' | 'ordered'>();
-    
+
     for (const lvlNode of findAllDeep(abstractNum, 'w:lvl')) {
       const lvl = lvlNode['w:lvl'];
       if (!lvl) continue;
-      
+
       const ilvl = getAttr(lvlNode, 'ilvl');
       const numFmtNodes = findAllDeep(lvl, 'w:numFmt');
       if (numFmtNodes.length > 0) {
@@ -384,15 +398,15 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string,
         levels.set(ilvl, val === 'bullet' ? 'bullet' : 'ordered');
       }
     }
-    
+
     abstractNums.set(abstractNumId, levels);
   }
 
-  // Resolve numId → abstractNumId
+  // Resolve numId → abstractNumId, and read lvlOverride/startOverride
   for (const node of findAllDeep(parsed, 'w:num')) {
     const num = node['w:num'];
     if (!num) continue;
-    
+
     const numId = getAttr(node, 'numId');
     const abstractNumIdNodes = findAllDeep(num, 'w:abstractNumId');
     if (abstractNumIdNodes.length > 0) {
@@ -402,9 +416,23 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string,
         numberingDefs.set(numId, levels);
       }
     }
+
+    // Read w:lvlOverride → w:startOverride
+    for (const lvlOverrideNode of findAllDeep(num, 'w:lvlOverride')) {
+      const ilvl = getAttr(lvlOverrideNode, 'ilvl');
+      const lvlOverride = lvlOverrideNode['w:lvlOverride'];
+      if (!lvlOverride) continue;
+      for (const startNode of findAllDeep(lvlOverride, 'w:startOverride')) {
+        const startVal = parseInt(getAttr(startNode, 'val'), 10);
+        if (!isNaN(startVal) && startVal !== 1) {
+          if (!startOverrides.has(numId)) startOverrides.set(numId, new Map());
+          startOverrides.get(numId)!.set(ilvl, startVal);
+        }
+      }
+    }
   }
-  
-  return numberingDefs;
+
+  return { defs: numberingDefs, startOverrides };
 }
 
 export function parseHeadingLevel(pPrChildren: any[]): number | undefined {
@@ -477,16 +505,16 @@ export function parseCodeBlockStyle(pPrChildren: any[]): boolean {
   return getAttr(pStyleElement, 'val').toLowerCase() === 'codeblock';
 }
 
-export function parseListMeta(pPrChildren: any[], numberingDefs: Map<string, Map<string, 'bullet' | 'ordered'>>): ListMeta | undefined {
+export function parseListMeta(pPrChildren: any[], numberingDefs: NumberingDefs, numberingStartOverrides?: NumberingStartOverrides): ListMeta | undefined {
   const numPrElement = pPrChildren.find(child => child['w:numPr'] !== undefined);
   if (!numPrElement) return undefined;
-  
+
   const numPr = numPrElement['w:numPr'];
   if (!Array.isArray(numPr)) return undefined;
-  
+
   let numId = '';
   let ilvl = '';
-  
+
   for (const child of numPr) {
     if (child['w:numId']) {
       numId = getAttr(child, 'val');
@@ -495,21 +523,23 @@ export function parseListMeta(pPrChildren: any[], numberingDefs: Map<string, Map
       ilvl = getAttr(child, 'val');
     }
   }
-  
+
   if (!numId || !ilvl) return undefined;
-  
+
   const levels = numberingDefs.get(numId);
   if (!levels) return undefined;
-  
+
   const type = levels.get(ilvl);
   if (!type) return undefined;
-  
+
   const level = parseInt(ilvl, 10);
   if (isNaN(level) || level < 0) return undefined;
 
+  const startNumber = numberingStartOverrides?.get(numId)?.get(ilvl);
   return {
     type,
-    level
+    level,
+    ...(startNumber !== undefined ? { startNumber } : {})
   };
 }
 
@@ -718,6 +748,10 @@ export function wrapWithFormatting(text: string, fmt: RunFormatting): string {
   }
 
   result = escapeSensitiveHtmlLikeTags(result);
+
+  // Escape markdown-sensitive characters so they round-trip faithfully.
+  // Only applies to non-code text (code is already fenced with backticks above).
+  result = escapeMarkdownChars(result);
 
   // If both superscript and subscript are true, superscript takes precedence
   if (fmt.superscript) {
@@ -2031,7 +2065,8 @@ export async function extractDocumentContent(
   zoteroCitations: ZoteroCitation[],
   keyMap: Map<string, string>,
   options?: {
-    numberingDefs?: Map<string, Map<string, 'bullet' | 'ordered'>>;
+    numberingDefs?: NumberingDefs;
+    numberingStartOverrides?: NumberingStartOverrides;
     relationshipMap?: Map<string, string>;
     replyIds?: Set<string>;
     imageRelationships?: Map<string, string>;
@@ -2046,7 +2081,9 @@ export async function extractDocumentContent(
 
   // Parse relationships and numbering definitions
   const relationshipMap = options?.relationshipMap ?? await parseRelationships(zip);
-  const numberingDefs = options?.numberingDefs ?? await parseNumberingDefinitions(zip);
+  const numberingResult = options?.numberingDefs ? { defs: options.numberingDefs, startOverrides: options.numberingStartOverrides ?? new Map() } : await parseNumberingDefinitions(zip);
+  const numberingDefs = numberingResult.defs;
+  const numberingStartOverrides = numberingResult.startOverrides;
   const replyIds = options?.replyIds;
   const imageRelMap = options?.imageRelationships ?? new Map<string, string>();
   const imageFolder = options?.imageFolder ?? '';
@@ -2415,7 +2452,7 @@ export async function extractDocumentContent(
               }
 
               headingLevel = parseHeadingLevel(pPrChildren);
-              listMeta = parseListMeta(pPrChildren, numberingDefs);
+              listMeta = parseListMeta(pPrChildren, numberingDefs, numberingStartOverrides);
               isTitle = parseTitleStyle(pPrChildren);
               blockquoteLevel = parseBlockquoteLevel(pPrChildren);
               alertType = parseAlertType(pPrChildren);
@@ -2902,6 +2939,9 @@ function renderInlineRange(
     }
 
     if (item.type === 'math') {
+      // Check if this inline math is between bold/italic text items that share
+      // formatting. If so, the caller (text rendering below) already handled it
+      // as part of a formatting group. If not, emit standalone.
       const mathText = item.display ? MATH_FENCE + '\n' + item.latex + '\n' + MATH_FENCE : '$' + item.latex + '$';
       out += wrapWithRevision(mathText, item.revision);
       i++;
@@ -3011,9 +3051,58 @@ function renderInlineRange(
       i++;
       continue;
     }
+
+    // Detect formatting groups: text items with bold/italic interspersed with
+    // inline math. Emit shared formatting markers around the entire group so
+    // that e.g. **Ex. 1: $y = Y$ and $k = 1$** stays as one bold run.
+    if ((item.formatting.bold || item.formatting.italic) && !item.revision && !item.href && item.commentIds.size === 0) {
+      // Look ahead: collect text+math items that form a formatting group
+      let groupEnd = i + 1;
+      while (groupEnd < segmentEnd) {
+        const next = segment[groupEnd];
+        if (next.type === 'math' && !next.display && !next.revision) {
+          groupEnd++;
+          continue;
+        }
+        if (next.type === 'text' && !next.revision && !next.href && next.commentIds.size === 0 &&
+            next.formatting.bold === item.formatting.bold &&
+            next.formatting.italic === item.formatting.italic &&
+            next.text !== '\\\n') {
+          groupEnd++;
+          continue;
+        }
+        break;
+      }
+      // Only use group rendering if there's actually math interspersed
+      const hasMathInGroup = groupEnd > i + 1 && segment.slice(i, groupEnd).some(it => it.type === 'math');
+      if (hasMathInGroup) {
+        // Render the group: apply bold/italic around everything, inner formatting per-text-item
+        let groupText = '';
+        for (let g = i; g < groupEnd; g++) {
+          const gItem = segment[g];
+          if (gItem.type === 'math' && !gItem.display) {
+            groupText += '$' + gItem.latex + '$';
+          } else if (gItem.type === 'text') {
+            // Apply inner formatting (everything except bold/italic which wraps the group)
+            const innerFmt: RunFormatting = { ...gItem.formatting, bold: false, italic: false };
+            groupText += wrapWithFormatting(gItem.text, innerFmt);
+          }
+        }
+        if (item.formatting.italic) groupText = '*' + groupText + '*';
+        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        out += groupText;
+        i = groupEnd;
+        continue;
+      }
+    }
+
     let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
-      if (item.text !== item.href || hasFormatting(item.formatting)) {
+      // Bare URL autolink: if the link text equals the URL (no formatting), emit bare text.
+      // Bare email autolink: if href is mailto:text (no formatting), emit bare text.
+      const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
+      const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
+      if (!isBareUrl && !isBareEmail) {
         formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
       }
     }
@@ -3234,9 +3323,51 @@ function renderInlineRangeWithIds(
       i++;
       continue;
     }
+
+    // Detect formatting groups: text items with bold/italic interspersed with
+    // inline math (same logic as renderInlineRange).
+    if ((item.formatting.bold || item.formatting.italic) && !item.revision && !item.href && item.commentIds.size === 0) {
+      let groupEnd = i + 1;
+      while (groupEnd < segmentEnd) {
+        const next = segment[groupEnd];
+        if (next.type === 'math' && !next.display && !next.revision && next.commentIds.size === 0) {
+          groupEnd++;
+          continue;
+        }
+        if (next.type === 'text' && !next.revision && !next.href && next.commentIds.size === 0 &&
+            next.formatting.bold === item.formatting.bold &&
+            next.formatting.italic === item.formatting.italic &&
+            next.text !== '\\\n') {
+          groupEnd++;
+          continue;
+        }
+        break;
+      }
+      const hasMathInGroup = groupEnd > i + 1 && segment.slice(i, groupEnd).some(it => it.type === 'math');
+      if (hasMathInGroup) {
+        let groupText = '';
+        for (let g = i; g < groupEnd; g++) {
+          const gItem = segment[g];
+          if (gItem.type === 'math' && !gItem.display) {
+            groupText += '$' + gItem.latex + '$';
+          } else if (gItem.type === 'text') {
+            const innerFmt: RunFormatting = { ...gItem.formatting, bold: false, italic: false };
+            groupText += wrapWithFormatting(gItem.text, innerFmt);
+          }
+        }
+        if (item.formatting.italic) groupText = '*' + groupText + '*';
+        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        out += groupText;
+        i = groupEnd;
+        continue;
+      }
+    }
+
     let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
-      if (item.text !== item.href || hasFormatting(item.formatting)) {
+      const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
+      const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
+      if (!isBareUrl && !isBareEmail) {
         formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
       }
     }
@@ -3861,6 +3992,7 @@ export function buildMarkdown(
   let i = 0;
   let tableIndex = 0;
   let lastListType: 'bullet' | 'ordered' | undefined;
+  let orderedListCounter = 1; // tracks next number for ordered list items
   let codeBlockGroupIndex = 0;
   let lastAlertParagraphKey: string | undefined;
   let pendingAlertPrefixStrip: GfmAlertType | undefined;
@@ -4202,9 +4334,19 @@ export function buildMarkdown(
           : item.listMeta.type === 'bullet'
             ? ' '.repeat(2 * item.listMeta.level)
             : ' '.repeat(3 * item.listMeta.level);
+        // For ordered lists: use startNumber for the first item, then increment
+        if (item.listMeta.type === 'ordered') {
+          if (item.listMeta.startNumber !== undefined) {
+            orderedListCounter = item.listMeta.startNumber;
+          } else if (!lastListType || lastListType !== 'ordered') {
+            orderedListCounter = 1; // new list starts at 1
+          }
+        }
+        const orderedNum = orderedListCounter;
         const marker = item.listMeta.type === 'bullet'
           ? (useTab ? '-\t' : '- ')
-          : (useTab ? '1.\t' : '1. ');
+          : (useTab ? orderedNum + '.\t' : orderedNum + '. ');
+        if (item.listMeta.type === 'ordered') orderedListCounter++;
         output.push(indent + marker);
       } else if (item.blockquoteLevel) {
         output.push('> '.repeat(item.blockquoteLevel));
@@ -5173,23 +5315,25 @@ export async function convertDocx(
   const keyMap = buildCitationKeyMap(zoteroCitations, format);
 
   // Parse note-specific rels and numbering for footnote/endnote body parsing
-  const [numberingDefs, docRelsParsed, fnRels, enRels] = await Promise.all([
+  const [numberingResult, docRelsParsed, fnRels, enRels] = await Promise.all([
     parseNumberingDefinitions(zip),
     parseDocumentRelationships(zip),
     parseRelationships(zip, 'word/_rels/footnotes.xml.rels'),
     parseRelationships(zip, 'word/_rels/endnotes.xml.rels'),
   ]);
+  const numberingDefs = numberingResult.defs;
+  const numberingStartOverrides = numberingResult.startOverrides;
   const docRels = docRelsParsed.hyperlinks;
   const imageRels = docRelsParsed.images;
 
   // Build note contexts with merged rels (note rels + document rels as fallback)
   const fnRelsMerged = new Map([...docRels, ...fnRels]);
   const enRelsMerged = new Map([...docRels, ...enRels]);
-  const fnContext: NoteBodyContext = { relationshipMap: fnRelsMerged, zoteroCitations, keyMap, numberingDefs, format };
-  const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, format };
+  const fnContext: NoteBodyContext = { relationshipMap: fnRelsMerged, zoteroCitations, keyMap, numberingDefs, numberingStartOverrides, format };
+  const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, numberingStartOverrides, format };
 
   const [{ content: docContent, zoteroBiblData, imageEntries }, footnotes, endnotes] = await Promise.all([
-    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined }),
+    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, numberingStartOverrides, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined }),
     extractFootnotes(zip, fnContext),
     extractEndnotes(zip, enContext),
   ]);
@@ -5200,6 +5344,14 @@ export async function convertDocx(
     let activeStyle: string | undefined;
     for (let i = 0; i < docContent.length; i++) {
       const item = docContent[i];
+      // Only structural items (para, table, landscape/portrait sentinels,
+      // bibliography_marker) should trigger style transitions. Inline items
+      // (text, image, math, hardbreak, etc.) live inside a para and don't
+      // carry customStyleName — skip them to avoid premature style close.
+      const isStructural = item.type === 'para' || item.type === 'table'
+        || item.type === 'landscape_open' || item.type === 'landscape_close'
+        || item.type === 'portrait_open' || item.type === 'portrait_close';
+      if (!isStructural) continue;
       const styleName = (item.type === 'para' && item.customStyleName) ? item.customStyleName : undefined;
       if (styleName && styleName !== activeStyle) {
         // Close previous style if open
