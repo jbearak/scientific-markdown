@@ -5283,6 +5283,12 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     // Custom style sentinels: update active custom style state (no OOXML output,
     // just a state flag that generateParagraph reads).
     if (token.customStyleOpen) {
+      // Validate that the style is declared in frontmatter
+      if (frontmatter?.styles && !frontmatter.styles[token.customStyleOpen]) {
+        state.warnings.push('Custom style "' + token.customStyleOpen + '" used in <!-- style: --> directive but not declared in frontmatter styles.');
+        prevToken = token;
+        continue;
+      }
       if (token.blankLinesBefore !== undefined) sentinelGaps['cso' + sentinelCsoIdx] = token.blankLinesBefore;
       if (token.blankLinesAfter !== undefined) sentinelGaps['csoa' + sentinelCsoIdx] = token.blankLinesAfter;
       sentinelCsoIdx++;

@@ -1105,25 +1105,38 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const tokens = state.tokens;
     const OPEN_RE = /^<!--\s*style:\s*(.+?)\s*-->\s*$/i;
     const CLOSE_RE = /^<!--\s*\/style\s*-->\s*$/i;
+    // First pass (reverse): find close directives and record their indices
+    const closeIndices: number[] = [];
     for (let i = tokens.length - 1; i >= 0; i--) {
       const tok = tokens[i];
       if (tok.type !== 'html_block') continue;
       const content = (tok.content || '').trim();
-      const closeMatch = CLOSE_RE.test(content);
-      if (closeMatch) {
-        const divClose = new state.Token('html_block', '', 0);
-        divClose.content = '</div>\n';
-        // Replace the comment with the closing div
-        tokens.splice(i, 1, divClose);
-        continue;
-      }
+      if (CLOSE_RE.test(content)) closeIndices.push(i);
+    }
+    // Second pass (reverse): match opens with closes (stack-based pairing)
+    const pairedCloses = new Set<number>();
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const tok = tokens[i];
+      if (tok.type !== 'html_block') continue;
+      const content = (tok.content || '').trim();
       const openMatch = content.match(OPEN_RE);
       if (openMatch) {
-        const safeName = openMatch[1].replace(/[^a-zA-Z0-9-]/g, '-');
-        const divOpen = new state.Token('html_block', '', 0);
-        divOpen.content = '<div class="ms-custom-style ms-custom-style-' + safeName + '">\n';
-        tokens.splice(i, 1, divOpen);
+        // Find the nearest unpaired close after this open
+        const closeIdx = closeIndices.find(ci => ci > i && !pairedCloses.has(ci));
+        if (closeIdx !== undefined) {
+          pairedCloses.add(closeIdx);
+          const safeName = openMatch[1].replace(/[^a-zA-Z0-9-]/g, '-');
+          const divOpen = new state.Token('html_block', '', 0);
+          divOpen.content = '<div class="ms-custom-style ms-custom-style-' + safeName + '">\n';
+          tokens.splice(i, 1, divOpen);
+        }
       }
+    }
+    // Replace paired closes with </div>; leave unpaired closes as-is
+    for (const ci of pairedCloses) {
+      const divClose = new state.Token('html_block', '', 0);
+      divClose.content = '</div>\n';
+      tokens.splice(ci, 1, divClose);
     }
   });
 

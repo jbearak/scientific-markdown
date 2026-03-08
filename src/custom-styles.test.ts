@@ -527,10 +527,11 @@ describe('Custom Styles — Preview Plugin', () => {
     expect(html).toContain('</div>');
   });
 
-  it('stray close without open → still </div> (plugin replaces all closes)', () => {
+  it('stray close without open → left as comment (no unmatched </div>)', () => {
     const md = '<!-- /style -->';
     const html = renderWithPlugin(md, 'github');
-    expect(html).toContain('</div>');
+    expect(html).not.toContain('</div>');
+    expect(html).toContain('<!-- /style -->');
   });
 });
 

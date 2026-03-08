@@ -3999,6 +3999,7 @@ export function buildMarkdown(
   let tableIndex = 0;
   let lastListType: 'bullet' | 'ordered' | undefined;
   let lastListLevel: number | undefined;
+  const listTypeByLevel = new Map<number, 'bullet' | 'ordered'>(); // per-level list type tracking
   const orderedListCounters = new Map<number, number>(); // per-level counters for ordered list items
   let codeBlockGroupIndex = 0;
   let lastAlertParagraphKey: string | undefined;
@@ -4099,6 +4100,7 @@ export function buildMarkdown(
         }
         lastListType = undefined;
         lastListLevel = undefined;
+        listTypeByLevel.clear();
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
         pendingAlertInlineLevelForHardBreak = undefined;
@@ -4344,7 +4346,11 @@ export function buildMarkdown(
         // startNumber is only applied at a new list boundary (not for continuation items
         // that share the same numId override and thus all carry startNumber).
         if (item.listMeta.type === 'ordered') {
-          const isNewListContext = !lastListType || lastListType !== 'ordered';
+          // Check if the list at this level is continuing or new.
+          // When returning from a nested sub-list (e.g. bullet) to a parent ordered list,
+          // the per-level type map correctly identifies this as a continuation.
+          const levelType = listTypeByLevel.get(item.listMeta.level);
+          const isNewListContext = levelType !== 'ordered' && (!lastListType || lastListType !== 'ordered');
           const isNewSubList = lastListLevel !== undefined && item.listMeta.level > lastListLevel;
           if (item.listMeta.startNumber !== undefined && (isNewListContext || isNewSubList)) {
             orderedListCounters.set(item.listMeta.level, item.listMeta.startNumber);
@@ -4354,6 +4360,7 @@ export function buildMarkdown(
             orderedListCounters.set(item.listMeta.level, 1); // new nested sub-list starts at 1
           }
         }
+        listTypeByLevel.set(item.listMeta.level, item.listMeta.type);
         const orderedNum = orderedListCounters.get(item.listMeta.level) ?? 1;
         const marker = item.listMeta.type === 'bullet'
           ? (useTab ? '-\t' : '- ')
@@ -4406,6 +4413,7 @@ export function buildMarkdown(
 
       lastListType = isCurrentList ? item.listMeta!.type : undefined;
       lastListLevel = isCurrentList ? item.listMeta!.level : undefined;
+      if (!isCurrentList) listTypeByLevel.clear();
 
       i++;
       continue;
@@ -4518,6 +4526,7 @@ export function buildMarkdown(
       output.push('<!-- references -->');
       lastListType = undefined;
       lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4570,6 +4579,7 @@ export function buildMarkdown(
       // A display math block breaks list flow; reset list continuation state.
       lastListType = undefined;
       lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4620,6 +4630,7 @@ export function buildMarkdown(
       tableIndex++;
       lastListType = undefined;
       lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
