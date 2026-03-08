@@ -38,6 +38,7 @@ vsc-extension-quickstart.md
 
 # Script output
 scripts/draft-roundtrip-output/
+scripts/word-roundtrip-output/
 test/fixtures/draft_saved.bib
 test/fixtures/draft_saved.docx
 test/fixtures/draft_saved.md
