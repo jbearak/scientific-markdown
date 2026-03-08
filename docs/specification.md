@@ -154,7 +154,7 @@ Per-table overrides are preserved through DOCX round-trips: comment directives a
 
 The `table-col-widths` frontmatter field controls column width ratios for all tables in the document.
 
-**Accepted formats**: space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), or the keyword `equal` (all columns same width).
+**Accepted formats**: space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), the keyword `equal` (all columns same width), or `auto` (explicit no-op — uses Word's default auto-sizing).
 
 **Repeat-last-value**: when a table has more columns than specified ratios, the last ratio is repeated. For example, `2 1` applied to a 4-column table produces ratios `2 1 1 1`.
 
@@ -177,7 +177,7 @@ The `table-col-widths` frontmatter field controls column width ratios for all ta
 </table>
 ```
 
-**`auto` keyword**: use `auto` in a per-table directive (`<!-- table-col-widths: auto -->` or `data-col-widths="auto"`) to override a frontmatter default and restore Word's default auto-sizing for that specific table.
+**`auto` keyword**: use `auto` in a per-table directive (`<!-- table-col-widths: auto -->` or `data-col-widths="auto"`) to override a frontmatter default and restore Word's default auto-sizing for that specific table. In frontmatter (`table-col-widths: auto`), it acts as an explicit no-op that round-trips through DOCX.
 
 **Priority** (highest to lowest): per-table override → frontmatter default → auto (Word default).
 

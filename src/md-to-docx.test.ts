@@ -1198,6 +1198,14 @@ describe('generateTable', () => {
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
     expect(result).not.toContain('<w:tcW');
   });
+
+  it('frontmatter table-col-widths: auto round-trips through DOCX', async () => {
+    const md = '---\ntable-col-widths: auto\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('table-col-widths: auto');
+  });
 });
 
 describe('parseColWidths', () => {

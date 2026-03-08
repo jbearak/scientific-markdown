@@ -1263,7 +1263,10 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
     const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
     if (!fontSizeMatch && !fontMatch) continue;
-    // Look for the next table token, skipping intervening HTML comment paragraphs
+    // Look for the next table token, skipping intervening HTML comment paragraphs.
+    // Note: sentinel comments (landscape/portrait/references/bibliography) are still
+    // plain HTML comment paragraphs at this point — sentinel post-processing runs later,
+    // so the directive is safely consumed before sentinel conversion.
     let target = i + 1;
     while (target < result.length && result[target].type === 'paragraph'
         && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
@@ -1299,6 +1302,9 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const text = run.text.trim();
     const orientMatch = text.match(/^<!--\s*table-orientation:\s*(landscape|portrait)\s*-->$/i);
     if (!orientMatch) continue;
+    // Forward scan: skip HTML comment paragraphs to find the table token.
+    // Sentinel post-processing has not yet run, so sentinels are still plain
+    // HTML comments and the directive is consumed before they are converted.
     let target = i + 1;
     while (target < result.length && result[target].type === 'paragraph'
         && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
@@ -1320,6 +1326,9 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const text = run.text.trim();
     const cwMatch = text.match(/^<!--\s*table-col-widths:\s*(.+?)\s*-->$/);
     if (!cwMatch) continue;
+    // Forward scan: skip HTML comment paragraphs to find the table token.
+    // Sentinel post-processing has not yet run, so sentinels are still plain
+    // HTML comments and the directive is consumed before they are converted.
     let target = i + 1;
     while (target < result.length && result[target].type === 'paragraph'
         && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {

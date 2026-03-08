@@ -4316,7 +4316,8 @@ export function buildMarkdown(
           if (/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(trimmedPrev)) break;
           if (/^<!--[\s\S]*?-->$/.test(trimmedPrev)) { scanIdx--; continue; }
           // Whitespace separator: skip only if it sits between two comments
-          if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())) {
+          if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())
+              && !/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(output[scanIdx - 2].trim())) {
             scanIdx--; continue;
           }
           break;
@@ -5150,7 +5151,7 @@ export async function convertDocx(
   // Reconstruct table-col-widths from stored default custom property
   if (defaultTableColWidths) {
     const parsed = parseColWidths(defaultTableColWidths);
-    if (parsed && parsed !== 'auto') fm.tableColWidths = parsed;
+    if (parsed) fm.tableColWidths = parsed;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {
