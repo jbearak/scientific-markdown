@@ -561,3 +561,60 @@ describe('Custom Styles — Collision Warnings', () => {
     expect(warnings.some(w => w.includes('produce the same Word style ID'))).toBe(true);
   });
 });
+
+// ============================================================
+// Group: Template custom style replacement
+// ============================================================
+describe('Custom Styles — Template replacement', () => {
+  it('replaces outdated custom style in template with updated definition', async () => {
+    const JSZip = (await import('jszip')).default;
+
+    // Step 1: generate a docx with font-size: 10 custom style
+    const md1 = [
+      '---',
+      'font: Times New Roman',
+      'font-size: 12',
+      'styles:',
+      '  big-text:',
+      '    font-size: 10',
+      '    font-style: center',
+      '---',
+      '',
+      '<!-- style: big-text -->',
+      'Hello World',
+      '<!-- /style -->',
+    ].join('\n');
+    const result1 = await convertMdToDocx(md1);
+    const zip1 = await JSZip.loadAsync(result1.docx);
+    const styles1 = await zip1.file('word/styles.xml')!.async('string');
+    const oldBlock = extractStyleBlock(styles1, customStyleId('big-text'))!;
+    expect(oldBlock).toContain('w:sz w:val="20"'); // 10pt = 20hp
+
+    // Step 2: save as template, re-generate with font-size: 18
+    const fs = await import('fs');
+    const tmpPath = '/tmp/test-template-custom-style.docx';
+    fs.writeFileSync(tmpPath, Buffer.from(result1.docx));
+
+    const md2 = [
+      '---',
+      'font: Times New Roman',
+      'font-size: 12',
+      'template: ' + tmpPath,
+      'styles:',
+      '  big-text:',
+      '    font-size: 18',
+      '    font-style: center',
+      '---',
+      '',
+      '<!-- style: big-text -->',
+      'Hello World',
+      '<!-- /style -->',
+    ].join('\n');
+    const result2 = await convertMdToDocx(md2);
+    const zip2 = await JSZip.loadAsync(result2.docx);
+    const styles2 = await zip2.file('word/styles.xml')!.async('string');
+    const newBlock = extractStyleBlock(styles2, customStyleId('big-text'))!;
+    expect(newBlock).toContain('w:sz w:val="36"'); // 18pt = 36hp
+    expect(newBlock).not.toContain('w:sz w:val="20"');
+  });
+});

@@ -3139,9 +3139,13 @@ export function applyFontOverridesToTemplate(
     const localSzPair = (hp: number) => '<w:sz w:val="' + hp + '"/><w:szCs w:val="' + hp + '"/>';
     for (const [name, def] of Object.entries(customStyles)) {
       const sid = customStyleId(name);
-      // Only inject if the template doesn't already have this style
-      if (!xml.includes('w:styleId="' + sid + '"')) {
-        xml = xml.replace('</w:styles>', customStyleXml(name, def, bodyFontStr, localSzPair) + '</w:styles>');
+      const newStyleXml = customStyleXml(name, def, bodyFontStr, localSzPair);
+      // Replace existing custom style or inject new one
+      const existingRe = new RegExp('<w:style\\b[^>]*w:styleId="' + sid + '"[^>]*>[\\s\\S]*?</w:style>\\n?');
+      if (existingRe.test(xml)) {
+        xml = xml.replace(existingRe, newStyleXml);
+      } else {
+        xml = xml.replace('</w:styles>', newStyleXml + '</w:styles>');
       }
     }
   }
