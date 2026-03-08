@@ -3235,7 +3235,7 @@ function customStyleXml(
   const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
   const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
   if (beforeTwips) spacingParts += ' w:before="' + beforeTwips + '"';
-  if (afterTwips) spacingParts += ' w:after="' + afterTwips + '"';
+  if (afterTwips !== undefined) spacingParts += ' w:after="' + afterTwips + '"';
   const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
   const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
   const pPr = (spacingEl || jcEl) ? '<w:pPr>' + spacingEl + jcEl + '</w:pPr>\n' : '';

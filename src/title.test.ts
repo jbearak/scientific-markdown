@@ -136,6 +136,7 @@ describe('MD→DOCX title generation', () => {
       rIdOffset: 3,
       warnings: [],
       hasList: false,
+      listStartOverrides: [],
       hasComments: false,
       missingKeys: new Set<string>(),
     };
@@ -160,6 +161,7 @@ describe('MD→DOCX title generation', () => {
       rIdOffset: 3,
       warnings: [],
       hasList: false,
+      listStartOverrides: [],
       hasComments: false,
       missingKeys: new Set<string>(),
     };

@@ -163,7 +163,7 @@ describe('OOXML Generation Properties', () => {
       const state: DocxGenState = {
         commentId: 0, comments: [], relationships: new Map(),
         nextRId: 1, rIdOffset: 5, warnings: [], hasList: false,
-        hasComments: false, missingKeys: new Set()
+        listStartOverrides: [], hasComments: false, missingKeys: new Set()
       };
       const table = generateTable(token, state);
       

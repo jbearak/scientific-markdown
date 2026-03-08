@@ -3060,7 +3060,7 @@ function renderInlineRange(
       let groupEnd = i + 1;
       while (groupEnd < segmentEnd) {
         const next = segment[groupEnd];
-        if (next.type === 'math' && !next.display && !next.revision) {
+        if (next.type === 'math' && !next.display && !next.revision && next.commentIds.size === 0) {
           groupEnd++;
           continue;
         }
@@ -4581,11 +4581,11 @@ export function buildMarkdown(
           const prev = output[scanIdx - 1];
           const trimmedPrev = prev.trim();
           // Never hoist past structural sentinel comments
-          if (/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(trimmedPrev)) break;
+          if (/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(trimmedPrev)) break;
           if (/^<!--[\s\S]*?-->$/.test(trimmedPrev)) { scanIdx--; continue; }
           // Whitespace separator: skip only if it sits between two comments
           if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())
-              && !/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(output[scanIdx - 2].trim())) {
+              && !/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(output[scanIdx - 2].trim())) {
             scanIdx--; continue;
           }
           break;
