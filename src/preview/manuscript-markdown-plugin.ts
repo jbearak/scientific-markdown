@@ -991,6 +991,7 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const { metadata } = parseFrontmatter(state.src);
     const defaultScheme: ColorScheme = (md as any).manuscriptColors || getDefaultColorScheme();
     state.env.colorScheme = metadata.colors || defaultScheme;
+    md.set({ breaks: metadata.breaks ?? false });
     state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
   });
 

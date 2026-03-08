@@ -96,7 +96,7 @@ export interface MdTableRow {
 }
 
 export interface MdRun {
-  type: 'text' | 'critic_add' | 'critic_del' | 'critic_sub' | 'critic_highlight' | 'critic_comment' | 'citation' | 'math' | 'softbreak' | 'comment_range_start' | 'comment_range_end' | 'comment_body_with_id' | 'footnote_ref' | 'html_comment' | 'image';
+  type: 'text' | 'critic_add' | 'critic_del' | 'critic_sub' | 'critic_highlight' | 'critic_comment' | 'citation' | 'math' | 'softbreak' | 'hardbreak' | 'comment_range_start' | 'comment_range_end' | 'comment_body_with_id' | 'footnote_ref' | 'html_comment' | 'image';
   text: string;
   bold?: boolean;
   italic?: boolean;
@@ -135,7 +135,7 @@ export interface MdRun {
 
 function mapHtmlTableRunToMdRun(run: HtmlTableRun): MdRun {
   if (run.type === 'softbreak') {
-    return { type: 'softbreak', text: '\n' };
+    return { type: 'hardbreak', text: '\n' };
   }
   return {
     type: 'text',
@@ -667,8 +667,8 @@ function toTextRunFromInner(run: MdRun, overrides?: Partial<MdRun>): MdRun {
 function normalizeCriticInnerRuns(runs: MdRun[]): MdRun[] {
   const normalized: MdRun[] = [];
   for (const run of runs) {
-    if (run.type === 'softbreak') {
-      normalized.push({ type: 'softbreak', text: '\n' });
+    if (run.type === 'softbreak' || run.type === 'hardbreak') {
+      normalized.push({ type: run.type, text: '\n' });
       continue;
     }
 
@@ -1177,7 +1177,7 @@ export function pipeTableAlignedProps(aligned: Map<number, boolean>): CustomProp
   return chunkCustomProps('MANUSCRIPT_PIPE_TABLE_ALIGNED_', JSON.stringify(mapping));
 }
 
-export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
+export function parseMd(markdown: string, warnings?: string[], breaks = false): MdToken[] {
   const md = createMarkdownIt();
   // Preserve explicit source semantics for blockquotes by disabling markdown-it
   // lazy continuation behavior (where a non-`>` line can be absorbed into a
@@ -1192,6 +1192,30 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
   const processedLines = processed.split('\n');
   const result = convertTokens(tokens, 0, 0, warnings, processedLines);
   annotateBlockquoteBoundaries(result);
+
+  // When breaks mode is enabled, treat all bare newlines as hard breaks
+  if (breaks) {
+    const promoteRuns = (runs: MdRun[]) => {
+      for (let i = 0; i < runs.length; i++) {
+        if (runs[i].type === 'softbreak') {
+          runs[i] = { ...runs[i], type: 'hardbreak' };
+        }
+        if (runs[i].innerRuns) promoteRuns(runs[i].innerRuns!);
+        if (runs[i].oldRuns) promoteRuns(runs[i].oldRuns!);
+        if (runs[i].newRuns) promoteRuns(runs[i].newRuns!);
+      }
+    };
+    for (const tok of result) {
+      promoteRuns(tok.runs);
+      if (tok.rows) {
+        for (const row of tok.rows) {
+          for (const cell of row.cells) {
+            promoteRuns(cell.runs);
+          }
+        }
+      }
+    }
+  }
 
   // Post-process: recompute HTML comment blankLinesBefore/After from the
   // ORIGINAL markdown lines.  preprocessGridTables inserts blank lines around
@@ -1521,11 +1545,11 @@ function stripLeadingAlertMarker(runs: MdRun[]): { alertType?: GfmAlertType; run
   return { alertType: parsed.type, runs: nextRuns };
 }
 
-/** Strip leading and trailing softbreak runs from an array. */
+/** Strip leading and trailing softbreak/hardbreak runs from an array. */
 function trimSoftbreaks(runs: MdRun[]): MdRun[] {
   let start = 0, end = runs.length;
-  while (start < end && runs[start].type === 'softbreak') start++;
-  while (end > start && runs[end - 1].type === 'softbreak') end--;
+  while (start < end && (runs[start].type === 'softbreak' || runs[start].type === 'hardbreak')) start++;
+  while (end > start && (runs[end - 1].type === 'softbreak' || runs[end - 1].type === 'hardbreak')) end--;
   return start === 0 && end === runs.length ? runs : runs.slice(start, end);
 }
 
@@ -1730,7 +1754,11 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
             const md = createMarkdownIt();
             const gridRows: MdTableRow[] = gridData.rows.map(row => ({
               cells: row.cells.map(cellText => ({
-                runs: cellText ? convertInlineTokens(md.parseInline(cellText, {})) : [],
+                // Grid table cells always treat bare newlines as hard breaks
+                runs: cellText
+                  ? convertInlineTokens(md.parseInline(cellText, {})).map(
+                      r => r.type === 'softbreak' ? { ...r, type: 'hardbreak' as const } : r)
+                  : [],
               })),
               header: row.header,
             }));
@@ -1914,7 +1942,11 @@ function processInlineChildren(tokens: any[]): MdRun[] {
       case 'softbreak':
         runs.push({ type: 'softbreak', text: '\n' });
         break;
-        
+
+      case 'hardbreak':
+        runs.push({ type: 'hardbreak', text: '\n' });
+        break;
+
       case 'strong_open':
         formatStack.bold = true;
         break;
@@ -3909,7 +3941,7 @@ function formatCriticInnerRuns(runs: MdRun[] | undefined, outer: MdRun, forced: 
   if (!runs || runs.length === 0) return undefined;
   const formatted: MdRun[] = [];
   for (const run of runs) {
-    if (run.type === 'softbreak') {
+    if (run.type === 'softbreak' || run.type === 'hardbreak') {
       formatted.push(run);
       continue;
     }
@@ -3965,7 +3997,7 @@ function generateDeletedCriticContent(
 
   let xml = '';
   for (const run of formattedRuns) {
-    if (run.type === 'softbreak') {
+    if (run.type === 'softbreak' || run.type === 'hardbreak') {
       xml += '<w:r><w:br/></w:r>';
       continue;
     }
@@ -4014,6 +4046,8 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
         xml += generateRun(run.text, rPr);
       }
     } else if (run.type === 'softbreak') {
+      xml += '<w:r><w:t xml:space="preserve"> </w:t></w:r>';
+    } else if (run.type === 'hardbreak') {
       xml += '<w:r><w:br/></w:r>';
     } else if (run.type === 'critic_add') {
       const author = run.author || options?.authorName || 'Unknown';
@@ -5130,7 +5164,7 @@ export async function convertMdToDocx(
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
   const parseWarnings: string[] = [];
-  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings);
+  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false);
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.
@@ -5356,7 +5390,7 @@ export async function convertMdToDocx(
       continue;
     }
     // Parse the definition body into tokens and generate OOXML
-    const bodyTokens = parseMd(bodyText, state.warnings);
+    const bodyTokens = parseMd(bodyText, state.warnings, frontmatter.breaks ?? false);
     // Generate paragraph OOXML for the note body
     const selfRefTag = state.notesMode === 'endnotes' ? 'w:endnoteRef' : 'w:footnoteRef';
     const pStyle = state.notesMode === 'endnotes' ? 'EndnoteText' : 'FootnoteText';

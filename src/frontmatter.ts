@@ -111,6 +111,7 @@ export interface Frontmatter {
   tableColWidths?: number[] | 'equal' | 'auto';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
+  breaks?: boolean;
 }
 
 /** Parse a col-widths value: "2 1 1", "2,1,1", "[2, 1, 1]", "equal", "auto". */
@@ -322,6 +323,9 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         if (scheme) metadata.colors = scheme;
         break;
       }
+      case 'breaks':
+        metadata.breaks = (value === 'true');
+        break;
     }
   }
 
@@ -383,6 +387,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'grid-table-max-line-width': () => { if (metadata.gridTableMaxLineWidth !== undefined) lines.push('grid-table-max-line-width: ' + metadata.gridTableMaxLineWidth); },
     'blockquote-style': () => { if (metadata.blockquoteStyle) lines.push('blockquote-style: ' + metadata.blockquoteStyle); },
     'colors': () => { if (metadata.colors) lines.push('colors: ' + metadata.colors); },
+    'breaks': () => { if (metadata.breaks !== undefined) lines.push('breaks: ' + metadata.breaks); },
   };
 
   // Default emission order (backward compatible)
@@ -394,7 +399,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'table-font', 'table-font-size', 'table-col-widths',
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
-    'blockquote-style', 'colors',
+    'blockquote-style', 'colors', 'breaks',
   ];
 
   const aliasToCanonical: Record<string, string> = {
