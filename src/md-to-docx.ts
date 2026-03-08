@@ -5620,12 +5620,8 @@ export async function convertMdToDocx(
     }
 
     citeprocEngine = result.engine;
-    // Register all bib entries so makeCitationCluster() can resolve items
-    // during inline citation rendering. After document generation,
-    // updateItems() is called again with only cited keys for the bibliography.
-    if (citeprocEngine && bibEntries) {
-      citeprocEngine.updateItems([...bibEntries.keys()]);
-    }
+    // updateItems() is deferred until after the cited-keys pre-scan below
+    // so that citation numbers reflect document order, not bib-file order.
   }
 
   // Extract template parts if provided
@@ -5725,34 +5721,49 @@ export async function convertMdToDocx(
     activeListStartOverrides: new Map(),
   };
 
-  // Pre-scan footnote definitions for citation keys so the bibliography
-  // (generated inside generateDocumentXml) includes footnote-only citations.
-  if (bibEntries && footnoteDefs.size > 0) {
-    for (const [, bodyText] of footnoteDefs) {
-      const bodyTokens = parseMd(bodyText);
-      for (const token of bodyTokens) {
-        for (const run of token.runs) {
-          if (run.type === 'citation' && run.keys) {
-            for (const k of run.keys) {
-              if (bibEntries.has(k)) state.citedKeys.add(k);
-            }
+  // Pre-scan all tokens (main document + footnotes) for citation keys so
+  // updateItems() registers only cited entries.  This ensures numeric styles
+  // assign citation numbers by document order, not bib-file order.
+  // Footnote bodies are scanned at the point their [^ref] appears (not after
+  // the main walk) so footnote citations get document-order numbering too.
+  if (bibEntries) {
+    const seenFootnotes = new Set<string>();
+    const collectFromRuns = (runs: MdRun[]) => {
+      for (const run of runs) {
+        if (run.type === 'citation' && run.keys) {
+          for (const k of run.keys) {
+            if (bibEntries.has(k)) state.citedKeys.add(k);
           }
         }
+        if (run.type === 'footnote_ref' && run.footnoteLabel && !seenFootnotes.has(run.footnoteLabel)) {
+          seenFootnotes.add(run.footnoteLabel);
+          const bodyText = footnoteDefs.get(run.footnoteLabel);
+          if (bodyText) collectCitedKeys(parseMd(bodyText));
+        }
+        if (run.innerRuns) collectFromRuns(run.innerRuns);
+        if (run.oldRuns) collectFromRuns(run.oldRuns);
+        if (run.newRuns) collectFromRuns(run.newRuns);
+      }
+    };
+    const collectCitedKeys = (tokenList: MdToken[]) => {
+      for (const token of tokenList) {
+        collectFromRuns(token.runs);
         if (token.rows) {
           for (const row of token.rows) {
             for (const cell of row.cells) {
-              for (const run of cell.runs) {
-                if (run.type === 'citation' && run.keys) {
-                  for (const k of run.keys) {
-                    if (bibEntries.has(k)) state.citedKeys.add(k);
-                  }
-                }
-              }
+              collectFromRuns(cell.runs);
             }
           }
         }
       }
-    }
+    };
+    collectCitedKeys(tokens);
+  }
+
+  // Register only cited keys with citeproc so citation numbers reflect
+  // document order (not bib-file order) for numeric styles.
+  if (citeprocEngine && state.citedKeys.size > 0) {
+    citeprocEngine.updateItems([...state.citedKeys]);
   }
 
   // Resolve effective blockquote style: frontmatter > options > default

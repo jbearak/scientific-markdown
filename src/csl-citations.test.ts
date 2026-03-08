@@ -736,4 +736,94 @@ describe('Bibliography marker placement', () => {
 
     expect(mdResult.markdown).toContain('<!-- references -->');
   });
+
+  test('numeric CSL style assigns citation numbers by document order, not bib-file order', async () => {
+    // Bib file has entries in alphabetical order: alpha, beta, gamma
+    const bibtex = `
+@article{alpha2020,
+  author = {Alpha, A.},
+  title = {Alpha paper},
+  journal = {J},
+  year = {2020},
+}
+@article{beta2020,
+  author = {Beta, B.},
+  title = {Beta paper},
+  journal = {J},
+  year = {2020},
+}
+@article{gamma2020,
+  author = {Gamma, G.},
+  title = {Gamma paper},
+  journal = {J},
+  year = {2020},
+}
+`;
+    // Document cites gamma first, then alpha — should be numbered 1, 2 (not 3, 1)
+    const md = '---\ncsl: science\n---\n\nFirst [@gamma2020], then [@alpha2020].\n';
+    const docxResult = await convertMdToDocx(md, { bibtex });
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docxResult.docx);
+    const docXml = await zip.file('word/document.xml')?.async('string') ?? '';
+
+    // The visible citation text for @gamma2020 (cited first) should be "1"
+    // and @alpha2020 (cited second) should be "2", not their bib-file positions (3, 1)
+    // Science style wraps numbers in <i> tags, so the visible text is "(1)" and "(2)"
+    // In the OOXML, these appear as <w:t> runs within the field codes.
+    // Extract the plainCitation values from the two ZOTERO_ITEM field codes
+    const fieldCodes = [...docXml.matchAll(/CSL_CITATION\s+(.*?)\s*<\/w:instrText>/g)];
+    expect(fieldCodes.length).toBe(2);
+
+    const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    const first = JSON.parse(decode(fieldCodes[0][1]));
+    const second = JSON.parse(decode(fieldCodes[1][1]));
+
+    expect(first.properties.plainCitation).toBe('(1)');
+    expect(second.properties.plainCitation).toBe('(2)');
+  });
+
+  test('footnote citations are numbered at the point of the footnote reference, not after body', async () => {
+    const bibtex = `
+@article{alpha2020,
+  author = {Alpha, A.},
+  title = {Alpha paper},
+  journal = {J},
+  year = {2020},
+}
+@article{beta2020,
+  author = {Beta, B.},
+  title = {Beta paper},
+  journal = {J},
+  year = {2020},
+}
+`;
+    // Footnote [^1] references @alpha2020; the body later cites @beta2020.
+    // @alpha2020 should be (1) because the footnote ref appears first in the body.
+    const md = '---\ncsl: science\n---\n\nSee note[^1], then [@beta2020].\n\n[^1]: Footnote text [@alpha2020].\n';
+    const docxResult = await convertMdToDocx(md, { bibtex });
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docxResult.docx);
+
+    // Citations in footnotes go into footnotes.xml, not document.xml
+    const footnotesXml = await zip.file('word/footnotes.xml')?.async('string') ?? '';
+    const docXml = await zip.file('word/document.xml')?.async('string') ?? '';
+
+    const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+
+    const fnFields = [...footnotesXml.matchAll(/CSL_CITATION\s+(.*?)\s*<\/w:instrText>/g)];
+    const bodyFields = [...docXml.matchAll(/CSL_CITATION\s+(.*?)\s*<\/w:instrText>/g)];
+
+    expect(fnFields.length).toBe(1);
+    expect(bodyFields.length).toBe(1);
+
+    const fnCitation = JSON.parse(decode(fnFields[0][1]));
+    const bodyCitation = JSON.parse(decode(bodyFields[0][1]));
+
+    // @alpha2020 in footnote should be (1) since footnote ref comes first in body
+    expect(fnCitation.properties.plainCitation).toBe('(1)');
+    // @beta2020 in body should be (2)
+    expect(bodyCitation.properties.plainCitation).toBe('(2)');
+  });
 });
