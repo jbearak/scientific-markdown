@@ -622,6 +622,11 @@ function runsToMarkdown(runs: HtmlTableRun[]): string {
       result += '\n';
       continue;
     }
+    if (run.type === 'hardbreak') {
+      // Grid table cells treat bare newlines as hard breaks, so no backslash needed.
+      result += '\n';
+      continue;
+    }
     if (run.type !== 'text') {
       result += run.text;
       continue;
