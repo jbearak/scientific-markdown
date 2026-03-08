@@ -5724,35 +5724,40 @@ export async function convertMdToDocx(
   // Pre-scan all tokens (main document + footnotes) for citation keys so
   // updateItems() registers only cited entries.  This ensures numeric styles
   // assign citation numbers by document order, not bib-file order.
+  // Footnote bodies are scanned at the point their [^ref] appears (not after
+  // the main walk) so footnote citations get document-order numbering too.
   if (bibEntries) {
-    const collectCitedKeys = (tokenList: MdToken[]) => {
-      for (const token of tokenList) {
-        for (const run of token.runs) {
-          if (run.type === 'citation' && run.keys) {
-            for (const k of run.keys) {
-              if (bibEntries.has(k)) state.citedKeys.add(k);
-            }
+    const seenFootnotes = new Set<string>();
+    const collectFromRuns = (runs: MdRun[]) => {
+      for (const run of runs) {
+        if (run.type === 'citation' && run.keys) {
+          for (const k of run.keys) {
+            if (bibEntries.has(k)) state.citedKeys.add(k);
           }
         }
+        if (run.type === 'footnote_ref' && run.footnoteLabel && !seenFootnotes.has(run.footnoteLabel)) {
+          seenFootnotes.add(run.footnoteLabel);
+          const bodyText = footnoteDefs.get(run.footnoteLabel);
+          if (bodyText) collectCitedKeys(parseMd(bodyText));
+        }
+        if (run.innerRuns) collectFromRuns(run.innerRuns);
+        if (run.oldRuns) collectFromRuns(run.oldRuns);
+        if (run.newRuns) collectFromRuns(run.newRuns);
+      }
+    };
+    const collectCitedKeys = (tokenList: MdToken[]) => {
+      for (const token of tokenList) {
+        collectFromRuns(token.runs);
         if (token.rows) {
           for (const row of token.rows) {
             for (const cell of row.cells) {
-              for (const run of cell.runs) {
-                if (run.type === 'citation' && run.keys) {
-                  for (const k of run.keys) {
-                    if (bibEntries.has(k)) state.citedKeys.add(k);
-                  }
-                }
-              }
+              collectFromRuns(cell.runs);
             }
           }
         }
       }
     };
     collectCitedKeys(tokens);
-    for (const [, bodyText] of footnoteDefs) {
-      collectCitedKeys(parseMd(bodyText));
-    }
   }
 
   // Register only cited keys with citeproc so citation numbers reflect

@@ -782,4 +782,48 @@ describe('Bibliography marker placement', () => {
     expect(first.properties.plainCitation).toBe('(1)');
     expect(second.properties.plainCitation).toBe('(2)');
   });
+
+  test('footnote citations are numbered at the point of the footnote reference, not after body', async () => {
+    const bibtex = `
+@article{alpha2020,
+  author = {Alpha, A.},
+  title = {Alpha paper},
+  journal = {J},
+  year = {2020},
+}
+@article{beta2020,
+  author = {Beta, B.},
+  title = {Beta paper},
+  journal = {J},
+  year = {2020},
+}
+`;
+    // Footnote [^1] references @alpha2020; the body later cites @beta2020.
+    // @alpha2020 should be (1) because the footnote ref appears first in the body.
+    const md = '---\ncsl: science\n---\n\nSee note[^1], then [@beta2020].\n\n[^1]: Footnote text [@alpha2020].\n';
+    const docxResult = await convertMdToDocx(md, { bibtex });
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docxResult.docx);
+
+    // Citations in footnotes go into footnotes.xml, not document.xml
+    const footnotesXml = await zip.file('word/footnotes.xml')?.async('string') ?? '';
+    const docXml = await zip.file('word/document.xml')?.async('string') ?? '';
+
+    const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+
+    const fnFields = [...footnotesXml.matchAll(/CSL_CITATION\s+(.*?)\s*<\/w:instrText>/g)];
+    const bodyFields = [...docXml.matchAll(/CSL_CITATION\s+(.*?)\s*<\/w:instrText>/g)];
+
+    expect(fnFields.length).toBe(1);
+    expect(bodyFields.length).toBe(1);
+
+    const fnCitation = JSON.parse(decode(fnFields[0][1]));
+    const bodyCitation = JSON.parse(decode(bodyFields[0][1]));
+
+    // @alpha2020 in footnote should be (1) since footnote ref comes first in body
+    expect(fnCitation.properties.plainCitation).toBe('(1)');
+    // @beta2020 in body should be (2)
+    expect(bodyCitation.properties.plainCitation).toBe('(2)');
+  });
 });
