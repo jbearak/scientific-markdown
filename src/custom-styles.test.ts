@@ -513,7 +513,7 @@ describe('Custom Styles — Preview Plugin', () => {
     ].join('\n');
     const html = renderWithPlugin(md, 'github');
     expect(html).toContain('ms-custom-style-pullquote');
-    expect(html).toContain('font-family: &quot;Georgia&quot;');
+    expect(html).toContain('font-family: "Georgia"');
     expect(html).toContain('font-size: 14pt');
     expect(html).toContain('margin-top: 12pt');
   });

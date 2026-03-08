@@ -1046,7 +1046,7 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
       }
     }
     if (!css) return;
-    const token = new state.Token('html_block', '', 0);
+    const token = new state.Token('manuscript_style', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
     state.tokens.unshift(token);
   });
@@ -1066,9 +1066,9 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
       // 'horizontal': grey separators between body rows, black header underline, no vertical borders
       css = 'table { border-collapse: collapse; }\n'
         + 'table th, table td { border: none; border-bottom: 1px solid #ddd; padding: 6px 8px; }\n'
-        + 'table thead th { border-bottom: 2px solid #555; }\n';
+        + 'table thead th { border-bottom: 1px solid #555; }\n';
     }
-    const token = new state.Token('html_block', '', 0);
+    const token = new state.Token('manuscript_style', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
     state.tokens.unshift(token);
   });
@@ -1247,6 +1247,9 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const content = tokens[idx].content || '';
     return isGfmDisallowedRawHtml(content) ? `<p>${escapeHtmlText(content)}</p>\n` : content;
   };
+
+  // Trusted internal style blocks injected by manuscript rules — bypass GFM filtering.
+  md.renderer.rules.manuscript_style = (tokens, idx) => tokens[idx].content || '';
 
   // GFM task list rendering.
   md.renderer.rules.list_item_open = (tokens, idx, options, env, self) => {
