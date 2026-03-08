@@ -120,6 +120,7 @@ export interface Frontmatter {
   tableFont?: string;
   tableFontSize?: number;
   tableColWidths?: number[] | 'equal' | 'auto';
+  tableBorders?: 'horizontal' | 'solid' | 'none';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
   styles?: Record<string, CustomStyleDef>;
@@ -386,6 +387,11 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         if (parsed) metadata.tableColWidths = parsed;
         break;
       }
+      case 'table-borders': {
+        const v = value.toLowerCase();
+        if (v === 'horizontal' || v === 'solid' || v === 'none') metadata.tableBorders = v;
+        break;
+      }
       case 'blockquote-style': {
         const style = normalizeBlockquoteStyle(value);
         if (style) metadata.blockquoteStyle = style;
@@ -452,6 +458,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'table-font': () => { if (metadata.tableFont) lines.push('table-font: ' + metadata.tableFont); },
     'table-font-size': () => { if (metadata.tableFontSize !== undefined) lines.push('table-font-size: ' + metadata.tableFontSize); },
     'table-col-widths': () => { if (metadata.tableColWidths) lines.push('table-col-widths: ' + (typeof metadata.tableColWidths === 'string' ? metadata.tableColWidths : metadata.tableColWidths.join(' '))); },
+    'table-borders': () => { if (metadata.tableBorders) lines.push('table-borders: ' + metadata.tableBorders); },
     'code-background-color': () => { if (metadata.codeBackgroundColor) lines.push('code-background-color: ' + metadata.codeBackgroundColor); },
     'code-background': () => emitters['code-background-color'](),
     'code-font-color': () => { if (metadata.codeFontColor) lines.push('code-font-color: ' + metadata.codeFontColor); },
@@ -482,7 +489,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'bibliography', 'font', 'code-font', 'font-size', 'code-font-size',
     'header-font', 'header-font-size', 'header-font-style',
     'title-font', 'title-font-size', 'title-font-style',
-    'table-font', 'table-font-size', 'table-col-widths',
+    'table-font', 'table-font-size', 'table-col-widths', 'table-borders',
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
     'blockquote-style', 'colors', 'styles', 'breaks',

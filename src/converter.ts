@@ -1264,6 +1264,29 @@ export async function extractExplicitTableFontSize(data: Uint8Array | JSZip): Pr
   return false;
 }
 
+export async function extractTableBorders(data: Uint8Array | JSZip): Promise<'horizontal' | 'solid' | 'none' | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== 'MANUSCRIPT_TABLE_BORDERS') continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) return null;
+    for (const child of children) {
+      if (child?.['vt:lpwstr'] !== undefined) {
+        const val = nodeText(child['vt:lpwstr'] || []).trim();
+        if (val === 'horizontal' || val === 'solid' || val === 'none') return val;
+        return null;
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
 /** Layer 2: read comma-separated bib key order from chunked MANUSCRIPT_BIB_KEY_ORDER_* custom props. */
 export async function extractBibKeyOrder(data: Uint8Array | JSZip): Promise<string[] | null> {
   const csv = await extractChunkedCustomProp(data, 'MANUSCRIPT_BIB_KEY_ORDER_');
@@ -5081,7 +5104,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5118,6 +5141,7 @@ export async function convertDocx(
     extractSentinelGapMapping(zip),
     extractDefaultTableColWidths(zip),
     extractCustomStyles(zip),
+    extractTableBorders(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -5353,6 +5377,10 @@ export async function convertDocx(
   if (defaultTableColWidths) {
     const parsed = parseColWidths(defaultTableColWidths);
     if (parsed) fm.tableColWidths = parsed;
+  }
+  // Reconstruct table-borders from stored custom property
+  if (storedTableBorders) {
+    fm.tableBorders = storedTableBorders;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {

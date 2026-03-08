@@ -1048,6 +1048,28 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.tokens.unshift(token);
   });
 
+  // Inject <style> block for table-borders preview
+  md.core.ruler.push('manuscript_table_borders', (state: any) => {
+    const { metadata } = parseFrontmatter(state.src);
+    const borders = metadata.tableBorders ?? 'horizontal';
+    let css = '';
+    if (borders === 'none') {
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: none; }\n';
+    } else if (borders === 'solid') {
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: 1px solid #555; }\n';
+    } else {
+      // 'horizontal': grey separators between body rows, black header underline, no vertical borders
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: none; border-bottom: 1px solid #ddd; padding: 6px 8px; }\n'
+        + 'table thead th { border-bottom: 2px solid #555; }\n';
+    }
+    const token = new state.Token('html_block', '', 0);
+    token.content = '<style>\n' + css + '</style>\n';
+    state.tokens.unshift(token);
+  });
+
   // Register grid table block rule before html_block so the placeholder comment
   // is consumed before markdown-it's html_block rule can swallow it (VS Code's
   // preview enables html: true).

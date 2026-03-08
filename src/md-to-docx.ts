@@ -2773,6 +2773,7 @@ export interface FontOverrides {
   tableSizeHp?: number;
   tableSizeFromDefault?: boolean; // true when tableSizeHp was auto-computed from DEFAULT_BODY_HP
   tableColWidths?: number[] | 'equal' | 'auto';
+  tableBorders?: 'horizontal' | 'solid' | 'none';
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -2864,6 +2865,11 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides {
   // Table column width overrides
   if (fm.tableColWidths) {
     overrides.tableColWidths = fm.tableColWidths;
+  }
+
+  // Table border style
+  if (fm.tableBorders) {
+    overrides.tableBorders = fm.tableBorders;
   }
 
   // Table font overrides
@@ -4705,6 +4711,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     : fo?.tableSizeHp;
   const effectiveTableFont = token.tableFont ?? fo?.tableFont;
   // Build pPr for table cell paragraphs (style ref + inline overrides for per-table diffs)
+  // Always suppress paragraph spacing-after inside table cells (pPrDefault sets after="160"
+  // which creates asymmetric vertical padding — cell margin alone should control inset).
+  const spacingZero = '<w:spacing w:after="0"/>';
   let tablePPr = '';
   let tableRunRPr = '';
   if (effectiveTableSizeHp || effectiveTableFont) {
@@ -4714,6 +4723,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     const needsInlineSize = effectiveTableSizeHp && effectiveTableSizeHp !== fo?.tableSizeHp;
     let pPrInner = '';
     if (hasDocLevelStyle) pPrInner += '<w:pStyle w:val="TableParagraph"/>';
+    pPrInner += spacingZero;
     let rPrInner = '';
     if (needsInlineFont || (!hasDocLevelStyle && effectiveTableFont)) {
       rPrInner += '<w:rFonts w:ascii="' + escapeXml(effectiveTableFont!) + '" w:hAnsi="' + escapeXml(effectiveTableFont!) + '"/>';
@@ -4725,6 +4735,8 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     // Run-level rPr: same inline overrides so runs inherit per-table font/size
     // (pPr > rPr only sets the paragraph mark, not run properties)
     tableRunRPr = rPrInner;
+  } else {
+    tablePPr = '<w:pPr>' + spacingZero + '</w:pPr>';
   }
 
   // Compute total grid columns by simulating grid occupancy (accounts for
@@ -4782,6 +4794,42 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
 
   const hasHeaderRow = token.rows.some(row => row.header);
 
+  // Resolve border style: default is 'horizontal'
+  const borderStyle = fo?.tableBorders ?? 'horizontal';
+
+  let tblBorders: string;
+  if (borderStyle === 'none') {
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  } else if (borderStyle === 'horizontal') {
+    // Grey horizontal separators between body rows, no vertical/outer borders.
+    // Header underline is applied per-cell via tcBorders below.
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>'
+      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  } else {
+    // 'solid': all borders single black
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  }
+
   let xml = '<w:tbl>';
   const tblLayout = colWidthPcts
     ? '<w:tblLayout w:type="fixed"/>'
@@ -4789,7 +4837,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const tblW = colWidthPcts
     ? '<w:tblW w:w="5000" w:type="pct"/>'
     : '<w:tblW w:w="0" w:type="auto"/>';
-  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>' + tblLayout + '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
+  xml += '<w:tblPr>' + tblBorders + tblLayout + '<w:tblCellMar><w:top w:w="36" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="36" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
 
   // Emit tblGrid (required when widths or spans are present)
   if (hasSpans || colWidthPcts) {
@@ -4803,11 +4851,25 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   // Track pending vertical merges: gridCol -> { remaining: number; colspan: number }
   const mergeMap = new Map<number, { remaining: number; colspan: number }>();
 
+  // For 'horizontal' borders, find the last header row index to apply the black underline
+  let lastHeaderRowIdx = -1;
+  if (borderStyle === 'horizontal') {
+    for (let i = token.rows.length - 1; i >= 0; i--) {
+      if (token.rows[i].header) { lastHeaderRowIdx = i; break; }
+    }
+  }
+
   // Set per-table run rPr so generateRuns injects font/size on each run
   const prevRunRPrExtra = state.tableRunRPrExtra;
   state.tableRunRPrExtra = tableRunRPr;
 
-  for (const row of token.rows) {
+  for (let rowIdx = 0; rowIdx < token.rows.length; rowIdx++) {
+    const row = token.rows[rowIdx];
+    // For horizontal borders: cells in last header row get black bottom border
+    const isLastHeaderRow = borderStyle === 'horizontal' && rowIdx === lastHeaderRowIdx;
+    const horizontalCellBorders = isLastHeaderRow
+      ? '<w:tcBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tcBorders>'
+      : '';
     xml += '<w:tr>';
     if (row.header) {
       xml += '<w:trPr><w:tblHeader/></w:trPr>';
@@ -4854,7 +4916,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
 
       let tcPr = '';
       {
-        // ECMA-376 §17.4.66 tcPr children order: tcW → gridSpan → vMerge
+        // ECMA-376 §17.4.66 tcPr children order: tcW → gridSpan → vMerge → tcBorders
         const parts: string[] = [];
         if (colWidthPcts) {
           let w = 0;
@@ -4863,6 +4925,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         }
         if (cs > 1) parts.push('<w:gridSpan w:val="' + cs + '"/>');
         if (rs > 1) parts.push('<w:vMerge w:val="restart"/>');
+        if (horizontalCellBorders) parts.push(horizontalCellBorders);
         if (parts.length > 0) tcPr = '<w:tcPr>' + parts.join('') + '</w:tcPr>';
       }
 
@@ -5861,6 +5924,9 @@ export async function convertMdToDocx(
   }
   if (frontmatter.tableFontSize !== undefined) {
     customProps.push({ name: 'MANUSCRIPT_EXPLICIT_TABLE_FONT_SIZE', value: '1' });
+  }
+  if (frontmatter.tableBorders) {
+    customProps.push({ name: 'MANUSCRIPT_TABLE_BORDERS', value: frontmatter.tableBorders });
   }
   if (frontmatter.styles && Object.keys(frontmatter.styles).length > 0) {
     customProps.push(...chunkCustomProps('MANUSCRIPT_CUSTOM_STYLES_', JSON.stringify(frontmatter.styles)));
