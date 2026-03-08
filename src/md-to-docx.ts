@@ -1471,38 +1471,40 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     }
   }
 
-  // Post-process: convert <!-- style: X --> / <!-- /style --> into custom-style sentinel tokens
-  {
-    let activeStyle: string | undefined;
-    for (let i = 0; i < result.length; i++) {
-      if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
-      const run = result[i].runs[0];
-      if (run.type !== 'html_comment') continue;
-      const text = run.text.trim();
-      const openMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->$/i);
-      if (openMatch) {
-        if (activeStyle && warnings) {
-          warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
-        }
-        const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: openMatch[1] };
-        sentinel.blankLinesBefore = result[i].blankLinesBefore;
-        sentinel.blankLinesAfter = result[i].blankLinesAfter;
-        result.splice(i, 1, sentinel);
-        activeStyle = openMatch[1];
-      } else if (/^<!--\s*\/style\s*-->$/i.test(text)) {
-        if (activeStyle) {
-          const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
-          sentinel.blankLinesBefore = result[i].blankLinesBefore;
-          sentinel.blankLinesAfter = result[i].blankLinesAfter;
-          result.splice(i, 1, sentinel);
-          activeStyle = undefined;
-        }
-        // If not in a style block, leave the comment as-is (user error, but harmless)
-      }
-    }
-  }
+  applyCustomStyleSentinels(result, warnings);
 
   return result;
+}
+
+/** Convert <!-- style: X --> / <!-- /style --> HTML comments into customStyleOpen/customStyleClose sentinel tokens. */
+function applyCustomStyleSentinels(tokens: MdToken[], warnings?: string[]): void {
+  let activeStyle: string | undefined;
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type !== 'paragraph' || tokens[i].runs.length !== 1) continue;
+    const run = tokens[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+    const openMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->$/i);
+    if (openMatch) {
+      if (activeStyle && warnings) {
+        warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
+      }
+      const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: openMatch[1] };
+      sentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+      sentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+      tokens.splice(i, 1, sentinel);
+      activeStyle = openMatch[1];
+    } else if (/^<!--\s*\/style\s*-->$/i.test(text)) {
+      if (activeStyle) {
+        const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+        sentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+        sentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+        tokens.splice(i, 1, sentinel);
+        activeStyle = undefined;
+      }
+      // If not in a style block, leave the comment as-is (user error, but harmless)
+    }
+  }
 }
 
 function deLazifyBlockquotes(markdown: string): string {
@@ -2606,7 +2608,7 @@ export interface DocxGenState {
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
   activeCustomStyle?: string; // currently active <!-- style: X --> block name
-  activeListStartOverride?: { numId: number; ilvl: number }; // override numId for current ordered list with start ≠ 1
+  activeListStartOverrides: Map<number, number>; // ilvl → override numId for restarted ordered lists
 }
 
 interface CommentEntry {
@@ -3236,7 +3238,7 @@ function customStyleXml(
   let spacingParts = '';
   const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
   const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
-  if (beforeTwips !== undefined) spacingParts += ' w:before="' + beforeTwips + '"';
+  if (beforeTwips !== undefined && beforeTwips !== 0) spacingParts += ' w:before="' + beforeTwips + '"';
   if (afterTwips !== undefined) spacingParts += ' w:after="' + afterTwips + '"';
   const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
   const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
@@ -4627,10 +4629,10 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
           const overrideNumId = 3 + state.listStartOverrides.length; // numIds 1,2 are reserved
           state.listStartOverrides.push({ numId: overrideNumId, ilvl, start: token.startNumber });
           numId = String(overrideNumId);
-          state.activeListStartOverride = { numId: overrideNumId, ilvl };
-        } else if (token.ordered && state.activeListStartOverride && ilvl === state.activeListStartOverride.ilvl) {
+          state.activeListStartOverrides.set(ilvl, overrideNumId);
+        } else if (token.ordered && state.activeListStartOverrides.has(ilvl)) {
           // Subsequent items in the same restarted list share the override numId
-          numId = String(state.activeListStartOverride.numId);
+          numId = String(state.activeListStartOverrides.get(ilvl));
         }
         pPr = '<w:pPr><w:numPr><w:ilvl w:val="' + ilvl + '"/><w:numId w:val="' + numId + '"/></w:numPr></w:pPr>';
         state.hasList = true;
@@ -5362,7 +5364,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     }
     // Reset active list start override when leaving a list context
     if (token.type !== 'list_item') {
-      state.activeListStartOverride = undefined;
+      state.activeListStartOverrides.clear();
     }
     if (token.type === 'table') {
       if (token.sourceFormat) {
@@ -5684,6 +5686,7 @@ export async function convertMdToDocx(
     portraitBreakOrdinals: new Set(),
     templateSectPr,
     sentinelGaps: {},
+    activeListStartOverrides: new Map(),
   };
 
   // Pre-scan footnote definitions for citation keys so the bibliography
@@ -5735,6 +5738,7 @@ export async function convertMdToDocx(
     }
     // Parse the definition body into tokens and generate OOXML
     const bodyTokens = parseMd(bodyText, state.warnings, frontmatter.breaks ?? false);
+    applyCustomStyleSentinels(bodyTokens, state.warnings);
     // Generate paragraph OOXML for the note body
     const selfRefTag = state.notesMode === 'endnotes' ? 'w:endnoteRef' : 'w:footnoteRef';
     const pStyle = state.notesMode === 'endnotes' ? 'EndnoteText' : 'FootnoteText';
@@ -5742,9 +5746,18 @@ export async function convertMdToDocx(
     let bodyXml = '';
     const paragraphPPr = '<w:pPr><w:pStyle w:val="' + pStyle + '"/></w:pPr>';
     const selfRefRun = '<w:r><w:rPr><w:rStyle w:val="' + refStyle + '"/></w:rPr><' + selfRefTag + '/></w:r>';
+    const savedCustomStyle = state.activeCustomStyle;
+    let isFirstContent = true;
     for (let ti = 0; ti < bodyTokens.length; ti++) {
       const t = bodyTokens[ti];
-      if (ti === 0) {
+      // Handle custom style sentinels inside footnotes
+      if (t.customStyleOpen) { state.activeCustomStyle = t.customStyleOpen; continue; }
+      if (t.customStyleClose) { state.activeCustomStyle = undefined; continue; }
+      const effectivePPr = (t.type === 'paragraph' && state.activeCustomStyle)
+        ? '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/></w:pPr>'
+        : paragraphPPr;
+      if (isFirstContent) {
+        isFirstContent = false;
         if (t.type === 'table') {
           if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
@@ -5761,7 +5774,7 @@ export async function convertMdToDocx(
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
-          bodyXml += '<w:p>' + paragraphPPr + selfRefRun + runs + '</w:p>';
+          bodyXml += '<w:p>' + effectivePPr + selfRefRun + runs + '</w:p>';
         }
       } else {
         if (t.type === 'table') {
@@ -5779,12 +5792,14 @@ export async function convertMdToDocx(
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
-          bodyXml += '<w:p>' + paragraphPPr + runs + '</w:p>';
+          bodyXml += '<w:p>' + effectivePPr + runs + '</w:p>';
         }
       }
     }
-    if (bodyTokens.length === 0) {
-      bodyXml = '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
+    state.activeCustomStyle = savedCustomStyle;
+    if (bodyTokens.length === 0 || isFirstContent) {
+      // No content tokens (empty body or all sentinels) — emit self-ref paragraph
+      if (!bodyXml) bodyXml = '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
     }
     state.footnoteEntries.push({ id: noteId, bodyXml });
   }

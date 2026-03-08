@@ -83,6 +83,7 @@ function makeState(): DocxGenState {
     blockquotePreContentBlankLines: new Map(),
     pipeTableAligned: new Map(),
     sentinelGaps: {},
+    activeListStartOverrides: new Map(),
   };
 }
 

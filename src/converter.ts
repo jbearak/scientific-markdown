@@ -3096,17 +3096,20 @@ function renderInlineRange(
       }
     }
 
-    let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
       // Bare URL autolink: if the link text equals the URL (no formatting), emit bare text.
       // Bare email autolink: if href is mailto:text (no formatting), emit bare text.
       const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
       const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
-      if (!isBareUrl && !isBareEmail) {
-        formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
+      if (isBareUrl || isBareEmail) {
+        out += wrapWithRevision(item.text, item.revision);
+      } else {
+        const formattedText = wrapWithFormatting(item.text, item.formatting);
+        out += wrapWithRevision('[' + formattedText + '](' + formatHrefForMarkdown(item.href) + ')', item.revision);
       }
+    } else {
+      out += wrapWithRevision(wrapWithFormatting(item.text, item.formatting), item.revision);
     }
-    out += wrapWithRevision(formattedText, item.revision);
     i++;
   }
   return { text: out, nextIndex: i, deferredComments: [] };
@@ -3363,15 +3366,18 @@ function renderInlineRangeWithIds(
       }
     }
 
-    let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
       const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
       const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
-      if (!isBareUrl && !isBareEmail) {
-        formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
+      if (isBareUrl || isBareEmail) {
+        out += wrapWithRevision(item.text, item.revision);
+      } else {
+        const formattedText = wrapWithFormatting(item.text, item.formatting);
+        out += wrapWithRevision('[' + formattedText + '](' + formatHrefForMarkdown(item.href) + ')', item.revision);
       }
+    } else {
+      out += wrapWithRevision(wrapWithFormatting(item.text, item.formatting), item.revision);
     }
-    out += wrapWithRevision(formattedText, item.revision);
     i++;
   }
 

@@ -284,14 +284,16 @@ describe('Custom Styles — OOXML Generation', () => {
     expect(block).not.toContain('<w:caps/>');
   });
 
-  it('spacingBefore: 0 and spacingAfter: 0 both emit explicit zero values', () => {
+  it('spacingBefore: 0 is omitted (default) but spacingAfter: 0 emits explicit zero', () => {
     const customStyles: Record<string, CustomStyleDef> = {
       tight: { spacingBefore: 0, spacingAfter: 0 },
     };
     const xml = getStylesXmlWithCustom(customStyles);
     const block = extractStyleBlock(xml, 'MsCustomTight');
     expect(block).not.toBeNull();
-    expect(block).toContain('w:before="0"');
+    // w:before="0" is the default — emitting it triggers Word dirty-flag (invariant #5)
+    expect(block).not.toContain('w:before="0"');
+    // w:after="0" must be emitted to override pPrDefault w:after="160"
     expect(block).toContain('w:after="0"');
   });
 
@@ -627,29 +629,35 @@ describe('Custom Styles — Template replacement', () => {
 
     // Step 2: save as template, re-generate with font-size: 18
     const fs = await import('fs');
-    const tmpPath = '/tmp/test-template-custom-style.docx';
+    const os = await import('os');
+    const path = await import('path');
+    const tmpPath = path.join(os.tmpdir(), 'test-template-custom-style-' + Date.now() + '.docx');
     fs.writeFileSync(tmpPath, Buffer.from(result1.docx));
 
-    const md2 = [
-      '---',
-      'font: Times New Roman',
-      'font-size: 12',
-      'template: ' + tmpPath,
-      'styles:',
-      '  big-text:',
-      '    font-size: 18',
-      '    font-style: center',
-      '---',
-      '',
-      '<!-- style: big-text -->',
-      'Hello World',
-      '<!-- /style -->',
-    ].join('\n');
-    const result2 = await convertMdToDocx(md2);
-    const zip2 = await JSZip.loadAsync(result2.docx);
-    const styles2 = await zip2.file('word/styles.xml')!.async('string');
-    const newBlock = extractStyleBlock(styles2, customStyleId('big-text'))!;
-    expect(newBlock).toContain('w:sz w:val="36"'); // 18pt = 36hp
-    expect(newBlock).not.toContain('w:sz w:val="20"');
+    try {
+      const md2 = [
+        '---',
+        'font: Times New Roman',
+        'font-size: 12',
+        'template: ' + tmpPath,
+        'styles:',
+        '  big-text:',
+        '    font-size: 18',
+        '    font-style: center',
+        '---',
+        '',
+        '<!-- style: big-text -->',
+        'Hello World',
+        '<!-- /style -->',
+      ].join('\n');
+      const result2 = await convertMdToDocx(md2);
+      const zip2 = await JSZip.loadAsync(result2.docx);
+      const styles2 = await zip2.file('word/styles.xml')!.async('string');
+      const newBlock = extractStyleBlock(styles2, customStyleId('big-text'))!;
+      expect(newBlock).toContain('w:sz w:val="36"'); // 18pt = 36hp
+      expect(newBlock).not.toContain('w:sz w:val="20"');
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch {}
+    }
   });
 });
