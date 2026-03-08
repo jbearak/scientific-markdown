@@ -601,4 +601,101 @@ describe('Font customization unit tests', () => {
       expect(converted.markdown).toContain("table-font: O'Brien Sans");
     });
   });
+
+  // ---------------------------------------------------------------
+  // 14. Round-trip: table column widths
+  // ---------------------------------------------------------------
+  describe('round-trip table col-widths', () => {
+    it('round-trips frontmatter table-col-widths', async () => {
+      const markdown = '---\ntable-col-widths: 2 1 1\n---\n\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      expect(metadata.tableColWidths).toEqual([2, 1, 1]);
+    });
+
+    it('round-trips frontmatter table-col-widths: equal', async () => {
+      const markdown = '---\ntable-col-widths: equal\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const { metadata } = parseFrontmatter(converted.markdown);
+      expect(metadata.tableColWidths).toBe('equal');
+    });
+
+    it('generates correct OOXML for col-widths', async () => {
+      const markdown = '---\ntable-col-widths: 2 1 1\n---\n\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docXml = await zip.file('word/document.xml')!.async('string');
+      expect(docXml).toContain('<w:tblW w:w="5000" w:type="pct"/>');
+      expect(docXml).toContain('<w:gridCol/><w:gridCol/><w:gridCol/>');
+      expect(docXml).toContain('<w:tcW w:w="2500" w:type="pct"/>');
+    });
+
+    it('round-trips per-table col-widths directive for pipe tables', async () => {
+      const markdown = '<!-- table-col-widths: 3 1 -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain('<!-- table-col-widths: 3 1 -->');
+    });
+
+    it('round-trips per-table col-widths for HTML tables via data-col-widths', async () => {
+      const markdown = '---\npipe-table-max-line-width: 0\n---\n\n<table data-col-widths="2,1">\n  <tr>\n    <td>A</td>\n    <td>B</td>\n  </tr>\n</table>';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain('data-col-widths="2 1"');
+    });
+
+    it('directives appear before sentinel comments on round-trip', async () => {
+      // Use table-font-size: 8 (differs from auto-shrink default of 9pt) so it survives round-trip
+      const markdown = '---\ntable-font-size: 10\n---\n\n<!-- table-font-size: 8 -->\n\n<!-- Begin Table -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const lines = converted.markdown.split('\n');
+      const fontSizeLine = lines.findIndex(l => l.includes('table-font-size: 8'));
+      const sentinelLine = lines.findIndex(l => l.includes('Begin Table'));
+      expect(fontSizeLine).toBeGreaterThanOrEqual(0);
+      expect(sentinelLine).toBeGreaterThanOrEqual(0);
+      // Directive must come before the sentinel, preserving original order
+      expect(fontSizeLine).toBeLessThan(sentinelLine);
+    });
+
+    it('auto directive overrides frontmatter default', async () => {
+      const markdown = '---\ntable-col-widths: 2 1\n---\n\n<!-- table-col-widths: auto -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(result.docx);
+      const docXml = await zip.file('word/document.xml')!.async('string');
+      // The table with auto should have tblW auto (no column widths)
+      // Note: there's only one table, so check for auto
+      expect(docXml).toContain('<w:tblW w:w="0" w:type="auto"/>');
+    });
+
+    it('round-trips col-widths directive on a footnote table', async () => {
+      const markdown = 'Text[^fn1]\n\n[^fn1]: <!-- table-col-widths: 3 1 -->\n\n    | A | B |\n    |---|---|\n    | 1 | 2 |';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      expect(converted.markdown).toContain('table-col-widths: 3 1');
+    });
+
+    it('directive before table inside landscape fence does not hoist past sentinel', async () => {
+      const markdown = '<!-- landscape -->\n\n<!-- table-col-widths: 3 1 -->\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n<!-- /landscape -->';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const md = converted.markdown;
+      // The landscape sentinel must appear before the col-widths directive
+      const landscapeIdx = md.indexOf('<!-- landscape -->');
+      const colWidthsIdx = md.indexOf('<!-- table-col-widths:');
+      expect(landscapeIdx).toBeGreaterThanOrEqual(0);
+      expect(colWidthsIdx).toBeGreaterThan(landscapeIdx);
+    });
+  });
 });

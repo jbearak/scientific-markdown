@@ -513,10 +513,13 @@ describe("Property 13: Backward compatibility of existing font fields", () => {
             fontSize === undefined &&
             codeFontSize === undefined
           ) {
-            expect(overrides).toBeUndefined();
+            // No font-related fields set: font/code overrides should be absent
+            // (tableSizeHp is always set due to auto-shrink, so the object is non-empty)
+            expect(overrides.bodyFont).toBeUndefined();
+            expect(overrides.codeFont).toBeUndefined();
+            expect(overrides.bodySizeHp).toBeUndefined();
             return;
           }
-          expect(overrides).toBeDefined();
           if (font) expect(overrides!.bodyFont).toBe(font);
           if (codeFont) expect(overrides!.codeFont).toBe(codeFont);
           if (fontSize !== undefined) {

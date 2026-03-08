@@ -45,6 +45,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `code-font-size` | Code font size in points. Default: 10. When `font-size` is specified without `code-font-size`, the code font size is automatically set to 1pt less than the body font size, preserving the default size difference. |
 | `table-font` | Table font family. Falls back to `font` if not set. |
 | `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size`, the table font size is automatically set to 2pt less than the body font size. |
+| `table-col-widths` | Column width ratios for tables. Accepts space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), `equal`, or `auto`. Last value repeats for tables with more columns. Default: `auto` (Word auto-sizing). |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
 | `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `normal`, or hyphenated combinations (e.g., `bold-italic`). Default: `bold`. |
@@ -148,6 +149,39 @@ The `table-font` and `table-font-size` frontmatter fields control table typograp
 **Priority** (highest to lowest): per-table override → document-level frontmatter → auto-shrink default.
 
 Per-table overrides are preserved through DOCX round-trips: comment directives and data attributes are re-emitted on conversion back to Markdown.
+
+### Table Column Widths
+
+The `table-col-widths` frontmatter field controls column width ratios for all tables in the document.
+
+**Accepted formats**: space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), the keyword `equal` (all columns same width), or `auto` (explicit no-op — uses Word's default auto-sizing).
+
+**Repeat-last-value**: when a table has more columns than specified ratios, the last ratio is repeated. For example, `2 1` applied to a 4-column table produces ratios `2 1 1 1`.
+
+**Per-table overrides** allow individual tables to use different column widths:
+
+**HTML comment directive** — place a comment immediately before the table:
+
+```markdown
+<!-- table-col-widths: 2 1 1 -->
+| Wide Column | A | B |
+|-------------|---|---|
+| data        | 1 | 2 |
+```
+
+**HTML `<table>` data attribute** — for HTML tables, use `data-col-widths`:
+
+```html
+<table data-col-widths="2,1,1">
+  <tr><td>Wide</td><td>A</td><td>B</td></tr>
+</table>
+```
+
+**`auto` keyword**: use `auto` in a per-table directive (`<!-- table-col-widths: auto -->` or `data-col-widths="auto"`) to override a frontmatter default and restore Word's default auto-sizing for that specific table. In frontmatter (`table-col-widths: auto`), it acts as an explicit no-op that round-trips through DOCX.
+
+**Priority** (highest to lowest): per-table override → frontmatter default → auto (Word default).
+
+Per-table overrides and frontmatter defaults are preserved through DOCX round-trips.
 
 ### Page Orientation Sections
 

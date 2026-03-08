@@ -27,6 +27,22 @@ export interface HtmlTableMeta {
   fontSize?: number;   // from data-font-size attribute
   font?: string;       // from data-font attribute
   orientation?: 'landscape' | 'portrait'; // from data-orientation attribute
+  colWidths?: number[] | 'equal' | 'auto'; // from data-col-widths attribute
+}
+
+/** Parse data-col-widths attribute value (inline to avoid circular dependency with frontmatter.ts). */
+function parseColWidthsAttr(raw: string): number[] | 'equal' | 'auto' | undefined {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  if (trimmed === 'equal') return 'equal';
+  if (trimmed === 'auto') return 'auto';
+  let inner = trimmed;
+  if (inner.startsWith('[') && inner.endsWith(']')) inner = inner.slice(1, -1);
+  const parts = inner.split(/[\s,]+/).filter(s => s.length > 0);
+  if (parts.length === 0) return undefined;
+  const nums = parts.map(s => Number(s));
+  if (nums.some(n => !Number.isFinite(n) || n <= 0)) return undefined;
+  return nums;
 }
 
 export function extractHtmlTables(html: string): HtmlTableMeta[] {
@@ -60,6 +76,13 @@ export function extractHtmlTables(html: string): HtmlTableMeta[] {
       const orientMatch = attrs.match(/data-orientation\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"]+))/i);
       const orientVal = (orientMatch?.[1] ?? orientMatch?.[2] ?? orientMatch?.[3])?.trim().toLowerCase();
       if (orientVal === 'landscape' || orientVal === 'portrait') meta.orientation = orientVal;
+      // data-col-widths: "2,1,1", "equal", "auto", etc.
+      const colWidthsMatch = attrs.match(/data-col-widths\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"]+))/i);
+      const colWidthsVal = (colWidthsMatch?.[1] ?? colWidthsMatch?.[2] ?? colWidthsMatch?.[3])?.trim();
+      if (colWidthsVal) {
+        const parsed = parseColWidthsAttr(colWidthsVal);
+        if (parsed) meta.colWidths = parsed;
+      }
       tables.push(meta);
     }
   }

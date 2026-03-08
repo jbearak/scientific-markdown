@@ -4,7 +4,7 @@ import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 import { parseBibtex, BibtexEntry } from './bibtex-parser';
-import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme } from './frontmatter';
+import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
@@ -81,6 +81,7 @@ export interface MdToken {
   portraitOpen?: true;      // sentinel: start of portrait section
   portraitClose?: true;     // sentinel: end of portrait section
   tableOrientation?: 'landscape' | 'portrait'; // table-only orientation from data-orientation
+  tableColWidths?: number[] | 'equal' | 'auto'; // per-table column width ratios
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
 }
 
@@ -1135,6 +1136,15 @@ export function tableFontProps(fonts: Map<number, string>, defaultFont?: string)
   return chunkCustomProps('MANUSCRIPT_TABLE_FONTS_', JSON.stringify(mapping));
 }
 
+export function tableColWidthsProps(colWidths: Map<number, string>, defaultColWidths?: string): CustomPropEntry[] {
+  const mapping: Record<string, string> = {};
+  for (const [idx, val] of colWidths) {
+    if (val !== defaultColWidths) mapping[String(idx)] = val;
+  }
+  if (Object.keys(mapping).length === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_TABLE_COL_WIDTHS_', JSON.stringify(mapping));
+}
+
 export function landscapeTableProps(landscapeTables: Set<number>): CustomPropEntry[] {
   if (landscapeTables.size === 0) return [];
   const mapping: Record<string, string> = {};
@@ -1253,20 +1263,34 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const fontSizeMatch = text.match(/^<!--\s*table-font-size:\s*(\d+(?:\.\d+)?)\s*-->$/);
     const fontMatch = text.match(/^<!--\s*table-font:\s*(.+?)\s*-->$/);
     if (!fontSizeMatch && !fontMatch) continue;
-    // Look for the next table token, skipping intervening HTML comment paragraphs
+    // Look for the next table token, skipping intervening HTML comment paragraphs.
+    // Note: sentinel comments (landscape/portrait/references/bibliography) are still
+    // plain HTML comment paragraphs at this point — sentinel post-processing runs later,
+    // so the directive is safely consumed before sentinel conversion.
     let target = i + 1;
     while (target < result.length && result[target].type === 'paragraph'
         && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
       target++;
     }
     if (target < result.length && result[target].type === 'table') {
-      if (fontSizeMatch && result[target].tableFontSize === undefined) {
+      let consumed = false;
+      if (fontSizeMatch) {
         const n = parseFloat(fontSizeMatch[1]);
-        if (isFinite(n) && n > 0) result[target].tableFontSize = n;
+        if (isFinite(n) && n > 0) {
+          if (result[target].tableFontSize === undefined) result[target].tableFontSize = n;
+          consumed = true;
+        } else {
+          if (warnings) warnings.push('Invalid <!-- table-font-size: ' + fontSizeMatch[1] + ' --> directive ignored.');
+        }
       }
-      const fontVal = fontMatch ? fontMatch[1].trim() : '';
-      if (fontVal && result[target].tableFont === undefined) result[target].tableFont = fontVal;
-      result.splice(i, 1);
+      if (fontMatch) {
+        const fontVal = fontMatch[1].trim();
+        if (fontVal) {
+          if (result[target].tableFont === undefined) result[target].tableFont = fontVal;
+          consumed = true;
+        }
+      }
+      if (consumed) result.splice(i, 1);
     }
   }
 
@@ -1278,6 +1302,9 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     const text = run.text.trim();
     const orientMatch = text.match(/^<!--\s*table-orientation:\s*(landscape|portrait)\s*-->$/i);
     if (!orientMatch) continue;
+    // Forward scan: skip HTML comment paragraphs to find the table token.
+    // Sentinel post-processing has not yet run, so sentinels are still plain
+    // HTML comments and the directive is consumed before they are converted.
     let target = i + 1;
     while (target < result.length && result[target].type === 'paragraph'
         && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
@@ -1288,6 +1315,33 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
         result[target].tableOrientation = orientMatch[1].toLowerCase() as 'landscape' | 'portrait';
       }
       result.splice(i, 1);
+    }
+  }
+
+  // Post-process: transfer table-col-widths directive from HTML comments to table tokens
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
+    const run = result[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+    const cwMatch = text.match(/^<!--\s*table-col-widths:\s*(.+?)\s*-->$/);
+    if (!cwMatch) continue;
+    // Forward scan: skip HTML comment paragraphs to find the table token.
+    // Sentinel post-processing has not yet run, so sentinels are still plain
+    // HTML comments and the directive is consumed before they are converted.
+    let target = i + 1;
+    while (target < result.length && result[target].type === 'paragraph'
+        && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
+      target++;
+    }
+    if (target < result.length && result[target].type === 'table') {
+      const parsed = parseColWidths(cwMatch[1]);
+      if (parsed) {
+        if (result[target].tableColWidths === undefined) result[target].tableColWidths = parsed;
+        result.splice(i, 1);
+      } else {
+        if (warnings) warnings.push('Invalid <!-- table-col-widths: ' + cwMatch[1] + ' --> directive ignored.');
+      }
     }
   }
 
@@ -1771,6 +1825,7 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
                 if (meta.fontSize) tableToken.tableFontSize = meta.fontSize;
                 if (meta.font) tableToken.tableFont = meta.font;
                 if (meta.orientation) tableToken.tableOrientation = meta.orientation;
+                if (meta.colWidths) tableToken.tableColWidths = meta.colWidths;
                 result.push(tableToken);
               }
             }
@@ -2459,6 +2514,7 @@ export interface DocxGenState {
   tableFormats: Map<number, TableFormat>; // table index -> source format
   tableFontSizes: Map<number, number>; // table index -> per-table font size (pt)
   tableFonts: Map<number, string>;     // table index -> per-table font name
+  tableColWidths: Map<number, string>; // table index -> serialized col widths (e.g. "2 1 1" or "equal")
   fontOverrides?: FontOverrides;       // document-level font overrides for table default resolution
   listIndent: 'tab' | 'spaces'; // indentation style for nested list items
   consecutiveReplyParaIds: Set<string>; // parent paraIds whose replies were in consecutive format
@@ -2649,6 +2705,7 @@ export interface FontOverrides {
   tableFont?: string;
   tableSizeHp?: number;
   tableSizeFromDefault?: boolean; // true when tableSizeHp was auto-computed from DEFAULT_BODY_HP
+  tableColWidths?: number[] | 'equal' | 'auto';
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -2735,6 +2792,11 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides {
   }
   if (fm.titleFontStyle) {
     overrides.titleStyles = fm.titleFontStyle;
+  }
+
+  // Table column width overrides
+  if (fm.tableColWidths) {
+    overrides.tableColWidths = fm.tableColWidths;
   }
 
   // Table font overrides
@@ -4489,6 +4551,15 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   }
   if (totalCols === 0) totalCols = 1;
 
+  // Resolve column widths: 'auto' (per-table or document-level) skips widths entirely;
+  // otherwise per-table token > document-level fontOverrides > none (Word auto-sizing).
+  let colWidthPcts: number[] | undefined;
+  const resolvedWidths = token.tableColWidths ?? fo?.tableColWidths;
+  if (resolvedWidths && resolvedWidths !== 'auto') {
+    const expanded = expandColWidths(resolvedWidths, totalCols);
+    colWidthPcts = colWidthsToPct(expanded);
+  }
+
   // Check if any cell uses colspan or rowspan
   const hasSpans = token.rows.some(row =>
     row.cells.some(cell => (cell.colspan && cell.colspan > 1) || (cell.rowspan && cell.rowspan > 1))
@@ -4497,10 +4568,16 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const hasHeaderRow = token.rows.some(row => row.header);
 
   let xml = '<w:tbl>';
-  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar><w:tblW w:w="0" w:type="auto"/>' + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
+  const tblLayout = colWidthPcts
+    ? '<w:tblLayout w:type="fixed"/>'
+    : '';
+  const tblW = colWidthPcts
+    ? '<w:tblW w:w="5000" w:type="pct"/>'
+    : '<w:tblW w:w="0" w:type="auto"/>';
+  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>' + tblLayout + '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
 
-  // Emit tblGrid if spans are present
-  if (hasSpans) {
+  // Emit tblGrid (required when widths or spans are present)
+  if (hasSpans || colWidthPcts) {
     xml += '<w:tblGrid>';
     for (let c = 0; c < totalCols; c++) {
       xml += '<w:gridCol/>';
@@ -4528,6 +4605,11 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
       const pending = mergeMap.get(gridCol);
       if (pending && pending.remaining > 0) {
         let tcPr = '<w:tcPr>';
+        if (colWidthPcts) {
+          let w = 0;
+          for (let ci = 0; ci < pending.colspan && gridCol + ci < colWidthPcts.length; ci++) w += colWidthPcts[gridCol + ci];
+          tcPr += '<w:tcW w:w="' + w + '" w:type="pct"/>';
+        }
         if (pending.colspan > 1) {
           tcPr += '<w:gridSpan w:val="' + pending.colspan + '"/>';
         }
@@ -4542,7 +4624,11 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
       // Emit real cell
       if (cellIdx >= row.cells.length) {
         // Pad with empty cells if row is short
-        xml += '<w:tc><w:p/></w:tc>';
+        if (colWidthPcts && gridCol < colWidthPcts.length) {
+          xml += '<w:tc><w:tcPr><w:tcW w:w="' + colWidthPcts[gridCol] + '" w:type="pct"/></w:tcPr><w:p/></w:tc>';
+        } else {
+          xml += '<w:tc><w:p/></w:tc>';
+        }
         gridCol++;
         continue;
       }
@@ -4552,12 +4638,17 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
       const rs = cell.rowspan || 1;
 
       let tcPr = '';
-      if (cs > 1 || rs > 1) {
-        // ECMA-376 §17.4.66: tcPr children order is gridSpan then vMerge
+      {
+        // ECMA-376 §17.4.66 tcPr children order: tcW → gridSpan → vMerge
         const parts: string[] = [];
+        if (colWidthPcts) {
+          let w = 0;
+          for (let ci = 0; ci < cs && gridCol + ci < colWidthPcts.length; ci++) w += colWidthPcts[gridCol + ci];
+          parts.push('<w:tcW w:w="' + w + '" w:type="pct"/>');
+        }
         if (cs > 1) parts.push('<w:gridSpan w:val="' + cs + '"/>');
         if (rs > 1) parts.push('<w:vMerge w:val="restart"/>');
-        tcPr = '<w:tcPr>' + parts.join('') + '</w:tcPr>';
+        if (parts.length > 0) tcPr = '<w:tcPr>' + parts.join('') + '</w:tcPr>';
       }
 
       // Register vertical merge for subsequent rows
@@ -4929,6 +5020,12 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.tableFont) {
         state.tableFonts.set(state.tableIndex, token.tableFont);
       }
+      if (token.tableColWidths) {
+        const val = token.tableColWidths === 'equal' ? 'equal'
+          : token.tableColWidths === 'auto' ? 'auto'
+          : token.tableColWidths.join(' ');
+        state.tableColWidths.set(state.tableIndex, val);
+      }
       // Table-only landscape: wrap with section breaks (skip if already in fence-based landscape)
       if (token.tableOrientation === 'landscape' && !state.inLandscapeSection && !state.inPortraitSection) {
         state.landscapeTables.add(state.tableIndex);
@@ -5193,6 +5290,7 @@ export async function convertMdToDocx(
     tableFormats: new Map(),
     tableFontSizes: new Map(),
     tableFonts: new Map(),
+    tableColWidths: new Map(),
     pipeTableAligned: new Map(),
     fontOverrides,
     listIndent: detectListIndent(bodyWithoutFootnotes),
@@ -5274,6 +5372,12 @@ export async function convertMdToDocx(
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
           if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
           if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
+          if (t.tableColWidths) {
+            const val = t.tableColWidths === 'equal' ? 'equal'
+              : t.tableColWidths === 'auto' ? 'auto'
+              : t.tableColWidths.join(' ');
+            state.tableColWidths.set(state.tableIndex, val);
+          }
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
           state.tableIndex++;
@@ -5287,6 +5391,12 @@ export async function convertMdToDocx(
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
           if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
           if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
+          if (t.tableColWidths) {
+            const val = t.tableColWidths === 'equal' ? 'equal'
+              : t.tableColWidths === 'auto' ? 'auto'
+              : t.tableColWidths.join(' ');
+            state.tableColWidths.set(state.tableIndex, val);
+          }
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
           state.tableIndex++;
         } else {
@@ -5463,6 +5573,13 @@ export async function convertMdToDocx(
   customProps.push(...pipeTableAlignedProps(state.pipeTableAligned));
   customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
   customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
+  const defaultColWidthsStr = fontOverrides?.tableColWidths
+    ? (typeof fontOverrides.tableColWidths === 'string' ? fontOverrides.tableColWidths : fontOverrides.tableColWidths.join(' '))
+    : undefined;
+  customProps.push(...tableColWidthsProps(state.tableColWidths, defaultColWidthsStr));
+  if (frontmatter.tableColWidths) {
+    customProps.push({ name: 'MANUSCRIPT_DEFAULT_TABLE_COL_WIDTHS', value: defaultColWidthsStr! });
+  }
   customProps.push(...landscapeTableProps(state.landscapeTables));
   customProps.push(...portraitTableProps(state.portraitTables));
   customProps.push(...portraitBreakProps(state.portraitBreakOrdinals));

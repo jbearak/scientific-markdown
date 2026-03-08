@@ -23,7 +23,7 @@ import {
   type DocxGenState
 } from './md-to-docx';
 import { type GfmAlertType } from './gfm';
-import { parseFrontmatter, serializeFrontmatter } from './frontmatter';
+import { parseFrontmatter, serializeFrontmatter, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
 import { alertColorsByScheme, setDefaultColorScheme, getDefaultColorScheme, GITHUB_ALERT_COLORS, GUTTMACHER_ALERT_COLORS } from './alert-colors';
 
 function makeState(): DocxGenState {
@@ -71,6 +71,7 @@ function makeState(): DocxGenState {
     listIndent: 'spaces',
     tableFontSizes: new Map(),
     tableFonts: new Map(),
+    tableColWidths: new Map(),
     tableRunRPrExtra: '',
     landscapeTables: new Set(),
     portraitTables: new Set(),
@@ -341,6 +342,60 @@ describe('parseMd HTML tables', () => {
     const table = tokens.find(t => t.type === 'table');
     expect(table?.rows?.[0].cells[0].colspan).toBeUndefined();
     expect(table?.rows?.[0].cells[0].rowspan).toBeUndefined();
+  });
+});
+
+describe('parseMd table-col-widths directive', () => {
+  it('transfers <!-- table-col-widths --> directive to table token', () => {
+    const md = '<!-- table-col-widths: 2 1 1 -->\n\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |';
+    const tokens = parseMd(md);
+    const table = tokens.find(t => t.type === 'table');
+    expect(table?.tableColWidths).toEqual([2, 1, 1]);
+    // Directive should be consumed (not remain as a paragraph)
+    expect(tokens.filter(t => t.type === 'paragraph').length).toBe(0);
+  });
+
+  it('parses equal directive', () => {
+    const md = '<!-- table-col-widths: equal -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+    const tokens = parseMd(md);
+    const table = tokens.find(t => t.type === 'table');
+    expect(table?.tableColWidths).toBe('equal');
+  });
+
+  it('parses auto directive', () => {
+    const md = '<!-- table-col-widths: auto -->\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+    const tokens = parseMd(md);
+    const table = tokens.find(t => t.type === 'table');
+    expect(table?.tableColWidths).toBe('auto');
+  });
+
+  it('parses data-col-widths on HTML table', () => {
+    const md = '<table data-col-widths="2,1,1"><tr><td>A</td><td>B</td><td>C</td></tr></table>';
+    const tokens = parseMd(md);
+    const table = tokens.find(t => t.type === 'table');
+    expect(table?.tableColWidths).toEqual([2, 1, 1]);
+  });
+
+  it('parses data-col-widths equal on HTML table', () => {
+    const md = '<table data-col-widths="equal"><tr><td>A</td><td>B</td></tr></table>';
+    const tokens = parseMd(md);
+    const table = tokens.find(t => t.type === 'table');
+    expect(table?.tableColWidths).toBe('equal');
+  });
+
+  it('does not consume invalid col-widths directive and emits warning', () => {
+    const md = '<!-- table-col-widths: 2x 1 1 -->\n\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |';
+    const warnings: string[] = [];
+    const tokens = parseMd(md, warnings);
+    const table = tokens.find(t => t.type === 'table');
+    // Invalid directive should not be consumed — table gets no col widths
+    expect(table?.tableColWidths).toBeUndefined();
+    // The directive paragraph should still be present
+    const paras = tokens.filter(t => t.type === 'paragraph');
+    expect(paras.length).toBeGreaterThan(0);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('Invalid');
+    expect(warnings[0]).toContain('2x 1 1');
   });
 });
 
@@ -1058,6 +1113,163 @@ describe('generateTable', () => {
 
     // Math runs produce OMML, check for the math namespace element
     expect(result).toContain('m:oMath');
+  });
+
+  it('emits column widths when tableColWidths is set', () => {
+    const rows: MdTableRow[] = [
+      { header: true, cells: [
+        { runs: [{ type: 'text', text: 'A' }] },
+        { runs: [{ type: 'text', text: 'B' }] },
+        { runs: [{ type: 'text', text: 'C' }] },
+      ] },
+      { header: false, cells: [
+        { runs: [{ type: 'text', text: '1' }] },
+        { runs: [{ type: 'text', text: '2' }] },
+        { runs: [{ type: 'text', text: '3' }] },
+      ] },
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows, tableColWidths: [2, 1, 1] };
+    const result = generateTable(token, makeState());
+    // tblW should be pct-based
+    expect(result).toContain('<w:tblW w:w="5000" w:type="pct"/>');
+    // gridCol elements should be bare (Word computes grid from tcW pct)
+    expect(result).toContain('<w:gridCol/><w:gridCol/><w:gridCol/>');
+    // Each cell should have tcW
+    expect(result).toContain('<w:tcW w:w="2500" w:type="pct"/>');
+    expect(result).toContain('<w:tcW w:w="1250" w:type="pct"/>');
+  });
+
+  it('colspan cell sums spanned column widths', () => {
+    const rows: MdTableRow[] = [
+      { header: false, cells: [
+        { runs: [{ type: 'text', text: 'span' }], colspan: 2 },
+        { runs: [{ type: 'text', text: 'C' }] },
+      ] },
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows, tableColWidths: [2, 1, 1] };
+    const result = generateTable(token, makeState());
+    // The colspan=2 cell should sum cols 0+1 = 2500+1250 = 3750
+    expect(result).toContain('<w:tcW w:w="3750" w:type="pct"/>');
+  });
+
+  it('no col-widths: tblW auto, no tcW elements', () => {
+    const rows: MdTableRow[] = [
+      { header: false, cells: [
+        { runs: [{ type: 'text', text: 'A' }] },
+        { runs: [{ type: 'text', text: 'B' }] },
+      ] },
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows };
+    const result = generateTable(token, makeState());
+    expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
+    expect(result).not.toContain('<w:tcW');
+    expect(result).not.toContain('<w:gridCol');
+  });
+
+  it('equal col-widths gives equal distribution', () => {
+    const rows: MdTableRow[] = [
+      { header: false, cells: [
+        { runs: [{ type: 'text', text: 'A' }] },
+        { runs: [{ type: 'text', text: 'B' }] },
+        { runs: [{ type: 'text', text: 'C' }] },
+      ] },
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows, tableColWidths: 'equal' };
+    const result = generateTable(token, makeState());
+    expect(result).toContain('<w:tblW w:w="5000" w:type="pct"/>');
+    // 5000 / 3 ≈ 1667 each (sum adjusted to 5000)
+    const matches = result.match(/<w:tcW w:w="(\d+)"/g);
+    expect(matches).toBeTruthy();
+    const widths = matches!.map(m => parseInt(m.match(/\d+/)![0]));
+    expect(widths.reduce((a, b) => a + b, 0)).toBe(5000);
+  });
+
+  it('auto col-widths skips width generation', () => {
+    const rows: MdTableRow[] = [
+      { header: false, cells: [
+        { runs: [{ type: 'text', text: 'A' }] },
+        { runs: [{ type: 'text', text: 'B' }] },
+      ] },
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows, tableColWidths: 'auto' };
+    const state = makeState();
+    state.fontOverrides = { tableColWidths: [2, 1] };
+    const result = generateTable(token, state);
+    expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
+    expect(result).not.toContain('<w:tcW');
+  });
+
+  it('frontmatter table-col-widths: auto round-trips through DOCX', async () => {
+    const md = '---\ntable-col-widths: auto\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('table-col-widths: auto');
+  });
+});
+
+describe('parseColWidths', () => {
+  it('parses space-separated values', () => {
+    expect(parseColWidths('2 1 1')).toEqual([2, 1, 1]);
+  });
+  it('parses comma-separated values', () => {
+    expect(parseColWidths('2,1,1')).toEqual([2, 1, 1]);
+  });
+  it('parses bracketed array', () => {
+    expect(parseColWidths('[2, 1, 1]')).toEqual([2, 1, 1]);
+  });
+  it('parses equal', () => {
+    expect(parseColWidths('equal')).toBe('equal');
+    expect(parseColWidths('EQUAL')).toBe('equal');
+  });
+  it('parses auto', () => {
+    expect(parseColWidths('auto')).toBe('auto');
+  });
+  it('parses float values', () => {
+    expect(parseColWidths('1.5 1 0.5')).toEqual([1.5, 1, 0.5]);
+  });
+  it('rejects non-positive values', () => {
+    expect(parseColWidths('2 0 1')).toBeUndefined();
+    expect(parseColWidths('2 -1 1')).toBeUndefined();
+  });
+  it('rejects malformed tokens like "2x"', () => {
+    expect(parseColWidths('2x 1 1')).toBeUndefined();
+    expect(parseColWidths('1 abc 2')).toBeUndefined();
+    expect(parseColWidths('1e2x')).toBeUndefined();
+  });
+  it('rejects empty', () => {
+    expect(parseColWidths('')).toBeUndefined();
+  });
+});
+
+describe('expandColWidths', () => {
+  it('repeats last value for extra columns', () => {
+    expect(expandColWidths([2, 1], 4)).toEqual([2, 1, 1, 1]);
+  });
+  it('truncates when more ratios than columns', () => {
+    expect(expandColWidths([2, 1, 1], 2)).toEqual([2, 1]);
+  });
+  it('equal produces uniform array', () => {
+    expect(expandColWidths('equal', 3)).toEqual([1, 1, 1]);
+  });
+});
+
+describe('colWidthsToPct', () => {
+  it('converts ratios to fiftieths-of-percent summing to 5000', () => {
+    const pcts = colWidthsToPct([2, 1, 1]);
+    expect(pcts.reduce((a, b) => a + b, 0)).toBe(5000);
+    expect(pcts[0]).toBe(2500);
+    expect(pcts[1]).toBe(1250);
+    expect(pcts[2]).toBe(1250);
+  });
+  it('handles equal distribution with rounding', () => {
+    const pcts = colWidthsToPct([1, 1, 1]);
+    expect(pcts.reduce((a, b) => a + b, 0)).toBe(5000);
+  });
+  it('produces all-positive values for skewed ratios', () => {
+    const pcts = colWidthsToPct([1, 100, 100]);
+    expect(pcts.reduce((a, b) => a + b, 0)).toBe(5000);
+    expect(pcts.every(v => v > 0)).toBe(true);
   });
 });
 
