@@ -13,7 +13,7 @@ LSP: `src/lsp/server.ts` (language server — diagnostics, completions)
 
 - Template literal corruption: never use `$$` in code touched by tool text-replacement operations — `$` is special in replacement strings and `$$` gets corrupted. Use string concatenation instead.
 - Regex parity invariant: keep navigation (`src/changes.ts`) plain-highlight lookaround logic in lockstep with `syntaxes/manuscript-markdown.json` and mirrored regex test copies.
-- Word dirty-flag invariants: see the 11 numbered invariants in the `md-to-docx.ts` file header. The `wt()` helper enforces invariant #1 (`xml:space="preserve"` only when needed).
+- Word dirty-flag invariants: see the 11 numbered invariants in the `md-to-docx.ts` file header.
 
 Per-module invariants live as comments in the corresponding source files.
 
