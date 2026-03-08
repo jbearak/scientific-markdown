@@ -5350,7 +5350,8 @@ export async function convertDocx(
       // carry customStyleName — skip them to avoid premature style close.
       const isStructural = item.type === 'para' || item.type === 'table'
         || item.type === 'landscape_open' || item.type === 'landscape_close'
-        || item.type === 'portrait_open' || item.type === 'portrait_close';
+        || item.type === 'portrait_open' || item.type === 'portrait_close'
+        || item.type === 'bibliography_marker';
       if (!isStructural) continue;
       const styleName = (item.type === 'para' && item.customStyleName) ? item.customStyleName : undefined;
       if (styleName && styleName !== activeStyle) {

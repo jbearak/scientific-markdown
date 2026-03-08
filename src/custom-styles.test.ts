@@ -199,6 +199,13 @@ describe('Custom Styles — parseMd Sentinels', () => {
     expect(htmlComment).toBeDefined();
   });
 
+  it('style name with spaces → captured correctly', () => {
+    const tokens = parseMd('<!-- style: My Custom Style -->\n\nHello\n\n<!-- /style -->');
+    const open = tokens.find(t => t.customStyleOpen);
+    expect(open).toBeDefined();
+    expect(open!.customStyleOpen).toBe('My Custom Style');
+  });
+
   it('multiple style blocks → correct sentinel sequence', () => {
     const md = [
       '<!-- style: alpha -->',
@@ -275,6 +282,17 @@ describe('Custom Styles — OOXML Generation', () => {
     expect(block).toContain('<w:b/>');
     expect(block).toContain('<w:smallCaps/>');
     expect(block).not.toContain('<w:caps/>');
+  });
+
+  it('spacingBefore: 0 does not emit w:before="0"', () => {
+    const customStyles: Record<string, CustomStyleDef> = {
+      tight: { spacingBefore: 0, spacingAfter: 0 },
+    };
+    const xml = getStylesXmlWithCustom(customStyles);
+    const block = extractStyleBlock(xml, 'MsCustomTight');
+    expect(block).not.toBeNull();
+    expect(block).not.toContain('w:before="0"');
+    expect(block).not.toContain('w:after="0"');
   });
 
   it('collision dedup: two colliding names → only one style block', () => {
@@ -428,8 +446,6 @@ describe('Custom Styles — Round-Trip', () => {
 // ============================================================
 describe('Custom Styles — Preview Plugin', () => {
   it('generates CSS from style definitions', () => {
-    // header-font-style is required because the CSS injection rule exits early without it.
-    // markdown-it escapes HTML in the output, so we check for escaped entities.
     const md = [
       '---',
       'header-font-style: bold',
@@ -452,6 +468,25 @@ describe('Custom Styles — Preview Plugin', () => {
     expect(html).toContain('font-style: italic');
     expect(html).toContain('margin-top: 12pt');
     expect(html).toContain('margin-bottom: 6pt');
+  });
+
+  it('generates custom style CSS without headerFontStyle', () => {
+    const md = [
+      '---',
+      'styles:',
+      '  pullquote:',
+      '    font: Georgia',
+      '    font-size: 14',
+      '    spacing-before: 12',
+      '---',
+      '',
+      'Hello',
+    ].join('\n');
+    const html = renderWithPlugin(md, 'github');
+    expect(html).toContain('ms-custom-style-pullquote');
+    expect(html).toContain('font-family: &quot;Georgia&quot;');
+    expect(html).toContain('font-size: 14pt');
+    expect(html).toContain('margin-top: 12pt');
   });
 
   it('wraps style block in div with correct class', () => {

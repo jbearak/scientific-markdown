@@ -58,8 +58,9 @@ describe('sample roundtrip regressions', () => {
     const { docx } = await convertMdToDocx(md);
     const rt = await convertDocx(docx);
     const body = stripFrontmatter(rt.markdown);
-    // First item must start at 2, not 1
+    // First item must start at 2, second at 3
     expect(body).toMatch(/^2\./m);
+    expect(body).toMatch(/^3\./m);
   });
 
   it('custom style blocks preserve inline items (Bug 4)', async () => {

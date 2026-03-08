@@ -995,34 +995,36 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
   });
 
-  // Inject <style> block for header-font-style preview (smallcaps, allcaps, center, bold, italic, underline)
+  // Inject <style> block for header-font-style and custom styles preview
   md.core.ruler.push('manuscript_header_font_style', (state: any) => {
     const { metadata } = parseFrontmatter(state.src);
-    const styles = metadata.headerFontStyle;
-    if (!styles || styles.length === 0) return;
     let css = '';
-    for (let i = 0; i < 6; i++) {
-      const style = i < styles.length ? styles[i] : styles[styles.length - 1];
-      const rules: string[] = [];
-      if (style === 'normal') {
-        rules.push('font-weight: normal', 'font-style: normal', 'text-decoration: none', 'font-variant: normal', 'text-transform: none', 'text-align: left');
-      } else {
-        rules.push(style.includes('bold') ? 'font-weight: bold' : 'font-weight: normal');
-        rules.push(style.includes('italic') ? 'font-style: italic' : 'font-style: normal');
-        rules.push(style.includes('underline') ? 'text-decoration: underline' : 'text-decoration: none');
-        // smallcaps/allcaps: check smallcaps first since 'smallcaps' contains 'allcaps' as substring
-        if (style.includes('smallcaps')) {
-          rules.push('font-variant: small-caps', 'text-transform: none');
-        } else if (style.includes('allcaps')) {
-          rules.push('font-variant: normal', 'text-transform: uppercase');
+    // Header font style CSS (gated on headerFontStyle being set)
+    const styles = metadata.headerFontStyle;
+    if (styles && styles.length > 0) {
+      for (let i = 0; i < 6; i++) {
+        const style = i < styles.length ? styles[i] : styles[styles.length - 1];
+        const rules: string[] = [];
+        if (style === 'normal') {
+          rules.push('font-weight: normal', 'font-style: normal', 'text-decoration: none', 'font-variant: normal', 'text-transform: none', 'text-align: left');
         } else {
-          rules.push('font-variant: normal', 'text-transform: none');
+          rules.push(style.includes('bold') ? 'font-weight: bold' : 'font-weight: normal');
+          rules.push(style.includes('italic') ? 'font-style: italic' : 'font-style: normal');
+          rules.push(style.includes('underline') ? 'text-decoration: underline' : 'text-decoration: none');
+          // smallcaps/allcaps: check smallcaps first since 'smallcaps' contains 'allcaps' as substring
+          if (style.includes('smallcaps')) {
+            rules.push('font-variant: small-caps', 'text-transform: none');
+          } else if (style.includes('allcaps')) {
+            rules.push('font-variant: normal', 'text-transform: uppercase');
+          } else {
+            rules.push('font-variant: normal', 'text-transform: none');
+          }
+          rules.push(style.includes('center') ? 'text-align: center' : 'text-align: left');
         }
-        rules.push(style.includes('center') ? 'text-align: center' : 'text-align: left');
+        css += 'h' + (i + 1) + ' { ' + rules.join('; ') + '; }\n';
       }
-      css += 'h' + (i + 1) + ' { ' + rules.join('; ') + '; }\n';
     }
-    // Custom named styles CSS
+    // Custom named styles CSS (independent of headerFontStyle)
     if (metadata.styles) {
       for (const [name, def] of Object.entries(metadata.styles)) {
         const safeName = name.replace(/[^a-zA-Z0-9-]/g, '-');
@@ -1043,6 +1045,7 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
         }
       }
     }
+    if (!css) return;
     const token = new state.Token('html_block', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
     state.tokens.unshift(token);
@@ -1100,8 +1103,8 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
   // Core rule: wrap <!-- style: X -->...<!-- /style --> blocks in <div class="ms-custom-style ms-custom-style-{name}">
   md.core.ruler.after('manuscript_markdown_alert_blockquote', 'manuscript_custom_style_wrap', (state: any) => {
     const tokens = state.tokens;
-    const OPEN_RE = /^<!--\s*style:\s*([a-zA-Z0-9_-]+)\s*-->\s*$/;
-    const CLOSE_RE = /^<!--\s*\/style\s*-->\s*$/;
+    const OPEN_RE = /^<!--\s*style:\s*(.+?)\s*-->\s*$/i;
+    const CLOSE_RE = /^<!--\s*\/style\s*-->\s*$/i;
     for (let i = tokens.length - 1; i >= 0; i--) {
       const tok = tokens[i];
       if (tok.type !== 'html_block') continue;

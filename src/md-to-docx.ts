@@ -1479,7 +1479,7 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
       const run = result[i].runs[0];
       if (run.type !== 'html_comment') continue;
       const text = run.text.trim();
-      const openMatch = text.match(/^<!--\s*style:\s*([a-zA-Z0-9_-]+)\s*-->$/i);
+      const openMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->$/i);
       if (openMatch) {
         if (activeStyle && warnings) {
           warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
@@ -3229,8 +3229,10 @@ function customStyleXml(
 
   // pPr: spacing + center alignment (ordering: spacing → jc per OOXML schema)
   let spacingParts = '';
-  if (def.spacingBefore !== undefined) spacingParts += ' w:before="' + Math.round(def.spacingBefore * 20) + '"';
-  if (def.spacingAfter !== undefined) spacingParts += ' w:after="' + Math.round(def.spacingAfter * 20) + '"';
+  const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
+  const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
+  if (beforeTwips) spacingParts += ' w:before="' + beforeTwips + '"';
+  if (afterTwips) spacingParts += ' w:after="' + afterTwips + '"';
   const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
   const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
   const pPr = (spacingEl || jcEl) ? '<w:pPr>' + spacingEl + jcEl + '</w:pPr>\n' : '';
@@ -5269,7 +5271,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.blankLinesAfter !== undefined) sentinelGaps['csoa' + sentinelCsoIdx] = token.blankLinesAfter;
       sentinelCsoIdx++;
       state.activeCustomStyle = token.customStyleOpen;
-      prevToken = token;
+      preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
     if (token.customStyleClose) {
@@ -5277,7 +5279,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.blankLinesAfter !== undefined) sentinelGaps['csca' + sentinelCscIdx] = token.blankLinesAfter;
       sentinelCscIdx++;
       state.activeCustomStyle = undefined;
-      prevToken = token;
+      preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
 
@@ -5870,9 +5872,12 @@ export async function convertMdToDocx(
   // Always include fontTable.xml
   zip.file('word/fontTable.xml', fontTableXml());
 
-  // Handle numbering - use template as base but ensure bullet/decimal definitions exist
+  // Handle numbering - use template as base but ensure bullet/decimal definitions exist.
+  // When listStartOverrides exist, we generate fresh numbering because the template
+  // numbering XML cannot be safely merged with override entries. Trade-off: any custom
+  // list formats in the template are discarded in this case.
   if (state.hasList) {
-    if (templateParts?.has('word/numbering.xml')) {
+    if (templateParts?.has('word/numbering.xml') && state.listStartOverrides.length === 0) {
       zip.file('word/numbering.xml', templateParts.get('word/numbering.xml')!);
     } else {
       zip.file('word/numbering.xml', numberingXml(state.listStartOverrides));
