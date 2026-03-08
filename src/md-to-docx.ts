@@ -1270,13 +1270,24 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
       target++;
     }
     if (target < result.length && result[target].type === 'table') {
-      if (fontSizeMatch && result[target].tableFontSize === undefined) {
+      let consumed = false;
+      if (fontSizeMatch) {
         const n = parseFloat(fontSizeMatch[1]);
-        if (isFinite(n) && n > 0) result[target].tableFontSize = n;
+        if (isFinite(n) && n > 0) {
+          if (result[target].tableFontSize === undefined) result[target].tableFontSize = n;
+          consumed = true;
+        } else {
+          if (warnings) warnings.push('Invalid <!-- table-font-size: ' + fontSizeMatch[1] + ' --> directive ignored.');
+        }
       }
-      const fontVal = fontMatch ? fontMatch[1].trim() : '';
-      if (fontVal && result[target].tableFont === undefined) result[target].tableFont = fontVal;
-      result.splice(i, 1);
+      if (fontMatch) {
+        const fontVal = fontMatch[1].trim();
+        if (fontVal) {
+          if (result[target].tableFont === undefined) result[target].tableFont = fontVal;
+          consumed = true;
+        }
+      }
+      if (consumed) result.splice(i, 1);
     }
   }
 
@@ -1315,11 +1326,13 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
       target++;
     }
     if (target < result.length && result[target].type === 'table') {
-      if (result[target].tableColWidths === undefined) {
-        const parsed = parseColWidths(cwMatch[1]);
-        if (parsed) result[target].tableColWidths = parsed;
+      const parsed = parseColWidths(cwMatch[1]);
+      if (parsed) {
+        if (result[target].tableColWidths === undefined) result[target].tableColWidths = parsed;
+        result.splice(i, 1);
+      } else {
+        if (warnings) warnings.push('Invalid <!-- table-col-widths: ' + cwMatch[1] + ' --> directive ignored.');
       }
-      result.splice(i, 1);
     }
   }
 
@@ -2683,7 +2696,7 @@ export interface FontOverrides {
   tableFont?: string;
   tableSizeHp?: number;
   tableSizeFromDefault?: boolean; // true when tableSizeHp was auto-computed from DEFAULT_BODY_HP
-  tableColWidths?: number[] | 'equal';
+  tableColWidths?: number[] | 'equal' | 'auto';
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -4529,15 +4542,13 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   }
   if (totalCols === 0) totalCols = 1;
 
-  // Resolve column widths: per-table 'auto' skips widths entirely; otherwise
-  // per-table token > document-level fontOverrides > none (Word auto-sizing).
+  // Resolve column widths: 'auto' (per-table or document-level) skips widths entirely;
+  // otherwise per-table token > document-level fontOverrides > none (Word auto-sizing).
   let colWidthPcts: number[] | undefined;
-  if (token.tableColWidths !== 'auto') {
-    const rawWidths = token.tableColWidths ?? fo?.tableColWidths;
-    if (rawWidths) {
-      const expanded = expandColWidths(rawWidths, totalCols);
-      colWidthPcts = colWidthsToPct(expanded);
-    }
+  const resolvedWidths = token.tableColWidths ?? fo?.tableColWidths;
+  if (resolvedWidths && resolvedWidths !== 'auto') {
+    const expanded = expandColWidths(resolvedWidths, totalCols);
+    colWidthPcts = colWidthsToPct(expanded);
   }
 
   // Check if any cell uses colspan or rowspan
@@ -5551,7 +5562,7 @@ export async function convertMdToDocx(
   customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
   customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
   const defaultColWidthsStr = fontOverrides?.tableColWidths
-    ? (fontOverrides.tableColWidths === 'equal' ? 'equal' : fontOverrides.tableColWidths.join(' '))
+    ? (typeof fontOverrides.tableColWidths === 'string' ? fontOverrides.tableColWidths : fontOverrides.tableColWidths.join(' '))
     : undefined;
   customProps.push(...tableColWidthsProps(state.tableColWidths, defaultColWidthsStr));
   if (frontmatter.tableColWidths) {

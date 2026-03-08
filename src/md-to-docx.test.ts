@@ -382,6 +382,21 @@ describe('parseMd table-col-widths directive', () => {
     const table = tokens.find(t => t.type === 'table');
     expect(table?.tableColWidths).toBe('equal');
   });
+
+  it('does not consume invalid col-widths directive and emits warning', () => {
+    const md = '<!-- table-col-widths: 2x 1 1 -->\n\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |';
+    const warnings: string[] = [];
+    const tokens = parseMd(md, warnings);
+    const table = tokens.find(t => t.type === 'table');
+    // Invalid directive should not be consumed — table gets no col widths
+    expect(table?.tableColWidths).toBeUndefined();
+    // The directive paragraph should still be present
+    const paras = tokens.filter(t => t.type === 'paragraph');
+    expect(paras.length).toBeGreaterThan(0);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('Invalid');
+    expect(warnings[0]).toContain('2x 1 1');
+  });
 });
 
 describe('parseMd grid tables', () => {

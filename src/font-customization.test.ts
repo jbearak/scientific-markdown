@@ -684,5 +684,18 @@ describe('Font customization unit tests', () => {
       const converted = await convertDocx(result.docx);
       expect(converted.markdown).toContain('table-col-widths: 3 1');
     });
+
+    it('directive before table inside landscape fence does not hoist past sentinel', async () => {
+      const markdown = '<!-- landscape -->\n\n<!-- table-col-widths: 3 1 -->\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n<!-- /landscape -->';
+      const result = await convertMdToDocx(markdown);
+      const { convertDocx } = await import('./converter');
+      const converted = await convertDocx(result.docx);
+      const md = converted.markdown;
+      // The landscape sentinel must appear before the col-widths directive
+      const landscapeIdx = md.indexOf('<!-- landscape -->');
+      const colWidthsIdx = md.indexOf('<!-- table-col-widths:');
+      expect(landscapeIdx).toBeGreaterThanOrEqual(0);
+      expect(colWidthsIdx).toBeGreaterThan(landscapeIdx);
+    });
   });
 });

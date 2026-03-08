@@ -4311,7 +4311,10 @@ export function buildMarkdown(
         let scanIdx = output.length;
         while (scanIdx > 0) {
           const prev = output[scanIdx - 1];
-          if (/^<!--[\s\S]*?-->$/.test(prev.trim())) { scanIdx--; continue; }
+          const trimmedPrev = prev.trim();
+          // Never hoist past structural sentinel comments
+          if (/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(trimmedPrev)) break;
+          if (/^<!--[\s\S]*?-->$/.test(trimmedPrev)) { scanIdx--; continue; }
           // Whitespace separator: skip only if it sits between two comments
           if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())) {
             scanIdx--; continue;

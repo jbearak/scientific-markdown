@@ -45,7 +45,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `code-font-size` | Code font size in points. Default: 10. When `font-size` is specified without `code-font-size`, the code font size is automatically set to 1pt less than the body font size, preserving the default size difference. |
 | `table-font` | Table font family. Falls back to `font` if not set. |
 | `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size`, the table font size is automatically set to 2pt less than the body font size. |
-| `table-col-widths` | Column width ratios for tables. Accepts space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), or `equal`. Last value repeats for tables with more columns. Default: none (Word auto-sizing). |
+| `table-col-widths` | Column width ratios for tables. Accepts space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), `equal`, or `auto`. Last value repeats for tables with more columns. Default: `auto` (Word auto-sizing). |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
 | `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `normal`, or hyphenated combinations (e.g., `bold-italic`). Default: `bold`. |

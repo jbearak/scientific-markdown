@@ -108,7 +108,7 @@ export interface Frontmatter {
   gridTableMaxLineWidth?: number;
   tableFont?: string;
   tableFontSize?: number;
-  tableColWidths?: number[] | 'equal';
+  tableColWidths?: number[] | 'equal' | 'auto';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
 }
@@ -309,7 +309,7 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
       }
       case 'table-col-widths': {
         const parsed = parseColWidths(value);
-        if (parsed && parsed !== 'auto') metadata.tableColWidths = parsed;
+        if (parsed) metadata.tableColWidths = parsed;
         break;
       }
       case 'blockquote-style': {
@@ -373,7 +373,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'title-font-style': () => emitArr('title-font-style', metadata.titleFontStyle),
     'table-font': () => { if (metadata.tableFont) lines.push('table-font: ' + metadata.tableFont); },
     'table-font-size': () => { if (metadata.tableFontSize !== undefined) lines.push('table-font-size: ' + metadata.tableFontSize); },
-    'table-col-widths': () => { if (metadata.tableColWidths) lines.push('table-col-widths: ' + (metadata.tableColWidths === 'equal' ? 'equal' : metadata.tableColWidths.join(' '))); },
+    'table-col-widths': () => { if (metadata.tableColWidths) lines.push('table-col-widths: ' + (typeof metadata.tableColWidths === 'string' ? metadata.tableColWidths : metadata.tableColWidths.join(' '))); },
     'code-background-color': () => { if (metadata.codeBackgroundColor) lines.push('code-background-color: ' + metadata.codeBackgroundColor); },
     'code-background': () => emitters['code-background-color'](),
     'code-font-color': () => { if (metadata.codeFontColor) lines.push('code-font-color: ' + metadata.codeFontColor); },
