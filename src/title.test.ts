@@ -136,8 +136,10 @@ describe('MD→DOCX title generation', () => {
       rIdOffset: 3,
       warnings: [],
       hasList: false,
+      listStartOverrides: [],
       hasComments: false,
       missingKeys: new Set<string>(),
+      activeListStartOverrides: new Map(),
     };
     const tokens: MdToken[] = [
       { type: 'paragraph', runs: [{ type: 'text', text: 'Body text' }] },
@@ -160,8 +162,10 @@ describe('MD→DOCX title generation', () => {
       rIdOffset: 3,
       warnings: [],
       hasList: false,
+      listStartOverrides: [],
       hasComments: false,
       missingKeys: new Set<string>(),
+      activeListStartOverrides: new Map(),
     };
     const tokens: MdToken[] = [];
     const xml = generateDocumentXml(tokens, state, undefined, undefined, undefined, { title: ['Line 1', 'Line 2'] });

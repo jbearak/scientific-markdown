@@ -6,7 +6,7 @@ import { PARA_PLACEHOLDER, preprocessCriticMarkup, findMatchingClose } from '../
 import { wrapBareLatexEnvironments } from '../latex-env-preprocess';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
 import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
-import { parseFrontmatter, type ColorScheme } from '../frontmatter';
+import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
 
 /** Escape HTML special characters for use in attribute values */
@@ -995,6 +995,84 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
   });
 
+  // Inject <style> block for header-font-style and custom styles preview
+  md.core.ruler.push('manuscript_header_font_style', (state: any) => {
+    const { metadata } = parseFrontmatter(state.src);
+    let css = '';
+    // Header font style CSS (gated on headerFontStyle being set)
+    const styles = metadata.headerFontStyle;
+    if (styles && styles.length > 0) {
+      for (let i = 0; i < 6; i++) {
+        const style = i < styles.length ? styles[i] : styles[styles.length - 1];
+        const rules: string[] = [];
+        if (style === 'normal') {
+          rules.push('font-weight: normal', 'font-style: normal', 'text-decoration: none', 'font-variant: normal', 'text-transform: none', 'text-align: left');
+        } else {
+          rules.push(style.includes('bold') ? 'font-weight: bold' : 'font-weight: normal');
+          rules.push(style.includes('italic') ? 'font-style: italic' : 'font-style: normal');
+          rules.push(style.includes('underline') ? 'text-decoration: underline' : 'text-decoration: none');
+          // smallcaps/allcaps: check smallcaps first since 'smallcaps' contains 'allcaps' as substring
+          if (style.includes('smallcaps')) {
+            rules.push('font-variant: small-caps', 'text-transform: none');
+          } else if (style.includes('allcaps')) {
+            rules.push('font-variant: normal', 'text-transform: uppercase');
+          } else {
+            rules.push('font-variant: normal', 'text-transform: none');
+          }
+          rules.push(style.includes('center') ? 'text-align: center' : 'text-align: left');
+        }
+        css += 'h' + (i + 1) + ' { ' + rules.join('; ') + '; }\n';
+      }
+    }
+    // Custom named styles CSS (independent of headerFontStyle)
+    if (metadata.styles) {
+      for (const [name, def] of Object.entries(metadata.styles)) {
+        const safeName = name.replace(/[^a-zA-Z0-9-]/g, '-');
+        const csRules: string[] = [];
+        if (def.font) csRules.push('font-family: "' + def.font + '"');
+        if (def.fontSize !== undefined) csRules.push('font-size: ' + def.fontSize + 'pt');
+        const fs = def.fontStyle ?? '';
+        if (fs.includes('bold')) csRules.push('font-weight: bold');
+        if (fs.includes('italic')) csRules.push('font-style: italic');
+        if (fs.includes('underline')) csRules.push('text-decoration: underline');
+        if (fs.includes('smallcaps')) csRules.push('font-variant: small-caps');
+        else if (fs.includes('allcaps')) csRules.push('text-transform: uppercase');
+        if (fs.includes('center')) csRules.push('text-align: center');
+        if (def.spacingBefore !== undefined) csRules.push('margin-top: ' + def.spacingBefore + 'pt');
+        if (def.spacingAfter !== undefined) csRules.push('margin-bottom: ' + def.spacingAfter + 'pt');
+        if (csRules.length > 0) {
+          css += '.ms-custom-style-' + safeName + ' p { ' + csRules.join('; ') + '; }\n';
+        }
+      }
+    }
+    if (!css) return;
+    const token = new state.Token('manuscript_style', '', 0);
+    token.content = '<style>\n' + css + '</style>\n';
+    state.tokens.unshift(token);
+  });
+
+  // Inject <style> block for table-borders preview
+  md.core.ruler.push('manuscript_table_borders', (state: any) => {
+    const { metadata } = parseFrontmatter(state.src);
+    const borders = metadata.tableBorders ?? 'horizontal';
+    let css = '';
+    if (borders === 'none') {
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: none; }\n';
+    } else if (borders === 'solid') {
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: 1px solid var(--vscode-editor-foreground, currentColor); }\n';
+    } else {
+      // 'horizontal': light separators between body rows, stronger header underline, no vertical borders
+      css = 'table { border-collapse: collapse; }\n'
+        + 'table th, table td { border: none; border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground, currentColor) 25%, transparent); padding: 6px 8px; }\n'
+        + 'table thead th { border-bottom: 1px solid var(--vscode-editor-foreground, currentColor); }\n';
+    }
+    const token = new state.Token('manuscript_style', '', 0);
+    token.content = '<style>\n' + css + '</style>\n';
+    state.tokens.unshift(token);
+  });
+
   // Register grid table block rule before html_block so the placeholder comment
   // is consumed before markdown-it's html_block rule can swallow it (VS Code's
   // preview enables html: true).
@@ -1021,6 +1099,46 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
   md.core.ruler.after('inline', 'manuscript_markdown_associate_comments', associateCommentsRule);
   md.core.ruler.after('manuscript_markdown_associate_comments', 'manuscript_markdown_task_list', taskListRule);
   md.core.ruler.after('manuscript_markdown_task_list', 'manuscript_markdown_alert_blockquote', alertBlockquoteRule);
+
+  // Core rule: wrap <!-- style: X -->...<!-- /style --> blocks in <div class="ms-custom-style ms-custom-style-{name}">
+  md.core.ruler.after('manuscript_markdown_alert_blockquote', 'manuscript_custom_style_wrap', (state: any) => {
+    const tokens = state.tokens;
+    const OPEN_RE = /^<!--\s*style:\s*(.+?)\s*-->\s*$/i;
+    const CLOSE_RE = /^<!--\s*\/style\s*-->\s*$/i;
+    // First pass (reverse): find close directives and record their indices
+    const closeIndices: number[] = [];
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const tok = tokens[i];
+      if (tok.type !== 'html_block') continue;
+      const content = (tok.content || '').trim();
+      if (CLOSE_RE.test(content)) closeIndices.push(i);
+    }
+    // Second pass (reverse): match opens with closes (stack-based pairing)
+    const pairedCloses = new Set<number>();
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const tok = tokens[i];
+      if (tok.type !== 'html_block') continue;
+      const content = (tok.content || '').trim();
+      const openMatch = content.match(OPEN_RE);
+      if (openMatch) {
+        // Find the nearest unpaired close after this open
+        const closeIdx = closeIndices.find(ci => ci > i && !pairedCloses.has(ci));
+        if (closeIdx !== undefined) {
+          pairedCloses.add(closeIdx);
+          const safeName = openMatch[1].replace(/[^a-zA-Z0-9-]/g, '-');
+          const divOpen = new state.Token('html_block', '', 0);
+          divOpen.content = '<div class="ms-custom-style ms-custom-style-' + safeName + '">\n';
+          tokens.splice(i, 1, divOpen);
+        }
+      }
+    }
+    // Replace paired closes with </div>; leave unpaired closes as-is
+    for (const ci of pairedCloses) {
+      const divClose = new state.Token('html_block', '', 0);
+      divClose.content = '</div>\n';
+      tokens.splice(ci, 1, divClose);
+    }
+  });
 
   // Inject a hidden marker element so the preview script can apply the color scheme
   // class to alert elements (needed because VS Code's built-in GFM alert renderer
@@ -1129,6 +1247,9 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const content = tokens[idx].content || '';
     return isGfmDisallowedRawHtml(content) ? `<p>${escapeHtmlText(content)}</p>\n` : content;
   };
+
+  // Trusted internal style blocks injected by manuscript rules — bypass GFM filtering.
+  md.renderer.rules.manuscript_style = (tokens, idx) => tokens[idx].content || '';
 
   // GFM task list rendering.
   md.renderer.rules.list_item_open = (tokens, idx, options, env, self) => {

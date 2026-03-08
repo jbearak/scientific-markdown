@@ -81,7 +81,7 @@ describe('OOXML Generation Properties', () => {
         level, 
         runs: [{ type: 'text', text }] 
       };
-      const state = { commentId: 0, comments: [], relationships: new Map(), nextRId: 1, rIdOffset: 3, warnings: [], hasList: false, hasComments: false, missingKeys: new Set<string>() };
+      const state = { commentId: 0, comments: [], relationships: new Map(), nextRId: 1, rIdOffset: 3, warnings: [], hasList: false, hasComments: false, missingKeys: new Set<string>(), activeListStartOverrides: new Map<number, number>() };
       
       const paragraph = generateParagraph(token, state);
       expect(paragraph).toContain('<w:pStyle w:val="Heading' + level + '"/>');
@@ -103,7 +103,7 @@ describe('OOXML Generation Properties', () => {
         level, 
         runs: [{ type: 'text', text }] 
       };
-      const state = { commentId: 0, comments: [], relationships: new Map(), nextRId: 1, rIdOffset: 3, warnings: [], hasList: false, hasComments: false, missingKeys: new Set<string>() };
+      const state = { commentId: 0, comments: [], relationships: new Map(), nextRId: 1, rIdOffset: 3, warnings: [], hasList: false, hasComments: false, missingKeys: new Set<string>(), activeListStartOverrides: new Map<number, number>() };
       
       const paragraph = generateParagraph(token, state);
       expect(paragraph).toContain('<w:numPr>');
@@ -163,7 +163,7 @@ describe('OOXML Generation Properties', () => {
       const state: DocxGenState = {
         commentId: 0, comments: [], relationships: new Map(),
         nextRId: 1, rIdOffset: 5, warnings: [], hasList: false,
-        hasComments: false, missingKeys: new Set()
+        listStartOverrides: [], hasComments: false, missingKeys: new Set()
       };
       const table = generateTable(token, state);
       

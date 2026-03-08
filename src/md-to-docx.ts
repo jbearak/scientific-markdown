@@ -59,6 +59,7 @@ export interface MdToken {
   type: 'paragraph' | 'heading' | 'list_item' | 'blockquote' | 'code_block' | 'table' | 'hr';
   level?: number;           // heading level 1-6, blockquote nesting, list nesting
   ordered?: boolean;        // for list items
+  startNumber?: number;     // for ordered lists: first item's start number (when ≠ 1)
   taskChecked?: boolean;    // for GFM task list items
   alertType?: GfmAlertType; // for GFM alerts in blockquotes
   alertLead?: boolean;      // first blockquote paragraph carrying alert header
@@ -83,6 +84,8 @@ export interface MdToken {
   tableOrientation?: 'landscape' | 'portrait'; // table-only orientation from data-orientation
   tableColWidths?: number[] | 'equal' | 'auto'; // per-table column width ratios
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
+  customStyleOpen?: string;   // sentinel: start of custom style block (style name)
+  customStyleClose?: true;    // sentinel: end of custom style block
 }
 
 export interface MdTableCell {
@@ -1468,7 +1471,70 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     }
   }
 
+  applyCustomStyleSentinels(result, warnings);
+
   return result;
+}
+
+/** Convert <!-- style: X --> / <!-- /style --> HTML comments into customStyleOpen/customStyleClose sentinel tokens. */
+function applyCustomStyleSentinels(tokens: MdToken[], warnings?: string[]): void {
+  let activeStyle: string | undefined;
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type !== 'paragraph' || tokens[i].runs.length !== 1) continue;
+    const run = tokens[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+
+    // Single-line inline style: <!-- style: X -->content<!-- /style -->
+    const inlineMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->([\s\S]*?)<!--\s*\/style\s*-->$/i);
+    if (inlineMatch) {
+      if (activeStyle && warnings) {
+        warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
+      }
+      const styleName = inlineMatch[1];
+      const content = inlineMatch[2];
+
+      const openSentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: styleName };
+      openSentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+
+      // Re-parse content to recover inline formatting (bold, italic, links, etc.)
+      const md = createMarkdownIt();
+      const contentRuns = convertInlineTokens(md.parseInline(content, {}));
+      const contentToken: MdToken = {
+        type: 'paragraph',
+        runs: contentRuns.length > 0 ? contentRuns : [{ type: 'text', text: content }]
+      };
+
+      const closeSentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+      closeSentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+
+      tokens.splice(i, 1, openSentinel, contentToken, closeSentinel);
+      i += 2; // skip past all three (loop's i++ handles the third)
+      activeStyle = undefined; // self-contained block, not open
+      continue;
+    }
+
+    const openMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->$/i);
+    if (openMatch) {
+      if (activeStyle && warnings) {
+        warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
+      }
+      const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: openMatch[1] };
+      sentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+      sentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+      tokens.splice(i, 1, sentinel);
+      activeStyle = openMatch[1];
+    } else if (/^<!--\s*\/style\s*-->$/i.test(text)) {
+      if (activeStyle) {
+        const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+        sentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+        sentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+        tokens.splice(i, 1, sentinel);
+        activeStyle = undefined;
+      }
+      // If not in a style block, leave the comment as-is (user error, but harmless)
+    }
+  }
 }
 
 function deLazifyBlockquotes(markdown: string): string {
@@ -1669,7 +1735,8 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
       case 'ordered_list_open':
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
-        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings);
+        const listStart = token.attrGet?.('start') ? parseInt(token.attrGet('start'), 10) : undefined;
+        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings, listStart);
         result.push(...listItems);
         i = listClose + 1;
         break;
@@ -2235,7 +2302,7 @@ const DROPPED_LIST_BLOCK_TYPES = new Set([
   'fence', 'code_block', 'html_block', 'blockquote_open', 'table_open',
 ]);
 
-function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[]): MdToken[] {
+function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[], startNumber?: number): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
 
@@ -2282,20 +2349,26 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
       }
 
       const taskInfo = extractTaskListItem(runs);
-      items.push({
+      const listItem: MdToken = {
         type: 'list_item',
         ordered,
         level,
         runs: taskInfo?.runs ?? runs,
         taskChecked: taskInfo?.checked,
-      });
+      };
+      // Attach startNumber only to the first item of an ordered list with start ≠ 1
+      if (items.length === 0 && startNumber !== undefined && startNumber !== 1) {
+        listItem.startNumber = startNumber;
+      }
+      items.push(listItem);
 
       // Extract nested sublists
       for (let j = 0; j < itemTokens.length; j++) {
         if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
           const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
           const subOrdered = itemTokens[j].type === 'ordered_list_open';
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings));
+          const subStart = itemTokens[j].attrGet?.('start') ? parseInt(itemTokens[j].attrGet('start'), 10) : undefined;
+          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart));
           j = subClose;
         }
       }
@@ -2513,6 +2586,7 @@ export interface DocxGenState {
   rIdOffset: number; // reserved rIds for fixed relationships (styles, numbering, comments, theme, settings)
   warnings: string[];
   hasList: boolean;
+  listStartOverrides: { numId: number; ilvl: number; start: number }[]; // ordered lists with start ≠ 1
   hasComments: boolean;
   hasFootnotes: boolean;
   hasEndnotes: boolean;
@@ -2563,6 +2637,8 @@ export interface DocxGenState {
   templateSectPr?: string;      // trailing <w:sectPr> from template document.xml
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
+  activeCustomStyle?: string; // currently active <!-- style: X --> block name
+  activeListStartOverrides: Map<number, number>; // ilvl → override numId for restarted ordered lists
 }
 
 interface CommentEntry {
@@ -2739,6 +2815,7 @@ export interface FontOverrides {
   tableSizeHp?: number;
   tableSizeFromDefault?: boolean; // true when tableSizeHp was auto-computed from DEFAULT_BODY_HP
   tableColWidths?: number[] | 'equal' | 'auto';
+  tableBorders?: 'horizontal' | 'solid' | 'none';
 }
 
 /** Resolve value at index with Array_Inheritance: use arr[i] if i < length, else arr[last]. */
@@ -2832,6 +2909,11 @@ export function resolveFontOverrides(fm: Frontmatter): FontOverrides {
     overrides.tableColWidths = fm.tableColWidths;
   }
 
+  // Table border style
+  if (fm.tableBorders) {
+    overrides.tableBorders = fm.tableBorders;
+  }
+
   // Table font overrides
   if (fm.tableFont) {
     overrides.tableFont = fm.tableFont;
@@ -2878,7 +2960,8 @@ function extractNormalStyleSizeHp(stylesXml: string): number | undefined {
 
 export function applyFontOverridesToTemplate(
   stylesXmlBytes: Uint8Array,
-  overrides: FontOverrides
+  overrides: FontOverrides,
+  customStyles?: Record<string, import('./frontmatter').CustomStyleDef>
 ): string {
   let xml = new TextDecoder('utf-8').decode(stylesXmlBytes);
 
@@ -2980,6 +3063,29 @@ export function applyFontOverridesToTemplate(
       ? '<w:szCs w:val="' + sizeHp + '"/>'
       : undefined;
 
+    // Apply center alignment override to <w:pPr> for headings and title
+    if (fontStyleOverride !== undefined) {
+      const wantsCenter = fontStyleOverride.includes('center');
+      const pPrMatch = /(<w:pPr\b[^>]*>)([\s\S]*?)(<\/w:pPr>)/.exec(innerContent);
+      if (pPrMatch) {
+        let pPrContent = pPrMatch[2];
+        // Remove any existing w:jc element, then insert before outlineLvl (schema order: spacing → ind → jc → outlineLvl)
+        pPrContent = pPrContent.replace(/<w:jc\b[^>]*(?:\/>|><\/w:jc>)/g, '');
+        if (wantsCenter) {
+          const outlineLvlIdx = pPrContent.indexOf('<w:outlineLvl');
+          if (outlineLvlIdx !== -1) {
+            pPrContent = pPrContent.slice(0, outlineLvlIdx) + '<w:jc w:val="center"/>' + pPrContent.slice(outlineLvlIdx);
+          } else {
+            pPrContent = pPrContent + '<w:jc w:val="center"/>';
+          }
+        }
+        innerContent = innerContent.slice(0, pPrMatch.index) + pPrMatch[1] + pPrContent + pPrMatch[3] + innerContent.slice(pPrMatch.index + pPrMatch[0].length);
+      } else if (wantsCenter) {
+        // No pPr block — insert one at the start
+        innerContent = '<w:pPr><w:jc w:val="center"/></w:pPr>' + innerContent;
+      }
+    }
+
     // Skip past any <w:pPr>...</w:pPr> block so we match the style-level
     // <w:rPr>, not one nested inside paragraph properties.
     const pPrClose = innerContent.indexOf('</w:pPr>');
@@ -3020,16 +3126,20 @@ export function applyFontOverridesToTemplate(
 
       // Apply font-style overrides (bold, italic, underline) for headings and title
       if (fontStyleOverride !== undefined) {
-        // Remove existing b, i, u elements (all toggle forms: self-closing, with attributes, open+close)
+        // Remove existing b, i, u, smallCaps, caps elements (all toggle forms: self-closing, with attributes, open+close)
         rPrContent = rPrContent.replace(/<w:b\b[^>]*(?:\/>|><\/w:b>)/g, '');
         rPrContent = rPrContent.replace(/<w:i\b[^>]*(?:\/>|><\/w:i>)/g, '');
         rPrContent = rPrContent.replace(/<w:u\b[^>]*(?:\/>|><\/w:u>)/g, '');
+        rPrContent = rPrContent.replace(/<w:smallCaps\b[^>]*(?:\/>|><\/w:smallCaps>)/g, '');
+        rPrContent = rPrContent.replace(/<w:caps\b[^>]*(?:\/>|><\/w:caps>)/g, '');
         // Add new style elements at the start
         let styleEls = '';
         if (fontStyleOverride !== 'normal') {
           if (fontStyleOverride.includes('bold')) styleEls += '<w:b/>';
           if (fontStyleOverride.includes('italic')) styleEls += '<w:i/>';
           if (fontStyleOverride.includes('underline')) styleEls += '<w:u w:val="single"/>';
+          if (fontStyleOverride.includes('smallcaps')) styleEls += '<w:smallCaps/>';
+          else if (fontStyleOverride.includes('allcaps')) styleEls += '<w:caps/>';
         }
         rPrContent = styleEls + rPrContent;
       }
@@ -3045,6 +3155,8 @@ export function applyFontOverridesToTemplate(
         if (fontStyleOverride.includes('bold')) rPrContent += '<w:b/>';
         if (fontStyleOverride.includes('italic')) rPrContent += '<w:i/>';
         if (fontStyleOverride.includes('underline')) rPrContent += '<w:u w:val="single"/>';
+        if (fontStyleOverride.includes('smallcaps')) rPrContent += '<w:smallCaps/>';
+        else if (fontStyleOverride.includes('allcaps')) rPrContent += '<w:caps/>';
       }
       if (rFontsEl !== undefined) rPrContent += rFontsEl;
       if (szEl !== undefined) rPrContent += szEl;
@@ -3053,6 +3165,34 @@ export function applyFontOverridesToTemplate(
     }
 
     xml = xml.slice(0, styleMatch.index) + openTag + innerContent + closeTag + xml.slice(styleMatch.index + styleMatch[0].length);
+  }
+
+  // Inject custom styles before </w:styles>
+  if (customStyles) {
+    // Derive bodyFontStr from template's Normal style for custom style inheritance
+    const normalMatch = xml.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/);
+    let bodyFontStr = '';
+    if (normalMatch) {
+      const rFontsMatch = normalMatch[0].match(/<w:rFonts\s+[^>]*w:ascii="([^"]+)"[^>]*>/);
+      if (rFontsMatch) {
+        bodyFontStr = '<w:rFonts w:ascii="' + escapeXml(rFontsMatch[1]) + '" w:hAnsi="' + escapeXml(rFontsMatch[1]) + '"/>';
+      }
+    }
+    const localSzPair = (hp: number) => '<w:sz w:val="' + hp + '"/><w:szCs w:val="' + hp + '"/>';
+    const seenIds = new Set<string>();
+    for (const [name, def] of Object.entries(customStyles)) {
+      const sid = customStyleId(name);
+      if (seenIds.has(sid)) continue;
+      seenIds.add(sid);
+      const newStyleXml = customStyleXml(name, def, bodyFontStr, localSzPair);
+      // Replace existing custom style or inject new one
+      const existingRe = new RegExp('<w:style\\b[^>]*w:styleId="' + sid + '"[^>]*>[\\s\\S]*?</w:style>\\n?');
+      if (existingRe.test(xml)) {
+        xml = xml.replace(existingRe, () => newStyleXml);
+      } else {
+        xml = xml.replace('</w:styles>', () => newStyleXml + '</w:styles>');
+      }
+    }
   }
 
   return xml;
@@ -3100,7 +3240,66 @@ export function applyAlertColorsToTemplate(stylesXml: string, scheme: ColorSchem
   return xml;
 }
 
-export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme): string {
+/** Convert a user-defined style name to a Word style ID: 'my-heading' → 'MsCustomMyHeading'. */
+export function customStyleId(name: string): string {
+  return ('MsCustom' + name
+    .split(/[-_\s]+/)
+    .map(s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
+    .join('')
+  ).replace(/[^A-Za-z0-9]/g, '');
+}
+
+/** Convert a user-defined style name to a Word display name: 'my-heading' → 'Custom: my-heading'. */
+function customStyleDisplayName(name: string): string {
+  return 'Custom: ' + name;
+}
+
+/** Generate OOXML for a custom paragraph style definition. */
+function customStyleXml(
+  name: string,
+  def: import('./frontmatter').CustomStyleDef,
+  bodyFontStr: string,
+  szPairFn: (hp: number) => string,
+): string {
+  const styleId = customStyleId(name);
+  const displayName = customStyleDisplayName(name);
+
+  // pPr: spacing + center alignment (ordering: spacing → jc per OOXML schema)
+  let spacingParts = '';
+  const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
+  const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
+  if (beforeTwips !== undefined && beforeTwips !== 0) spacingParts += ' w:before="' + beforeTwips + '"';
+  if (afterTwips !== undefined) spacingParts += ' w:after="' + afterTwips + '"';
+  const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
+  const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
+  const pPr = (spacingEl || jcEl) ? '<w:pPr>' + spacingEl + jcEl + '</w:pPr>\n' : '';
+
+  // rPr: style flags + font + size (ordering: style flags → rFonts → sz per dirty-flag invariant #4)
+  const fs = def.fontStyle ?? '';
+  let styleStr = '';
+  if (fs && fs !== 'normal') {
+    if (fs.includes('bold')) styleStr += '<w:b/>';
+    if (fs.includes('italic')) styleStr += '<w:i/>';
+    if (fs.includes('underline')) styleStr += '<w:u w:val="single"/>';
+    // smallcaps/allcaps: else-if because 'smallcaps' contains 'allcaps' as substring
+    if (fs.includes('smallcaps')) styleStr += '<w:smallCaps/>';
+    else if (fs.includes('allcaps')) styleStr += '<w:caps/>';
+  }
+  const fontStr = def.font
+    ? '<w:rFonts w:ascii="' + escapeXml(def.font) + '" w:hAnsi="' + escapeXml(def.font) + '"/>'
+    : bodyFontStr;
+  const szStr = def.fontSize !== undefined ? szPairFn(Math.round(def.fontSize * 2)) : '';
+  const rPrInner = styleStr + fontStr + szStr;
+  const rPr = rPrInner ? '<w:rPr>' + rPrInner + '</w:rPr>\n' : '';
+
+  return '<w:style w:type="paragraph" w:customStyle="1" w:styleId="' + styleId + '">\n' +
+    '<w:name w:val="' + escapeXml(displayName) + '"/>\n' +
+    '<w:basedOn w:val="Normal"/>\n' +
+    pPr + rPr +
+    '</w:style>\n';
+}
+
+export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme, customStyles?: Record<string, import('./frontmatter').CustomStyleDef>): string {
   const alertColors = alertColorsByScheme(colorScheme ?? getDefaultColorScheme());
   // Helper: build w:rFonts element for a given font name
   function rFonts(font: string): string {
@@ -3143,10 +3342,19 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
       if (style.includes('bold')) styleStr += '<w:b/>';
       if (style.includes('italic')) styleStr += '<w:i/>';
       if (style.includes('underline')) styleStr += '<w:u w:val="single"/>';
+      // smallcaps/allcaps: use else-if because 'smallcaps' contains 'allcaps' as a substring
+      if (style.includes('smallcaps')) styleStr += '<w:smallCaps/>';
+      else if (style.includes('allcaps')) styleStr += '<w:caps/>';
     } else {
       styleStr = '<w:b/>';
     }
     return '<w:rPr>' + styleStr + font + sz + '</w:rPr>\n';
+  }
+
+  /** Return '<w:jc w:val="center"/>' if the heading style includes center, else ''. */
+  function headingJc(styleId: string): string {
+    const style = overrides?.headingStyles?.get(styleId);
+    return style && style.includes('center') ? '<w:jc w:val="center"/>' : '';
   }
 
   // CodeChar: code font only (no size override for character style)
@@ -3192,6 +3400,8 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     if (titleStyle0.includes('bold')) titleStyleStr += '<w:b/>';
     if (titleStyle0.includes('italic')) titleStyleStr += '<w:i/>';
     if (titleStyle0.includes('underline')) titleStyleStr += '<w:u w:val="single"/>';
+    if (titleStyle0.includes('smallcaps')) titleStyleStr += '<w:smallCaps/>';
+    else if (titleStyle0.includes('allcaps')) titleStyleStr += '<w:caps/>';
   }
   const titleRpr = '<w:rPr>' + titleStyleStr + titleFont + titleSz + '</w:rPr>\n';
 
@@ -3258,37 +3468,37 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:style w:type="paragraph" w:styleId="Heading1">\n' +
     '<w:name w:val="heading 1"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="240" w:after="0"/><w:outlineLvl w:val="0"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="240" w:after="0"/>' + headingJc('Heading1') + '<w:outlineLvl w:val="0"/></w:pPr>\n' +
     headingRpr('Heading1', 32) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading2">\n' +
     '<w:name w:val="heading 2"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="200" w:after="0"/><w:outlineLvl w:val="1"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="200" w:after="0"/>' + headingJc('Heading2') + '<w:outlineLvl w:val="1"/></w:pPr>\n' +
     headingRpr('Heading2', 26) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading3">\n' +
     '<w:name w:val="heading 3"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="200" w:after="0"/><w:outlineLvl w:val="2"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="200" w:after="0"/>' + headingJc('Heading3') + '<w:outlineLvl w:val="2"/></w:pPr>\n' +
     headingRpr('Heading3', 24) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading4">\n' +
     '<w:name w:val="heading 4"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="3"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading4') + '<w:outlineLvl w:val="3"/></w:pPr>\n' +
     headingRpr('Heading4', null) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading5">\n' +
     '<w:name w:val="heading 5"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="4"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading5') + '<w:outlineLvl w:val="4"/></w:pPr>\n' +
     headingRpr('Heading5', 20) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading6">\n' +
     '<w:name w:val="heading 6"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="5"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading6') + '<w:outlineLvl w:val="5"/></w:pPr>\n' +
     headingRpr('Heading6', 18) +
     '</w:style>\n' +
     '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont">\n' +
@@ -3350,7 +3560,7 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:style w:type="paragraph" w:styleId="Title">\n' +
     '<w:name w:val="Title"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="300"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="300"/>' + (titleStyle0 && titleStyle0.includes('center') ? '<w:jc w:val="center"/>' : '') + '</w:pPr>\n' +
     titleRpr +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="FootnoteText">\n' +
@@ -3401,6 +3611,21 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr>\n' +
     '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>\n' +
     '</w:style>\n' +
+    // Append user-defined custom styles (deduplicate by style ID to avoid collisions)
+    (customStyles
+      ? (() => {
+          const seenIds = new Set<string>();
+          return Object.entries(customStyles)
+            .filter(([name]) => {
+              const sid = customStyleId(name);
+              if (seenIds.has(sid)) return false;
+              seenIds.add(sid);
+              return true;
+            })
+            .map(([name, def]) => customStyleXml(name, def, bodyFontStr, szPair))
+            .join('');
+        })()
+      : '') +
     '</w:styles>';
 }
 
@@ -3409,7 +3634,7 @@ function randomHex8(): string {
   return Math.floor(Math.random() * 0xFFFFFFFF).toString(16).toUpperCase().padStart(8, '0');
 }
 
-function numberingXml(): string {
+function numberingXml(startOverrides?: { numId: number; ilvl: number; start: number }[]): string {
   // Generate random identifiers that Word expects on numbering definitions.
   // Without these, Word adds them on open, marking the document as modified.
   function lvlsWithTplc(lvls: string[]): string {
@@ -3448,6 +3673,13 @@ function numberingXml(): string {
     '</w:abstractNum>\n' +
     '<w:num w:numId="1" w16cid:durableId="' + durableId1 + '"><w:abstractNumId w:val="0"/></w:num>\n' +
     '<w:num w:numId="2" w16cid:durableId="' + durableId2 + '"><w:abstractNumId w:val="1"/></w:num>\n' +
+    // Emit extra w:num entries for ordered lists with custom start numbers
+    (startOverrides ?? []).map(o => {
+      const did = Math.floor(Math.random() * 2000000000);
+      return '<w:num w:numId="' + o.numId + '" w16cid:durableId="' + did + '"><w:abstractNumId w:val="1"/>' +
+        '<w:lvlOverride w:ilvl="' + o.ilvl + '"><w:startOverride w:val="' + o.start + '"/></w:lvlOverride>' +
+        '</w:num>\n';
+    }).join('') +
     '</w:numbering>';
 }
 
@@ -4405,7 +4637,12 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
 
 export function generateParagraph(token: MdToken, state: DocxGenState, options?: MdToDocxOptions, bibEntries?: Map<string, BibtexEntry>, citeprocEngine?: any): string {
   let pPr = '';
-  
+
+  // Apply custom style when inside a <!-- style: X --> block (only for plain paragraphs)
+  if (token.type === 'paragraph' && state.activeCustomStyle) {
+    pPr = '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/></w:pPr>';
+  }
+
   switch (token.type) {
     case 'heading':
       pPr = '<w:pPr><w:pStyle w:val="Heading' + (token.level || 1) + '"/></w:pPr>';
@@ -4415,8 +4652,18 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
         const leftIndent = 720 * (token.level || 1);
         pPr = '<w:pPr><w:ind w:left="' + leftIndent + '" w:hanging="360"/></w:pPr>';
       } else {
-        const numId = token.ordered ? '2' : '1';
+        let numId = token.ordered ? '2' : '1';
         const ilvl = (token.level || 1) - 1;
+        // Ordered lists with start ≠ 1 need a dedicated numId with lvlOverride
+        if (token.startNumber !== undefined && token.startNumber !== 1) {
+          const overrideNumId = 3 + state.listStartOverrides.length; // numIds 1,2 are reserved
+          state.listStartOverrides.push({ numId: overrideNumId, ilvl, start: token.startNumber });
+          numId = String(overrideNumId);
+          state.activeListStartOverrides.set(ilvl, overrideNumId);
+        } else if (token.ordered && state.activeListStartOverrides.has(ilvl)) {
+          // Subsequent items in the same restarted list share the override numId
+          numId = String(state.activeListStartOverrides.get(ilvl));
+        }
         pPr = '<w:pPr><w:numPr><w:ilvl w:val="' + ilvl + '"/><w:numId w:val="' + numId + '"/></w:numPr></w:pPr>';
         state.hasList = true;
       }
@@ -4533,6 +4780,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     : fo?.tableSizeHp;
   const effectiveTableFont = token.tableFont ?? fo?.tableFont;
   // Build pPr for table cell paragraphs (style ref + inline overrides for per-table diffs)
+  // Always suppress paragraph spacing-after inside table cells (pPrDefault sets after="160"
+  // which creates asymmetric vertical padding — cell margin alone should control inset).
+  const spacingZero = '<w:spacing w:after="0"/>';
   let tablePPr = '';
   let tableRunRPr = '';
   if (effectiveTableSizeHp || effectiveTableFont) {
@@ -4542,6 +4792,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     const needsInlineSize = effectiveTableSizeHp && effectiveTableSizeHp !== fo?.tableSizeHp;
     let pPrInner = '';
     if (hasDocLevelStyle) pPrInner += '<w:pStyle w:val="TableParagraph"/>';
+    pPrInner += spacingZero;
     let rPrInner = '';
     if (needsInlineFont || (!hasDocLevelStyle && effectiveTableFont)) {
       rPrInner += '<w:rFonts w:ascii="' + escapeXml(effectiveTableFont!) + '" w:hAnsi="' + escapeXml(effectiveTableFont!) + '"/>';
@@ -4553,6 +4804,8 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     // Run-level rPr: same inline overrides so runs inherit per-table font/size
     // (pPr > rPr only sets the paragraph mark, not run properties)
     tableRunRPr = rPrInner;
+  } else {
+    tablePPr = '<w:pPr>' + spacingZero + '</w:pPr>';
   }
 
   // Compute total grid columns by simulating grid occupancy (accounts for
@@ -4610,6 +4863,42 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
 
   const hasHeaderRow = token.rows.some(row => row.header);
 
+  // Resolve border style: default is 'horizontal'
+  const borderStyle = fo?.tableBorders ?? 'horizontal';
+
+  let tblBorders: string;
+  if (borderStyle === 'none') {
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  } else if (borderStyle === 'horizontal') {
+    // Grey horizontal separators between body rows, no vertical/outer borders.
+    // Header underline is applied per-cell via tcBorders below.
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>'
+      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  } else {
+    // 'solid': all borders single black
+    tblBorders = '<w:tblBorders>'
+      + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>';
+  }
+
   let xml = '<w:tbl>';
   const tblLayout = colWidthPcts
     ? '<w:tblLayout w:type="fixed"/>'
@@ -4617,7 +4906,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const tblW = colWidthPcts
     ? '<w:tblW w:w="5000" w:type="pct"/>'
     : '<w:tblW w:w="0" w:type="auto"/>';
-  xml += '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>' + tblLayout + '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
+  xml += '<w:tblPr>' + tblBorders + tblLayout + '<w:tblCellMar><w:top w:w="36" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="36" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
 
   // Emit tblGrid (required when widths or spans are present)
   if (hasSpans || colWidthPcts) {
@@ -4631,11 +4920,25 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   // Track pending vertical merges: gridCol -> { remaining: number; colspan: number }
   const mergeMap = new Map<number, { remaining: number; colspan: number }>();
 
+  // For 'horizontal' borders, find the last header row index to apply the black underline
+  let lastHeaderRowIdx = -1;
+  if (borderStyle === 'horizontal') {
+    for (let i = token.rows.length - 1; i >= 0; i--) {
+      if (token.rows[i].header) { lastHeaderRowIdx = i; break; }
+    }
+  }
+
   // Set per-table run rPr so generateRuns injects font/size on each run
   const prevRunRPrExtra = state.tableRunRPrExtra;
   state.tableRunRPrExtra = tableRunRPr;
 
-  for (const row of token.rows) {
+  for (let rowIdx = 0; rowIdx < token.rows.length; rowIdx++) {
+    const row = token.rows[rowIdx];
+    // For horizontal borders: cells in last header row get black bottom border
+    const isLastHeaderRow = borderStyle === 'horizontal' && rowIdx === lastHeaderRowIdx;
+    const horizontalCellBorders = isLastHeaderRow
+      ? '<w:tcBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tcBorders>'
+      : '';
     xml += '<w:tr>';
     if (row.header) {
       xml += '<w:trPr><w:tblHeader/></w:trPr>';
@@ -4656,7 +4959,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         if (pending.colspan > 1) {
           tcPr += '<w:gridSpan w:val="' + pending.colspan + '"/>';
         }
-        tcPr += '<w:vMerge/></w:tcPr>';
+        tcPr += '<w:vMerge/>';
+        if (horizontalCellBorders) tcPr += horizontalCellBorders;
+        tcPr += '</w:tcPr>';
         xml += '<w:tc>' + tcPr + '<w:p/></w:tc>';
         pending.remaining--;
         if (pending.remaining === 0) mergeMap.delete(gridCol);
@@ -4682,7 +4987,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
 
       let tcPr = '';
       {
-        // ECMA-376 §17.4.66 tcPr children order: tcW → gridSpan → vMerge
+        // ECMA-376 §17.4.66 tcPr children order: tcW → gridSpan → vMerge → tcBorders
         const parts: string[] = [];
         if (colWidthPcts) {
           let w = 0;
@@ -4691,6 +4996,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         }
         if (cs > 1) parts.push('<w:gridSpan w:val="' + cs + '"/>');
         if (rs > 1) parts.push('<w:vMerge w:val="restart"/>');
+        if (horizontalCellBorders) parts.push(horizontalCellBorders);
         if (parts.length > 0) tcPr = '<w:tcPr>' + parts.join('') + '</w:tcPr>';
       }
 
@@ -4940,6 +5246,17 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
           inner += style.includes('bold') ? '<w:b/>' : '<w:b w:val="0"/>';
           inner += style.includes('italic') ? '<w:i/>' : '<w:i w:val="0"/>';
           inner += style.includes('underline') ? '<w:u w:val="single"/>' : '<w:u w:val="none"/>';
+          // smallcaps/allcaps: mutually exclusive, and 'smallcaps' contains 'allcaps' as substring
+          if (style.includes('smallcaps')) {
+            inner += '<w:smallCaps/>';
+            inner += '<w:caps w:val="0"/>';
+          } else if (style.includes('allcaps')) {
+            inner += '<w:smallCaps w:val="0"/>';
+            inner += '<w:caps/>';
+          } else {
+            inner += '<w:smallCaps w:val="0"/>';
+            inner += '<w:caps w:val="0"/>';
+          }
         }
         const font = resolveAtIndex(fo.titleFonts, i);
         if (font) inner += '<w:rFonts w:ascii="' + escapeXml(font) + '" w:hAnsi="' + escapeXml(font) + '"/>';
@@ -4947,7 +5264,12 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
         if (sizeHp) inner += '<w:sz w:val="' + sizeHp + '"/><w:szCs w:val="' + sizeHp + '"/>';
         if (inner) rPr = '<w:rPr>' + inner + '</w:rPr>';
       }
-      body += '<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
+      const style = resolveAtIndex(fo?.titleStyles, i);
+      const wantsCenter = style && style.includes('center');
+      const titleStyleHasCenter = fo?.titleStyles?.[0]?.includes('center');
+      // Explicit left override needed when the shared Title style has centering but this paragraph does not
+      const jcEl = wantsCenter ? '<w:jc w:val="center"/>' : (titleStyleHasCenter ? '<w:jc w:val="left"/>' : '');
+      body += '<w:p><w:pPr><w:pStyle w:val="Title"/>' + jcEl + '</w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
     }
   }
 
@@ -4969,6 +5291,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   let preserveCloseForNextToken = false;
   // Track before-gap for each sentinel type (sequential index → blankLinesBefore)
   let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  let sentinelCsoIdx = 0, sentinelCscIdx = 0;
   const sentinelGaps: Record<string, number> = {};
   for (const token of tokens) {
     // Any close sentinel directly preceding any open sentinel skips the open's break
@@ -4984,6 +5307,31 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       body += BIBL_PLACEHOLDER;
       preserveCloseForNextToken = !!prevWasClose;
       prevToken = token;
+      continue;
+    }
+
+    // Custom style sentinels: update active custom style state (no OOXML output,
+    // just a state flag that generateParagraph reads).
+    if (token.customStyleOpen) {
+      // Validate that the style is declared in frontmatter
+      if (frontmatter?.styles && !frontmatter.styles[token.customStyleOpen]) {
+        state.warnings.push('Custom style "' + token.customStyleOpen + '" used in <!-- style: --> directive but not declared in frontmatter styles.');
+        prevToken = token;
+        continue;
+      }
+      if (token.blankLinesBefore !== undefined) sentinelGaps['cso' + sentinelCsoIdx] = token.blankLinesBefore;
+      if (token.blankLinesAfter !== undefined) sentinelGaps['csoa' + sentinelCsoIdx] = token.blankLinesAfter;
+      sentinelCsoIdx++;
+      state.activeCustomStyle = token.customStyleOpen;
+      preserveCloseForNextToken = !!prevWasClose;
+      continue;
+    }
+    if (token.customStyleClose) {
+      if (token.blankLinesBefore !== undefined) sentinelGaps['csc' + sentinelCscIdx] = token.blankLinesBefore;
+      if (token.blankLinesAfter !== undefined) sentinelGaps['csca' + sentinelCscIdx] = token.blankLinesAfter;
+      sentinelCscIdx++;
+      state.activeCustomStyle = undefined;
+      preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
 
@@ -5049,6 +5397,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (needsSep) {
         body += separatorParagraph;
       }
+    }
+    // Reset active list start override when leaving a list context
+    if (token.type !== 'list_item') {
+      state.activeListStartOverrides.clear();
     }
     if (token.type === 'table') {
       if (token.sourceFormat) {
@@ -5193,6 +5545,26 @@ export async function convertMdToDocx(
   // Create citeproc engine if CSL style specified in frontmatter
   let citeprocEngine: any;
   const earlyWarnings: string[] = [...parseWarnings];
+
+  // Detect custom style name collisions (e.g. 'my-heading' and 'my_heading' both → MsCustomMyHeading)
+  if (frontmatter.styles && Object.keys(frontmatter.styles).length > 1) {
+    const idToNames = new Map<string, string[]>();
+    for (const name of Object.keys(frontmatter.styles)) {
+      const sid = customStyleId(name);
+      const existing = idToNames.get(sid);
+      if (existing) existing.push(name);
+      else idToNames.set(sid, [name]);
+    }
+    for (const [sid, names] of idToNames) {
+      if (names.length > 1) {
+        earlyWarnings.push(
+          'Custom style names ' + names.map(n => '"' + n + '"').join(' and ') +
+          ' produce the same Word style ID "' + sid + '"; only the first definition will be used.'
+        );
+      }
+    }
+  }
+
   if (frontmatter.csl && bibEntries) {
     let styleName = frontmatter.csl;
 
@@ -5295,6 +5667,7 @@ export async function convertMdToDocx(
     rIdOffset,
     warnings: [...earlyWarnings],
     hasList: false,
+    listStartOverrides: [],
     hasComments: false,
     hasFootnotes: false,
     hasEndnotes: false,
@@ -5349,6 +5722,7 @@ export async function convertMdToDocx(
     portraitBreakOrdinals: new Set(),
     templateSectPr,
     sentinelGaps: {},
+    activeListStartOverrides: new Map(),
   };
 
   // Pre-scan footnote definitions for citation keys so the bibliography
@@ -5400,6 +5774,7 @@ export async function convertMdToDocx(
     }
     // Parse the definition body into tokens and generate OOXML
     const bodyTokens = parseMd(bodyText, state.warnings, frontmatter.breaks ?? false);
+    applyCustomStyleSentinels(bodyTokens, state.warnings);
     // Generate paragraph OOXML for the note body
     const selfRefTag = state.notesMode === 'endnotes' ? 'w:endnoteRef' : 'w:footnoteRef';
     const pStyle = state.notesMode === 'endnotes' ? 'EndnoteText' : 'FootnoteText';
@@ -5407,9 +5782,18 @@ export async function convertMdToDocx(
     let bodyXml = '';
     const paragraphPPr = '<w:pPr><w:pStyle w:val="' + pStyle + '"/></w:pPr>';
     const selfRefRun = '<w:r><w:rPr><w:rStyle w:val="' + refStyle + '"/></w:rPr><' + selfRefTag + '/></w:r>';
+    const savedCustomStyle = state.activeCustomStyle;
+    let isFirstContent = true;
     for (let ti = 0; ti < bodyTokens.length; ti++) {
       const t = bodyTokens[ti];
-      if (ti === 0) {
+      // Handle custom style sentinels inside footnotes
+      if (t.customStyleOpen) { state.activeCustomStyle = t.customStyleOpen; continue; }
+      if (t.customStyleClose) { state.activeCustomStyle = undefined; continue; }
+      const effectivePPr = (t.type === 'paragraph' && state.activeCustomStyle)
+        ? '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/></w:pPr>'
+        : paragraphPPr;
+      if (isFirstContent) {
+        isFirstContent = false;
         if (t.type === 'table') {
           if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
@@ -5426,7 +5810,7 @@ export async function convertMdToDocx(
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
-          bodyXml += '<w:p>' + paragraphPPr + selfRefRun + runs + '</w:p>';
+          bodyXml += '<w:p>' + effectivePPr + selfRefRun + runs + '</w:p>';
         }
       } else {
         if (t.type === 'table') {
@@ -5444,12 +5828,14 @@ export async function convertMdToDocx(
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
-          bodyXml += '<w:p>' + paragraphPPr + runs + '</w:p>';
+          bodyXml += '<w:p>' + effectivePPr + runs + '</w:p>';
         }
       }
     }
-    if (bodyTokens.length === 0) {
-      bodyXml = '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
+    state.activeCustomStyle = savedCustomStyle;
+    if (bodyTokens.length === 0 || isFirstContent) {
+      // No content tokens (empty body or all sentinels) — emit self-ref paragraph
+      if (!bodyXml) bodyXml = '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
     }
     state.footnoteEntries.push({ id: noteId, bodyXml });
   }
@@ -5535,7 +5921,8 @@ export async function convertMdToDocx(
   if (templateParts?.has('word/styles.xml') && fontOverrides) {
     let mutated = applyFontOverridesToTemplate(
       templateParts.get('word/styles.xml')!,
-      fontOverrides
+      fontOverrides,
+      frontmatter.styles
     );
     mutated = applyAlertColorsToTemplate(mutated, effectiveColors);
     zip.file('word/styles.xml', mutated);
@@ -5543,7 +5930,7 @@ export async function convertMdToDocx(
     const decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
     zip.file('word/styles.xml', applyAlertColorsToTemplate(decoded, effectiveColors));
   } else {
-    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors));
+    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles));
   }
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15
@@ -5554,12 +5941,15 @@ export async function convertMdToDocx(
   // Always include fontTable.xml
   zip.file('word/fontTable.xml', fontTableXml());
 
-  // Handle numbering - use template as base but ensure bullet/decimal definitions exist
+  // Handle numbering - use template as base but ensure bullet/decimal definitions exist.
+  // When listStartOverrides exist, we generate fresh numbering because the template
+  // numbering XML cannot be safely merged with override entries. Trade-off: any custom
+  // list formats in the template are discarded in this case.
   if (state.hasList) {
-    if (templateParts?.has('word/numbering.xml')) {
+    if (templateParts?.has('word/numbering.xml') && state.listStartOverrides.length === 0) {
       zip.file('word/numbering.xml', templateParts.get('word/numbering.xml')!);
     } else {
-      zip.file('word/numbering.xml', numberingXml());
+      zip.file('word/numbering.xml', numberingXml(state.listStartOverrides));
     }
   }
 
@@ -5635,6 +6025,12 @@ export async function convertMdToDocx(
   }
   if (frontmatter.tableFontSize !== undefined) {
     customProps.push({ name: 'MANUSCRIPT_EXPLICIT_TABLE_FONT_SIZE', value: '1' });
+  }
+  if (frontmatter.tableBorders) {
+    customProps.push({ name: 'MANUSCRIPT_TABLE_BORDERS', value: frontmatter.tableBorders });
+  }
+  if (frontmatter.styles && Object.keys(frontmatter.styles).length > 0) {
+    customProps.push(...chunkCustomProps('MANUSCRIPT_CUSTOM_STYLES_', JSON.stringify(frontmatter.styles)));
   }
   customProps.push(...frontmatterBlankLineProps(frontmatterBlankLines));
   customProps.push(...frontmatterFieldOrderProps(fieldOrder));

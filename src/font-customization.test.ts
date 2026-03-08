@@ -342,7 +342,52 @@ describe('Font customization unit tests', () => {
   });
 
   // ---------------------------------------------------------------
-  // 9. stylesXml TableParagraph style output
+  // 9. table-borders frontmatter
+  // ---------------------------------------------------------------
+  describe('table-borders frontmatter', () => {
+    it('parses table-borders: horizontal', () => {
+      const { metadata } = parseFrontmatter('---\ntable-borders: horizontal\n---\n');
+      expect(metadata.tableBorders).toBe('horizontal');
+    });
+
+    it('parses table-borders: solid', () => {
+      const { metadata } = parseFrontmatter('---\ntable-borders: solid\n---\n');
+      expect(metadata.tableBorders).toBe('solid');
+    });
+
+    it('parses table-borders: none', () => {
+      const { metadata } = parseFrontmatter('---\ntable-borders: none\n---\n');
+      expect(metadata.tableBorders).toBe('none');
+    });
+
+    it('is case insensitive', () => {
+      const { metadata } = parseFrontmatter('---\ntable-borders: Solid\n---\n');
+      expect(metadata.tableBorders).toBe('solid');
+    });
+
+    it('ignores invalid values', () => {
+      const { metadata } = parseFrontmatter('---\ntable-borders: dashed\n---\n');
+      expect(metadata.tableBorders).toBeUndefined();
+    });
+
+    it('serializes table-borders', () => {
+      const fm = serializeFrontmatter({ tableBorders: 'none' });
+      expect(fm).toContain('table-borders: none');
+    });
+
+    it('resolves tableBorders in FontOverrides', () => {
+      const overrides = resolveFontOverrides({ tableBorders: 'none' });
+      expect(overrides.tableBorders).toBe('none');
+    });
+
+    it('defaults to undefined in FontOverrides when not set', () => {
+      const overrides = resolveFontOverrides({});
+      expect(overrides.tableBorders).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // 10. stylesXml TableParagraph style output
   // ---------------------------------------------------------------
   describe('stylesXml TableParagraph', () => {
     it('includes TableParagraph when table overrides exist', () => {

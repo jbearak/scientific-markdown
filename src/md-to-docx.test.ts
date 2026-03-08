@@ -36,6 +36,7 @@ function makeState(): DocxGenState {
     rIdOffset: 5,
     warnings: [],
     hasList: false,
+    listStartOverrides: [],
     hasComments: false,
     hasFootnotes: false,
     hasEndnotes: false,
@@ -82,6 +83,7 @@ function makeState(): DocxGenState {
     blockquotePreContentBlankLines: new Map(),
     pipeTableAligned: new Map(),
     sentinelGaps: {},
+    activeListStartOverrides: new Map(),
   };
 }
 
@@ -1242,6 +1244,81 @@ describe('generateTable', () => {
     const { convertDocx } = await import('./converter');
     const result = await convertDocx(docx);
     expect(result.markdown).toContain('table-col-widths: auto');
+  });
+
+  describe('table-borders', () => {
+    const simpleRows: MdTableRow[] = [
+      { header: true, cells: [{ runs: [{ type: 'text', text: 'H' }] }] },
+      { header: false, cells: [{ runs: [{ type: 'text', text: 'D' }] }] },
+    ];
+
+    it('defaults to horizontal borders (grey insideH, no vertical)', () => {
+      const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
+      const result = generateTable(token, makeState());
+      expect(result).toContain('w:color="BFBFBF"');
+      expect(result).toContain('<w:insideV w:val="none"');
+      expect(result).toContain('<w:left w:val="none"');
+      expect(result).toContain('<w:right w:val="none"');
+    });
+
+    it('horizontal style adds black bottom border on last header row cells', () => {
+      const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
+      const result = generateTable(token, makeState());
+      expect(result).toContain('<w:tcBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tcBorders>');
+    });
+
+    it('solid borders: all borders single black', () => {
+      const state = makeState();
+      state.fontOverrides = { tableBorders: 'solid' };
+      const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
+      const result = generateTable(token, state);
+      expect(result).toContain('<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>');
+      expect(result).toContain('<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>');
+      expect(result).not.toContain('w:color="BFBFBF"');
+      expect(result).not.toContain('<w:tcBorders>');
+    });
+
+    it('none borders: all borders none', () => {
+      const state = makeState();
+      state.fontOverrides = { tableBorders: 'none' };
+      const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
+      const result = generateTable(token, state);
+      expect(result).toContain('<w:top w:val="none"');
+      expect(result).toContain('<w:insideH w:val="none"');
+      expect(result).toContain('<w:insideV w:val="none"');
+      expect(result).not.toContain('<w:tcBorders>');
+    });
+
+    it('cell margins include top/bottom padding', () => {
+      const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
+      const result = generateTable(token, makeState());
+      expect(result).toContain('<w:top w:w="36" w:type="dxa"/>');
+      expect(result).toContain('<w:bottom w:w="36" w:type="dxa"/>');
+    });
+
+    it('table-borders round-trips through DOCX', async () => {
+      const md = '---\ntable-borders: none\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const { docx } = await convertMdToDocx(md);
+      const { convertDocx } = await import('./converter');
+      const result = await convertDocx(docx);
+      expect(result.markdown).toContain('table-borders: none');
+    });
+
+    it('table-borders: solid round-trips through DOCX', async () => {
+      const md = '---\ntable-borders: solid\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const { docx } = await convertMdToDocx(md);
+      const { convertDocx } = await import('./converter');
+      const result = await convertDocx(docx);
+      expect(result.markdown).toContain('table-borders: solid');
+    });
+
+    it('table-borders: horizontal round-trips through DOCX', async () => {
+      const md = '---\ntable-borders: horizontal\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+      const { docx } = await convertMdToDocx(md);
+      const { convertDocx } = await import('./converter');
+      const result = await convertDocx(docx);
+      expect(result.markdown).toContain('table-borders: horizontal');
+    });
   });
 });
 

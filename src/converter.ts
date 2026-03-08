@@ -3,10 +3,11 @@ import { XMLParser } from 'fast-xml-parser';
 import { ommlToLatex } from './omml';
 import { resolveMarkdownColor } from './highlight-colors';
 import { wrapColoredHighlight } from './formatting';
-import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths } from './frontmatter';
+import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths, type CustomStyleDef } from './frontmatter';
 import { gfmAlertTitle, parseGfmAlertMarker, toGfmAlertMarker, type GfmAlertType } from './gfm';
 import { emuToPixels, isSupportedImageFormat, resolveImageFilename } from './image-utils';
 import { parseBibtex, mergeBibtex } from './bibtex-parser';
+import { customStyleId } from './md-to-docx';
 
 // --- Implementation notes ---
 // Table parsing:
@@ -171,6 +172,7 @@ function hasFormatting(fmt: RunFormatting): boolean {
 export interface ListMeta {
   type: 'bullet' | 'ordered';
   level: number; // 0-based indentation level
+  startNumber?: number; // ordered list start number (when ≠ 1)
 }
 
 export const DEFAULT_FORMATTING: Readonly<RunFormatting> = Object.freeze({
@@ -216,6 +218,14 @@ function escapeSensitiveHtmlLikeTags(text: string): string {
   });
 }
 
+/** Escape markdown-sensitive characters that would otherwise be interpreted as formatting. */
+function escapeMarkdownChars(text: string): string {
+  // Escape * which always triggers bold/italic in CommonMark.
+  // Do NOT escape _ (only triggers emphasis in flanking contexts — blanket escaping
+  // changes visible text) or ~ (rare, only triggers strikethrough with ~~).
+  return text.replace(/\*/g, '\\*');
+}
+
 export type RevisionInfo = { type: 'addition' | 'deletion'; author: string; date: string };
 
 export type ContentItem =
@@ -238,6 +248,7 @@ export type ContentItem =
       alertType?: GfmAlertType; // present for GitHub alert styles
       isCodeBlock?: boolean;   // true if Word "Code Block" paragraph style
       blockquoteGroupIndex?: number; // sequential group index from md→docx gap metadata
+      customStyleName?: string;      // user-defined custom style name (from MsCustomXxx pStyle)
     }
   | { type: 'math'; latex: string; display: boolean; commentIds: Set<string>; revision?: RevisionInfo }
   | { type: 'footnote_ref'; noteId: string; noteKind: 'footnote' | 'endnote'; commentIds: Set<string>; revision?: RevisionInfo }
@@ -247,7 +258,9 @@ export type ContentItem =
   | { type: 'landscape_close' }
   | { type: 'portrait_open' }
   | { type: 'portrait_close' }
-  | { type: 'bibliography_marker' };
+  | { type: 'bibliography_marker' }
+  | { type: 'custom_style_open'; styleName: string }
+  | { type: 'custom_style_close' };
 export interface FootnoteBody {
   id: string;
   content: ContentItem[];
@@ -258,7 +271,8 @@ interface NoteBodyContext {
   relationshipMap: Map<string, string>;
   zoteroCitations: ZoteroCitation[];
   keyMap: Map<string, string>;
-  numberingDefs: Map<string, Map<string, 'bullet' | 'ordered'>>;
+  numberingDefs: NumberingDefs;
+  numberingStartOverrides?: NumberingStartOverrides;
   format: CitationKeyFormat;
 }
 
@@ -355,24 +369,28 @@ export async function extractImageFormatMapping(data: Uint8Array | JSZip): Promi
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_IMAGE_FORMATS');
 }
 
-export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string, Map<string, 'bullet' | 'ordered'>>> {
-  const numberingDefs = new Map<string, Map<string, 'bullet' | 'ordered'>>();
+export type NumberingDefs = Map<string, Map<string, 'bullet' | 'ordered'>>;
+export type NumberingStartOverrides = Map<string, Map<string, number>>; // numId → ilvl → start
+
+export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: NumberingDefs; startOverrides: NumberingStartOverrides }> {
+  const numberingDefs: NumberingDefs = new Map();
+  const startOverrides: NumberingStartOverrides = new Map();
   const parsed = await readZipXml(zip, 'word/numbering.xml');
-  if (!parsed) { return numberingDefs; }
+  if (!parsed) { return { defs: numberingDefs, startOverrides }; }
 
   // Build abstractNumId → levels map
   const abstractNums = new Map<string, Map<string, 'bullet' | 'ordered'>>();
   for (const node of findAllDeep(parsed, 'w:abstractNum')) {
     const abstractNum = node['w:abstractNum'];
     if (!abstractNum) continue;
-    
+
     const abstractNumId = getAttr(node, 'abstractNumId');
     const levels = new Map<string, 'bullet' | 'ordered'>();
-    
+
     for (const lvlNode of findAllDeep(abstractNum, 'w:lvl')) {
       const lvl = lvlNode['w:lvl'];
       if (!lvl) continue;
-      
+
       const ilvl = getAttr(lvlNode, 'ilvl');
       const numFmtNodes = findAllDeep(lvl, 'w:numFmt');
       if (numFmtNodes.length > 0) {
@@ -380,15 +398,15 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string,
         levels.set(ilvl, val === 'bullet' ? 'bullet' : 'ordered');
       }
     }
-    
+
     abstractNums.set(abstractNumId, levels);
   }
 
-  // Resolve numId → abstractNumId
+  // Resolve numId → abstractNumId, and read lvlOverride/startOverride
   for (const node of findAllDeep(parsed, 'w:num')) {
     const num = node['w:num'];
     if (!num) continue;
-    
+
     const numId = getAttr(node, 'numId');
     const abstractNumIdNodes = findAllDeep(num, 'w:abstractNumId');
     if (abstractNumIdNodes.length > 0) {
@@ -398,9 +416,23 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<Map<string,
         numberingDefs.set(numId, levels);
       }
     }
+
+    // Read w:lvlOverride → w:startOverride
+    for (const lvlOverrideNode of findAllDeep(num, 'w:lvlOverride')) {
+      const ilvl = getAttr(lvlOverrideNode, 'ilvl');
+      const lvlOverride = lvlOverrideNode['w:lvlOverride'];
+      if (!lvlOverride) continue;
+      for (const startNode of findAllDeep(lvlOverride, 'w:startOverride')) {
+        const startVal = parseInt(getAttr(startNode, 'val'), 10);
+        if (!isNaN(startVal) && startVal !== 1) {
+          if (!startOverrides.has(numId)) startOverrides.set(numId, new Map());
+          startOverrides.get(numId)!.set(ilvl, startVal);
+        }
+      }
+    }
   }
-  
-  return numberingDefs;
+
+  return { defs: numberingDefs, startOverrides };
 }
 
 export function parseHeadingLevel(pPrChildren: any[]): number | undefined {
@@ -415,6 +447,23 @@ export function parseHeadingLevel(pPrChildren: any[]): number | undefined {
   }
 
   return undefined;
+}
+
+/** Detect a custom style (MsCustomXxx) and return the user-facing name, or undefined. */
+export function parseCustomStyleName(pPrChildren: any[], knownStyles?: Record<string, CustomStyleDef>): string | undefined {
+  const pStyleElement = pPrChildren.find(child => child['w:pStyle'] !== undefined);
+  if (!pStyleElement) return undefined;
+  const val = getAttr(pStyleElement, 'val');
+  if (!val.startsWith('MsCustom')) return undefined;
+  // Reverse-lookup: if we have the known styles map, find the name whose customStyleId matches
+  if (knownStyles) {
+    for (const name of Object.keys(knownStyles)) {
+      if (customStyleId(name) === val) return name;
+    }
+  }
+  // Fallback: derive name from PascalCase by lowering and inserting hyphens
+  const suffix = val.slice('MsCustom'.length);
+  return suffix.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
 export function parseTitleStyle(pPrChildren: any[]): boolean {
@@ -456,16 +505,16 @@ export function parseCodeBlockStyle(pPrChildren: any[]): boolean {
   return getAttr(pStyleElement, 'val').toLowerCase() === 'codeblock';
 }
 
-export function parseListMeta(pPrChildren: any[], numberingDefs: Map<string, Map<string, 'bullet' | 'ordered'>>): ListMeta | undefined {
+export function parseListMeta(pPrChildren: any[], numberingDefs: NumberingDefs, numberingStartOverrides?: NumberingStartOverrides): ListMeta | undefined {
   const numPrElement = pPrChildren.find(child => child['w:numPr'] !== undefined);
   if (!numPrElement) return undefined;
-  
+
   const numPr = numPrElement['w:numPr'];
   if (!Array.isArray(numPr)) return undefined;
-  
+
   let numId = '';
   let ilvl = '';
-  
+
   for (const child of numPr) {
     if (child['w:numId']) {
       numId = getAttr(child, 'val');
@@ -474,21 +523,23 @@ export function parseListMeta(pPrChildren: any[], numberingDefs: Map<string, Map
       ilvl = getAttr(child, 'val');
     }
   }
-  
+
   if (!numId || !ilvl) return undefined;
-  
+
   const levels = numberingDefs.get(numId);
   if (!levels) return undefined;
-  
+
   const type = levels.get(ilvl);
   if (!type) return undefined;
-  
+
   const level = parseInt(ilvl, 10);
   if (isNaN(level) || level < 0) return undefined;
 
+  const startNumber = numberingStartOverrides?.get(numId)?.get(ilvl);
   return {
     type,
-    level
+    level,
+    ...(startNumber !== undefined ? { startNumber } : {})
   };
 }
 
@@ -697,6 +748,10 @@ export function wrapWithFormatting(text: string, fmt: RunFormatting): string {
   }
 
   result = escapeSensitiveHtmlLikeTags(result);
+
+  // Escape markdown-sensitive characters so they round-trip faithfully.
+  // Only applies to non-code text (code is already fenced with backticks above).
+  result = escapeMarkdownChars(result);
 
   // If both superscript and subscript are true, superscript takes precedence
   if (fmt.superscript) {
@@ -1093,6 +1148,32 @@ export async function extractPortraitBreakOrdinals(data: Uint8Array | JSZip): Pr
   }
 }
 
+/** Extract custom style definitions from MANUSCRIPT_CUSTOM_STYLES_ custom property. */
+export async function extractCustomStyles(data: Uint8Array | JSZip): Promise<Record<string, CustomStyleDef> | null> {
+  const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_CUSTOM_STYLES');
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // Validate structure
+    const result: Record<string, CustomStyleDef> = {};
+    for (const [name, def] of Object.entries(parsed)) {
+      if (!def || typeof def !== 'object') continue;
+      const d = def as Record<string, unknown>;
+      const styleDef: CustomStyleDef = {};
+      if (typeof d.font === 'string') styleDef.font = d.font;
+      if (typeof d.fontSize === 'number') styleDef.fontSize = d.fontSize;
+      if (typeof d.fontStyle === 'string') styleDef.fontStyle = d.fontStyle;
+      if (typeof d.spacingBefore === 'number') styleDef.spacingBefore = d.spacingBefore;
+      if (typeof d.spacingAfter === 'number') styleDef.spacingAfter = d.spacingAfter;
+      result[name] = styleDef;
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function extractListIndent(data: Uint8Array | JSZip): Promise<'tab' | 'spaces' | null> {
   const zip = data instanceof JSZip ? data : await loadZip(data);
   const parsed = await readZipXml(zip, 'docProps/custom.xml');
@@ -1215,6 +1296,29 @@ export async function extractExplicitTableFontSize(data: Uint8Array | JSZip): Pr
     return true;
   }
   return false;
+}
+
+export async function extractTableBorders(data: Uint8Array | JSZip): Promise<'horizontal' | 'solid' | 'none' | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== 'MANUSCRIPT_TABLE_BORDERS') continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) return null;
+    for (const child of children) {
+      if (child?.['vt:lpwstr'] !== undefined) {
+        const val = nodeText(child['vt:lpwstr'] || []).trim();
+        if (val === 'horizontal' || val === 'solid' || val === 'none') return val;
+        return null;
+      }
+    }
+    return null;
+  }
+  return null;
 }
 
 /** Layer 2: read comma-separated bib key order from chunked MANUSCRIPT_BIB_KEY_ORDER_* custom props. */
@@ -1961,12 +2065,14 @@ export async function extractDocumentContent(
   zoteroCitations: ZoteroCitation[],
   keyMap: Map<string, string>,
   options?: {
-    numberingDefs?: Map<string, Map<string, 'bullet' | 'ordered'>>;
+    numberingDefs?: NumberingDefs;
+    numberingStartOverrides?: NumberingStartOverrides;
     relationshipMap?: Map<string, string>;
     replyIds?: Set<string>;
     imageRelationships?: Map<string, string>;
     imageFolder?: string;
     portraitBreakOrdinals?: Set<number>;
+    customStyles?: Record<string, CustomStyleDef>;
   }
 ): Promise<DocumentContentResult> {
   const zip = data instanceof JSZip ? data : await loadZip(data);
@@ -1975,7 +2081,9 @@ export async function extractDocumentContent(
 
   // Parse relationships and numbering definitions
   const relationshipMap = options?.relationshipMap ?? await parseRelationships(zip);
-  const numberingDefs = options?.numberingDefs ?? await parseNumberingDefinitions(zip);
+  const numberingResult = options?.numberingDefs ? { defs: options.numberingDefs, startOverrides: options.numberingStartOverrides ?? new Map() } : await parseNumberingDefinitions(zip);
+  const numberingDefs = numberingResult.defs;
+  const numberingStartOverrides = numberingResult.startOverrides;
   const replyIds = options?.replyIds;
   const imageRelMap = options?.imageRelationships ?? new Map<string, string>();
   const imageFolder = options?.imageFolder ?? '';
@@ -2267,6 +2375,7 @@ export async function extractDocumentContent(
           let blockquoteLevel: number | undefined;
           let alertType: GfmAlertType | undefined;
           let isCodeBlock = false;
+          let customStyle: string | undefined;
           let paraFormatting = currentFormatting;
           let isSpacerParagraph = false;
           let isSectionBreakHandled = false;
@@ -2343,11 +2452,12 @@ export async function extractDocumentContent(
               }
 
               headingLevel = parseHeadingLevel(pPrChildren);
-              listMeta = parseListMeta(pPrChildren, numberingDefs);
+              listMeta = parseListMeta(pPrChildren, numberingDefs, numberingStartOverrides);
               isTitle = parseTitleStyle(pPrChildren);
               blockquoteLevel = parseBlockquoteLevel(pPrChildren);
               alertType = parseAlertType(pPrChildren);
               isCodeBlock = parseCodeBlockStyle(pPrChildren);
+              customStyle = parseCustomStyleName(pPrChildren, options?.customStyles ?? undefined);
               const pRPrElement = pPrChildren.find(pprChild => pprChild['w:rPr'] !== undefined);
               if (pRPrElement) {
                 const pRPrChildren = Array.isArray(pRPrElement['w:rPr']) ? pRPrElement['w:rPr'] : [pRPrElement['w:rPr']];
@@ -2380,9 +2490,10 @@ export async function extractDocumentContent(
             prevItem.listMeta !== undefined ||
             prevItem.isTitle === true ||
             prevItem.blockquoteLevel !== undefined ||
-            prevItem.isCodeBlock === true
+            prevItem.isCodeBlock === true ||
+            prevItem.customStyleName !== undefined
           );
-          const needsPara = inTableCell || (headingLevel || listMeta || isTitle || blockquoteLevel || isCodeBlock)
+          const needsPara = inTableCell || (headingLevel || listMeta || isTitle || blockquoteLevel || isCodeBlock || customStyle)
             ? true
             : target.length > 0 && (prevItem!.type !== 'para' || prevIsCodeBlockPara || prevIsStructuralPara);
 
@@ -2395,6 +2506,7 @@ export async function extractDocumentContent(
             if (blockquoteLevel) paraItem.blockquoteLevel = blockquoteLevel;
             if (alertType) paraItem.alertType = alertType;
             if (isCodeBlock) paraItem.isCodeBlock = true;
+            if (customStyle) paraItem.customStyleName = customStyle;
             target.push(paraItem);
           }
           walk(paraChildren, paraFormatting, target, inTableCell, currentRevision);
@@ -2759,7 +2871,7 @@ function computeSegmentEnd(
   let idx = startIndex;
   while (idx < segment.length) {
     const item = segment[idx];
-    if (item.type === 'para' || item.type === 'table' || item.type === 'landscape_open' || item.type === 'landscape_close' || item.type === 'portrait_open' || item.type === 'portrait_close' || item.type === 'bibliography_marker') break;
+    if (item.type === 'para' || item.type === 'table' || item.type === 'landscape_open' || item.type === 'landscape_close' || item.type === 'portrait_open' || item.type === 'portrait_close' || item.type === 'bibliography_marker' || item.type === 'custom_style_open' || item.type === 'custom_style_close') break;
     if (opts?.stopBeforeDisplayMath && item.type === 'math' && item.display) break;
     idx++;
   }
@@ -2827,6 +2939,9 @@ function renderInlineRange(
     }
 
     if (item.type === 'math') {
+      // Check if this inline math is between bold/italic text items that share
+      // formatting. If so, the caller (text rendering below) already handled it
+      // as part of a formatting group. If not, emit standalone.
       const mathText = item.display ? MATH_FENCE + '\n' + item.latex + '\n' + MATH_FENCE : '$' + item.latex + '$';
       out += wrapWithRevision(mathText, item.revision);
       i++;
@@ -2936,13 +3051,65 @@ function renderInlineRange(
       i++;
       continue;
     }
-    let formattedText = wrapWithFormatting(item.text, item.formatting);
-    if (item.href) {
-      if (item.text !== item.href || hasFormatting(item.formatting)) {
-        formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
+
+    // Detect formatting groups: text items with bold/italic interspersed with
+    // inline math. Emit shared formatting markers around the entire group so
+    // that e.g. **Ex. 1: $y = Y$ and $k = 1$** stays as one bold run.
+    if ((item.formatting.bold || item.formatting.italic) && !item.revision && !item.href && item.commentIds.size === 0) {
+      // Look ahead: collect text+math items that form a formatting group
+      let groupEnd = i + 1;
+      while (groupEnd < segmentEnd) {
+        const next = segment[groupEnd];
+        if (next.type === 'math' && !next.display && !next.revision && next.commentIds.size === 0) {
+          groupEnd++;
+          continue;
+        }
+        if (next.type === 'text' && !next.revision && !next.href && next.commentIds.size === 0 &&
+            next.formatting.bold === item.formatting.bold &&
+            next.formatting.italic === item.formatting.italic &&
+            next.text !== '\\\n') {
+          groupEnd++;
+          continue;
+        }
+        break;
+      }
+      // Only use group rendering if there's actually math interspersed
+      const hasMathInGroup = groupEnd > i + 1 && segment.slice(i, groupEnd).some(it => it.type === 'math');
+      if (hasMathInGroup) {
+        // Render the group: apply bold/italic around everything, inner formatting per-text-item
+        let groupText = '';
+        for (let g = i; g < groupEnd; g++) {
+          const gItem = segment[g];
+          if (gItem.type === 'math' && !gItem.display) {
+            groupText += '$' + gItem.latex + '$';
+          } else if (gItem.type === 'text') {
+            // Apply inner formatting (everything except bold/italic which wraps the group)
+            const innerFmt: RunFormatting = { ...gItem.formatting, bold: false, italic: false };
+            groupText += wrapWithFormatting(gItem.text, innerFmt);
+          }
+        }
+        if (item.formatting.italic) groupText = '*' + groupText + '*';
+        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        out += groupText;
+        i = groupEnd;
+        continue;
       }
     }
-    out += wrapWithRevision(formattedText, item.revision);
+
+    if (item.href) {
+      // Bare URL autolink: if the link text equals the URL (no formatting), emit bare text.
+      // Bare email autolink: if href is mailto:text (no formatting), emit bare text.
+      const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
+      const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
+      if (isBareUrl || isBareEmail) {
+        out += wrapWithRevision(item.text, item.revision);
+      } else {
+        const formattedText = wrapWithFormatting(item.text, item.formatting);
+        out += wrapWithRevision('[' + formattedText + '](' + formatHrefForMarkdown(item.href) + ')', item.revision);
+      }
+    } else {
+      out += wrapWithRevision(wrapWithFormatting(item.text, item.formatting), item.revision);
+    }
     i++;
   }
   return { text: out, nextIndex: i, deferredComments: [] };
@@ -3159,13 +3326,58 @@ function renderInlineRangeWithIds(
       i++;
       continue;
     }
-    let formattedText = wrapWithFormatting(item.text, item.formatting);
-    if (item.href) {
-      if (item.text !== item.href || hasFormatting(item.formatting)) {
-        formattedText = `[${formattedText}](${formatHrefForMarkdown(item.href)})`;
+
+    // Detect formatting groups: text items with bold/italic interspersed with
+    // inline math (same logic as renderInlineRange).
+    if ((item.formatting.bold || item.formatting.italic) && !item.revision && !item.href && item.commentIds.size === 0) {
+      let groupEnd = i + 1;
+      while (groupEnd < segmentEnd) {
+        const next = segment[groupEnd];
+        if (next.type === 'math' && !next.display && !next.revision && next.commentIds.size === 0) {
+          groupEnd++;
+          continue;
+        }
+        if (next.type === 'text' && !next.revision && !next.href && next.commentIds.size === 0 &&
+            next.formatting.bold === item.formatting.bold &&
+            next.formatting.italic === item.formatting.italic &&
+            next.text !== '\\\n') {
+          groupEnd++;
+          continue;
+        }
+        break;
+      }
+      const hasMathInGroup = groupEnd > i + 1 && segment.slice(i, groupEnd).some(it => it.type === 'math');
+      if (hasMathInGroup) {
+        let groupText = '';
+        for (let g = i; g < groupEnd; g++) {
+          const gItem = segment[g];
+          if (gItem.type === 'math' && !gItem.display) {
+            groupText += '$' + gItem.latex + '$';
+          } else if (gItem.type === 'text') {
+            const innerFmt: RunFormatting = { ...gItem.formatting, bold: false, italic: false };
+            groupText += wrapWithFormatting(gItem.text, innerFmt);
+          }
+        }
+        if (item.formatting.italic) groupText = '*' + groupText + '*';
+        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        out += groupText;
+        i = groupEnd;
+        continue;
       }
     }
-    out += wrapWithRevision(formattedText, item.revision);
+
+    if (item.href) {
+      const isBareUrl = item.text === item.href && !hasFormatting(item.formatting);
+      const isBareEmail = item.href === 'mailto:' + item.text && !hasFormatting(item.formatting);
+      if (isBareUrl || isBareEmail) {
+        out += wrapWithRevision(item.text, item.revision);
+      } else {
+        const formattedText = wrapWithFormatting(item.text, item.formatting);
+        out += wrapWithRevision('[' + formattedText + '](' + formatHrefForMarkdown(item.href) + ')', item.revision);
+      }
+    } else {
+      out += wrapWithRevision(wrapWithFormatting(item.text, item.formatting), item.revision);
+    }
     i++;
   }
 
@@ -3786,6 +3998,9 @@ export function buildMarkdown(
   let i = 0;
   let tableIndex = 0;
   let lastListType: 'bullet' | 'ordered' | undefined;
+  let lastListLevel: number | undefined;
+  const listTypeByLevel = new Map<number, 'bullet' | 'ordered'>(); // per-level list type tracking
+  const orderedListCounters = new Map<number, number>(); // per-level counters for ordered list items
   let codeBlockGroupIndex = 0;
   let lastAlertParagraphKey: string | undefined;
   let pendingAlertPrefixStrip: GfmAlertType | undefined;
@@ -3816,6 +4031,7 @@ export function buildMarkdown(
   let skipNextPortraitClose = false;
   const sentinelGaps = options?.sentinelGaps;
   let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  let sentinelCsoIdx = 0, sentinelCscIdx = 0;
   // Emit separator before a sentinel using stored gap metadata.
   // Returns true if a gap-aware separator was emitted, false otherwise.
   function emitSentinelSep(gapKey: string): boolean {
@@ -3883,6 +4099,8 @@ export function buildMarkdown(
           output.push('\n\n');
         }
         lastListType = undefined;
+        lastListLevel = undefined;
+        listTypeByLevel.clear();
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
         pendingAlertInlineLevelForHardBreak = undefined;
@@ -4084,8 +4302,6 @@ export function buildMarkdown(
         }
       }
 
-      lastListType = isCurrentList ? item.listMeta!.type : undefined;
-
       // Capture previous blockquote group index BEFORE updating, so the
       // alert-marker logic below can detect same-type group boundaries.
       const prevBlockquoteGroupIndex = lastBlockquoteGroupIndex;
@@ -4126,9 +4342,32 @@ export function buildMarkdown(
           : item.listMeta.type === 'bullet'
             ? ' '.repeat(2 * item.listMeta.level)
             : ' '.repeat(3 * item.listMeta.level);
+        // For ordered lists: use per-level counters to handle nested lists correctly.
+        // startNumber is only applied at a new list boundary (not for continuation items
+        // that share the same numId override and thus all carry startNumber).
+        if (item.listMeta.type === 'ordered') {
+          // Check if the list at this level is continuing or new.
+          // `listTypeByLevel` tracks the list type at each nesting level independently,
+          // so returning from a nested sub-list (e.g. ordered → bullet → back to ordered)
+          // correctly identifies the parent ordered list as a continuation — without this,
+          // `lastListType` alone would see "bullet" and reset the counter to 1.
+          const levelType = listTypeByLevel.get(item.listMeta.level);
+          const isNewListContext = levelType !== 'ordered' && (!lastListType || lastListType !== 'ordered');
+          const isNewSubList = lastListLevel !== undefined && item.listMeta.level > lastListLevel;
+          if (item.listMeta.startNumber !== undefined && (isNewListContext || isNewSubList)) {
+            orderedListCounters.set(item.listMeta.level, item.listMeta.startNumber);
+          } else if (isNewListContext) {
+            orderedListCounters.set(item.listMeta.level, 1); // new list starts at 1
+          } else if (isNewSubList) {
+            orderedListCounters.set(item.listMeta.level, 1); // new nested sub-list starts at 1
+          }
+        }
+        listTypeByLevel.set(item.listMeta.level, item.listMeta.type);
+        const orderedNum = orderedListCounters.get(item.listMeta.level) ?? 1;
         const marker = item.listMeta.type === 'bullet'
           ? (useTab ? '-\t' : '- ')
-          : (useTab ? '1.\t' : '1. ');
+          : (useTab ? orderedNum + '.\t' : orderedNum + '. ');
+        if (item.listMeta.type === 'ordered') orderedListCounters.set(item.listMeta.level, orderedNum + 1);
         output.push(indent + marker);
       } else if (item.blockquoteLevel) {
         output.push('> '.repeat(item.blockquoteLevel));
@@ -4173,6 +4412,10 @@ export function buildMarkdown(
         pendingAlertPrefixStrip = undefined;
         pendingAlertInlineLevelForHardBreak = undefined;
       }
+
+      lastListType = isCurrentList ? item.listMeta!.type : undefined;
+      lastListLevel = isCurrentList ? item.listMeta!.level : undefined;
+      if (!isCurrentList) listTypeByLevel.clear();
 
       i++;
       continue;
@@ -4284,11 +4527,46 @@ export function buildMarkdown(
       }
       output.push('<!-- references -->');
       lastListType = undefined;
+      lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
       lastBlockquoteAlertType = undefined;
       lastBlockquoteLevel = undefined;
+      i++;
+      continue;
+    }
+
+    if (item.type === 'custom_style_open') {
+      const gapKey = 'cso' + sentinelCsoIdx;
+      sentinelCsoIdx++;
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
+        output.push(incomingSep);
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
+      }
+      output.push('<!-- style: ' + item.styleName + ' -->');
+      lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('cso', 'csoa');
+      i++;
+      continue;
+    }
+    if (item.type === 'custom_style_close') {
+      const gapKey = 'csc' + sentinelCscIdx;
+      sentinelCscIdx++;
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
+        output.push(incomingSep);
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
+      }
+      output.push('<!-- /style -->');
+      lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('csc', 'csca');
       i++;
       continue;
     }
@@ -4302,6 +4580,8 @@ export function buildMarkdown(
       output.push(item.revision ? wrapWithRevision(mathBlock, item.revision) : mathBlock);
       // A display math block breaks list flow; reset list continuation state.
       lastListType = undefined;
+      lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4330,11 +4610,11 @@ export function buildMarkdown(
           const prev = output[scanIdx - 1];
           const trimmedPrev = prev.trim();
           // Never hoist past structural sentinel comments
-          if (/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(trimmedPrev)) break;
+          if (/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(trimmedPrev)) break;
           if (/^<!--[\s\S]*?-->$/.test(trimmedPrev)) { scanIdx--; continue; }
           // Whitespace separator: skip only if it sits between two comments
           if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())
-              && !/^<!--\s*\/?(?:landscape|portrait|references|bibliography)\s*-->$/i.test(output[scanIdx - 2].trim())) {
+              && !/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(output[scanIdx - 2].trim())) {
             scanIdx--; continue;
           }
           break;
@@ -4351,6 +4631,8 @@ export function buildMarkdown(
       }
       tableIndex++;
       lastListType = undefined;
+      lastListLevel = undefined;
+      listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4827,13 +5109,36 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     return v === 'true' || v === '1' || v === 'on';
   }
 
-  function extractStyle(rpr: string): string {
+  function extractStyle(rpr: string, ppr?: string | null): string {
     const parts: string[] = [];
     if (isXmlToggleOn(rpr, 'w:b')) parts.push('bold');
     if (isXmlToggleOn(rpr, 'w:i')) parts.push('italic');
     // Underline: bare <w:u/> or any w:val except "none"
     if (rpr.includes('<w:u/>') || (rpr.includes('<w:u ') && !rpr.includes('w:val="none"'))) parts.push('underline');
+    if (isXmlToggleOn(rpr, 'w:smallCaps')) parts.push('smallcaps');
+    if (isXmlToggleOn(rpr, 'w:caps')) parts.push('allcaps');
+    // Center alignment from pPr (paragraph-level property)
+    if (ppr && ppr.includes('<w:jc w:val="center"/>')) parts.push('center');
     return parts.length > 0 ? parts.join('-') : 'normal';
+  }
+
+  /** Extract pPr content from a style block. */
+  function getStylePPr(styleId: string): string | null {
+    let searchFrom = 0;
+    while (true) {
+      const idx = stylesXml.indexOf('<w:style ', searchFrom);
+      if (idx === -1) return null;
+      const closeTag = stylesXml.indexOf('</w:style>', idx);
+      if (closeTag === -1) return null;
+      const block = stylesXml.substring(idx, closeTag + '</w:style>'.length);
+      if (block.includes('w:styleId="' + styleId + '"')) {
+        const pPrStart = block.indexOf('<w:pPr');
+        const pPrEnd = block.indexOf('</w:pPr>');
+        if (pPrStart !== -1 && pPrEnd !== -1) return block.substring(pPrStart, pPrEnd + '</w:pPr>'.length);
+        return null;
+      }
+      searchFrom = closeTag + '</w:style>'.length;
+    }
   }
 
   // Extract Normal (body) font for comparison
@@ -4860,7 +5165,7 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     if (rpr) {
       fonts.push(extractFont(rpr));
       sizes.push(extractSizeHp(rpr));
-      styles.push(extractStyle(rpr));
+      styles.push(extractStyle(rpr, getStylePPr(id)));
     } else {
       fonts.push(undefined);
       sizes.push(undefined);
@@ -4903,7 +5208,7 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     if (tFont && tFont !== bodyFont) result.titleFont = [tFont];
     const tSizeHp = extractSizeHp(titleRpr);
     if (tSizeHp !== undefined && tSizeHp !== 56) result.titleFontSize = [tSizeHp / 2];
-    const tStyle = extractStyle(titleRpr);
+    const tStyle = extractStyle(titleRpr, getStylePPr('Title'));
     if (tStyle !== 'normal') result.titleFontStyle = [tStyle];
   }
 
@@ -4925,6 +5230,44 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     }
   }
 
+  // Custom named styles: detect "Custom: ..." styles for fallback extraction
+  const extractedCustomStyles: Record<string, CustomStyleDef> = {};
+  let csSearchPos = 0;
+  while (true) {
+    const idx = stylesXml.indexOf('w:customStyle="1"', csSearchPos);
+    if (idx === -1) break;
+    // Find enclosing <w:style> block
+    const styleStart = stylesXml.lastIndexOf('<w:style ', idx);
+    const styleEnd = stylesXml.indexOf('</w:style>', idx);
+    if (styleStart === -1 || styleEnd === -1) { csSearchPos = idx + 17; continue; }
+    const block = stylesXml.substring(styleStart, styleEnd + '</w:style>'.length);
+    const nameMatch = block.match(/w:name\s+w:val="Custom:\s*([^"]+)"/);
+    if (!nameMatch) { csSearchPos = styleEnd + 10; continue; }
+    const styleName = nameMatch[1].trim();
+    const csStyleIdMatch = block.match(/w:styleId="([^"]+)"/);
+    const csStyleId = csStyleIdMatch ? csStyleIdMatch[1] : '';
+    const def: CustomStyleDef = {};
+    const csRpr = getStyleRPr(csStyleId);
+    if (csRpr) {
+      const f = extractFont(csRpr);
+      if (f && f !== bodyFont) def.font = f;
+      const s = extractSizeHp(csRpr);
+      if (s !== undefined) def.fontSize = s / 2;
+      const st = extractStyle(csRpr, getStylePPr(csStyleId));
+      if (st !== 'normal') def.fontStyle = st;
+    }
+    const csPpr = getStylePPr(csStyleId);
+    if (csPpr) {
+      const beforeMatch = csPpr.match(/w:before="(\d+)"/);
+      if (beforeMatch) def.spacingBefore = parseInt(beforeMatch[1], 10) / 20;
+      const afterMatch = csPpr.match(/w:after="(\d+)"/);
+      if (afterMatch) def.spacingAfter = parseInt(afterMatch[1], 10) / 20;
+    }
+    extractedCustomStyles[styleName] = def;
+    csSearchPos = styleEnd + 10;
+  }
+  if (Object.keys(extractedCustomStyles).length > 0) result.styles = extractedCustomStyles;
+
   return result;
 }
 
@@ -4934,7 +5277,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4970,6 +5313,8 @@ export async function convertDocx(
     extractHtmlCommentAfterGapMapping(zip),
     extractSentinelGapMapping(zip),
     extractDefaultTableColWidths(zip),
+    extractCustomStyles(zip),
+    extractTableBorders(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -5001,26 +5346,67 @@ export async function convertDocx(
   const keyMap = buildCitationKeyMap(zoteroCitations, format);
 
   // Parse note-specific rels and numbering for footnote/endnote body parsing
-  const [numberingDefs, docRelsParsed, fnRels, enRels] = await Promise.all([
+  const [numberingResult, docRelsParsed, fnRels, enRels] = await Promise.all([
     parseNumberingDefinitions(zip),
     parseDocumentRelationships(zip),
     parseRelationships(zip, 'word/_rels/footnotes.xml.rels'),
     parseRelationships(zip, 'word/_rels/endnotes.xml.rels'),
   ]);
+  const numberingDefs = numberingResult.defs;
+  const numberingStartOverrides = numberingResult.startOverrides;
   const docRels = docRelsParsed.hyperlinks;
   const imageRels = docRelsParsed.images;
 
   // Build note contexts with merged rels (note rels + document rels as fallback)
   const fnRelsMerged = new Map([...docRels, ...fnRels]);
   const enRelsMerged = new Map([...docRels, ...enRels]);
-  const fnContext: NoteBodyContext = { relationshipMap: fnRelsMerged, zoteroCitations, keyMap, numberingDefs, format };
-  const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, format };
+  const fnContext: NoteBodyContext = { relationshipMap: fnRelsMerged, zoteroCitations, keyMap, numberingDefs, numberingStartOverrides, format };
+  const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, numberingStartOverrides, format };
 
   const [{ content: docContent, zoteroBiblData, imageEntries }, footnotes, endnotes] = await Promise.all([
-    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined }),
+    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, numberingStartOverrides, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined }),
     extractFootnotes(zip, fnContext),
     extractEndnotes(zip, enContext),
   ]);
+
+  // Post-process: inject custom_style_open/custom_style_close sentinels around
+  // runs of paragraphs that share a customStyleName.
+  {
+    let activeStyle: string | undefined;
+    for (let i = 0; i < docContent.length; i++) {
+      const item = docContent[i];
+      // Only structural items (para, table, landscape/portrait sentinels,
+      // bibliography_marker) should trigger style transitions. Inline items
+      // (text, image, math, hardbreak, etc.) live inside a para and don't
+      // carry customStyleName — skip them to avoid premature style close.
+      const isStructural = item.type === 'para' || item.type === 'table'
+        || item.type === 'landscape_open' || item.type === 'landscape_close'
+        || item.type === 'portrait_open' || item.type === 'portrait_close'
+        || item.type === 'bibliography_marker';
+      if (!isStructural) continue;
+      const styleName = (item.type === 'para' && item.customStyleName) ? item.customStyleName : undefined;
+      if (styleName && styleName !== activeStyle) {
+        // Close previous style if open
+        if (activeStyle) {
+          docContent.splice(i, 0, { type: 'custom_style_close' });
+          i++; // skip past the close we just inserted
+        }
+        // Open new style
+        docContent.splice(i, 0, { type: 'custom_style_open', styleName });
+        i++; // skip past the open we just inserted
+        activeStyle = styleName;
+      } else if (!styleName && activeStyle) {
+        // Style run ended
+        docContent.splice(i, 0, { type: 'custom_style_close' });
+        i++; // skip past the close we just inserted
+        activeStyle = undefined;
+      }
+    }
+    // Close any still-open style at end of document
+    if (activeStyle) {
+      docContent.push({ type: 'custom_style_close' });
+    }
+  }
 
   // Build unified notes map with renumbered labels
   const notesMap = new Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>();
@@ -5150,6 +5536,10 @@ export async function convertDocx(
     const fontFields = extractFontOverridesFromStyles(stylesStr, { explicitTableFontSize });
     Object.assign(fm, fontFields);
   }
+  // Restore custom styles from custom property (primary source)
+  if (storedCustomStyles) {
+    fm.styles = storedCustomStyles;
+  }
   if (codeBlockStyling) {
     const bg = codeBlockStyling.get('bg');
     if (bg) fm.codeBackgroundColor = bg;
@@ -5171,6 +5561,10 @@ export async function convertDocx(
   if (defaultTableColWidths) {
     const parsed = parseColWidths(defaultTableColWidths);
     if (parsed) fm.tableColWidths = parsed;
+  }
+  // Reconstruct table-borders from stored custom property
+  if (storedTableBorders) {
+    fm.tableBorders = storedTableBorders;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {

@@ -27,6 +27,15 @@ export function noteTypeToNumber(nt: NoteType): number {
 
 export type NotesMode = 'footnotes' | 'endnotes';
 
+/** A user-defined custom paragraph style declared in the `styles:` frontmatter block. */
+export interface CustomStyleDef {
+  font?: string;
+  fontSize?: number;       // points
+  fontStyle?: string;      // normalized: bold-italic-...-center
+  spacingBefore?: number;  // points
+  spacingAfter?: number;   // points
+}
+
 /** Parse a value that may be a YAML inline array `[v1, v2, ...]` or bare comma-separated values. */
 export function parseInlineArray(value: string): string[] {
   let inner = value;
@@ -42,10 +51,10 @@ export function parseInlineArray(value: string): string[] {
 //    font-style, font-weight, and text-decoration are unfamiliar.
 // 3. Word only supports bold on/off (no numeric weights 100–900), so a
 //    separate font-weight field accepting numbers would be misleading.
-const VALID_STYLE_PARTS = new Set(['bold', 'italic', 'underline']);
-const CANONICAL_ORDER = ['bold', 'italic', 'underline'];
+const VALID_STYLE_PARTS = new Set(['bold', 'italic', 'underline', 'smallcaps', 'allcaps', 'center']);
+const CANONICAL_ORDER = ['bold', 'italic', 'underline', 'smallcaps', 'allcaps', 'center'];
 
-/** Validate and normalize a Font_Style value to canonical order (bold-italic-underline). */
+/** Validate and normalize a Font_Style value to canonical order (bold-italic-underline-smallcaps-allcaps-center). */
 export function normalizeFontStyle(raw: string): string | undefined {
   const lower = raw.toLowerCase().trim();
   if (!lower) return undefined;
@@ -54,6 +63,8 @@ export function normalizeFontStyle(raw: string): string | undefined {
   const unique = [...new Set(parts)];
   if (unique.length !== parts.length) return undefined;
   if (!unique.every(p => VALID_STYLE_PARTS.has(p))) return undefined;
+  // smallcaps and allcaps are mutually exclusive (Word only supports one at a time)
+  if (unique.includes('smallcaps') && unique.includes('allcaps')) return undefined;
   return unique.sort((a, b) => CANONICAL_ORDER.indexOf(a) - CANONICAL_ORDER.indexOf(b)).join('-');
 }
 
@@ -109,8 +120,10 @@ export interface Frontmatter {
   tableFont?: string;
   tableFontSize?: number;
   tableColWidths?: number[] | 'equal' | 'auto';
+  tableBorders?: 'horizontal' | 'solid' | 'none';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
+  styles?: Record<string, CustomStyleDef>;
   breaks?: boolean;
 }
 
@@ -176,7 +189,9 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
   const metadata: Frontmatter = {};
   const fieldOrder: string[] = [];
   const seenFields = new Set<string>();
-  for (const line of yamlBlock.split('\n')) {
+  const yamlLines = yamlBlock.split('\n');
+  for (let lineIdx = 0; lineIdx < yamlLines.length; lineIdx++) {
+    const line = yamlLines[lineIdx];
     const colonIdx = line.indexOf(':');
     if (colonIdx < 0) continue;
     const key = line.slice(0, colonIdx).trim();
@@ -185,6 +200,65 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
       seenFields.add(key);
       fieldOrder.push(key);
     }
+
+    // Handle nested `styles:` block specially
+    if (key === 'styles') {
+      const styles: Record<string, CustomStyleDef> = {};
+      let currentName: string | undefined;
+      let nameIndent = -1; // indent of the first style-name line (auto-detected)
+      // Scan subsequent indented lines
+      while (lineIdx + 1 < yamlLines.length) {
+        const nextLine = yamlLines[lineIdx + 1];
+        // Stop at non-indented lines (next top-level key or blank)
+        if (nextLine.length > 0 && !nextLine.startsWith(' ') && !nextLine.startsWith('\t')) break;
+        lineIdx++;
+        const trimmed = nextLine.trimStart();
+        if (!trimmed) continue; // skip blank lines within the block
+        const indent = nextLine.length - trimmed.length;
+        const innerColon = trimmed.indexOf(':');
+        if (innerColon < 0) continue;
+        const innerKey = trimmed.slice(0, innerColon).trim();
+        const innerVal = trimmed.slice(innerColon + 1).trim().replace(/^["']|["']$/g, '');
+        // Auto-detect the style-name indent level from the first indented line
+        if (nameIndent < 0) nameIndent = indent;
+        if (indent <= nameIndent) {
+          // Style name level
+          currentName = innerKey;
+          if (!styles[currentName]) styles[currentName] = {};
+        } else if (currentName) {
+          // Property level (4-space indent)
+          const def = styles[currentName];
+          switch (innerKey) {
+            case 'font':
+              if (innerVal) def.font = innerVal;
+              break;
+            case 'font-size': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n > 0) def.fontSize = n;
+              break;
+            }
+            case 'font-style': {
+              const norm = normalizeFontStyle(innerVal);
+              if (norm) def.fontStyle = norm;
+              break;
+            }
+            case 'spacing-before': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n >= 0) def.spacingBefore = n;
+              break;
+            }
+            case 'spacing-after': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n >= 0) def.spacingAfter = n;
+              break;
+            }
+          }
+        }
+      }
+      if (Object.keys(styles).length > 0) metadata.styles = styles;
+      continue;
+    }
+
     switch (key) {
       case 'title':
         if (!metadata.title) metadata.title = [];
@@ -313,6 +387,11 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         if (parsed) metadata.tableColWidths = parsed;
         break;
       }
+      case 'table-borders': {
+        const v = value.toLowerCase();
+        if (v === 'horizontal' || v === 'solid' || v === 'none') metadata.tableBorders = v;
+        break;
+      }
       case 'blockquote-style': {
         const style = normalizeBlockquoteStyle(value);
         if (style) metadata.blockquoteStyle = style;
@@ -379,6 +458,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'table-font': () => { if (metadata.tableFont) lines.push('table-font: ' + metadata.tableFont); },
     'table-font-size': () => { if (metadata.tableFontSize !== undefined) lines.push('table-font-size: ' + metadata.tableFontSize); },
     'table-col-widths': () => { if (metadata.tableColWidths) lines.push('table-col-widths: ' + (typeof metadata.tableColWidths === 'string' ? metadata.tableColWidths : metadata.tableColWidths.join(' '))); },
+    'table-borders': () => { if (metadata.tableBorders) lines.push('table-borders: ' + metadata.tableBorders); },
     'code-background-color': () => { if (metadata.codeBackgroundColor) lines.push('code-background-color: ' + metadata.codeBackgroundColor); },
     'code-background': () => emitters['code-background-color'](),
     'code-font-color': () => { if (metadata.codeFontColor) lines.push('code-font-color: ' + metadata.codeFontColor); },
@@ -388,6 +468,18 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'grid-table-max-line-width': () => { if (metadata.gridTableMaxLineWidth !== undefined) lines.push('grid-table-max-line-width: ' + metadata.gridTableMaxLineWidth); },
     'blockquote-style': () => { if (metadata.blockquoteStyle) lines.push('blockquote-style: ' + metadata.blockquoteStyle); },
     'colors': () => { if (metadata.colors) lines.push('colors: ' + metadata.colors); },
+    'styles': () => {
+      if (!metadata.styles || Object.keys(metadata.styles).length === 0) return;
+      lines.push('styles:');
+      for (const [name, def] of Object.entries(metadata.styles)) {
+        lines.push('  ' + name + ':');
+        if (def.font) lines.push('    font: ' + def.font);
+        if (def.fontSize !== undefined) lines.push('    font-size: ' + def.fontSize);
+        if (def.fontStyle) lines.push('    font-style: ' + def.fontStyle);
+        if (def.spacingBefore !== undefined) lines.push('    spacing-before: ' + def.spacingBefore);
+        if (def.spacingAfter !== undefined) lines.push('    spacing-after: ' + def.spacingAfter);
+      }
+    },
     'breaks': () => { if (metadata.breaks !== undefined) lines.push('breaks: ' + metadata.breaks); },
   };
 
@@ -397,10 +489,10 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'bibliography', 'font', 'code-font', 'font-size', 'code-font-size',
     'header-font', 'header-font-size', 'header-font-style',
     'title-font', 'title-font-size', 'title-font-style',
-    'table-font', 'table-font-size', 'table-col-widths',
+    'table-font', 'table-font-size', 'table-col-widths', 'table-borders',
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
-    'blockquote-style', 'colors', 'breaks',
+    'blockquote-style', 'colors', 'styles', 'breaks',
   ];
 
   const aliasToCanonical: Record<string, string> = {

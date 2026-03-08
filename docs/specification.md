@@ -46,9 +46,10 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `table-font` | Table font family. Falls back to `font` if not set. |
 | `table-font-size` | Table font size in points. When `font-size` is specified without `table-font-size`, the table font size is automatically set to 2pt less than the body font size. |
 | `table-col-widths` | Column width ratios for tables. Accepts space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), `equal`, or `auto`. Last value repeats for tables with more columns. Default: `auto` (Word auto-sizing). |
+| `table-borders` | Table border style: `horizontal` (gray row separators, default), `solid` (all borders), or `none`. |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
-| `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `normal`, or hyphenated combinations (e.g., `bold-italic`). Default: `bold`. |
+| `header-font-style` | Heading font styles. Default: `bold`. See [valid font style values](#heading-and-title-font-configuration) below. |
 | `title-font` | Title paragraph font family. Accepts a single value or a comma-separated list (one per title paragraph). Falls back to `font` if not set. |
 | `title-font-size` | Title paragraph font sizes in points. Accepts a single value or a comma-separated list. |
 | `title-font-style` | Title paragraph font styles. Same values as `header-font-style`. No default style. |
@@ -58,6 +59,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `blockquote-style` | Word paragraph style for blockquotes: `Quote`, `IntenseQuote`, or `GitHub` (gray left border bar). Case-insensitive. Default: `GitHub`. Overrides the VS Code setting. |
 | `pipe-table-max-line-width` | Maximum line width for pipe tables in DOCX→MD conversion. Tables wider than this fall back to HTML. `0` disables pipe tables entirely. Default: `120`. Overrides the VS Code `pipeTableMaxLineWidth` setting but is itself overridden by the CLI `--pipe-table-max-line-width` flag. |
 | `breaks` | When `true`, bare newlines within a paragraph are treated as hard line breaks (`<w:br/>`) in DOCX output. When `false` (default), bare newlines are soft breaks rendered as spaces — use a trailing `\` for an explicit hard line break. See [Line Breaks](#line-breaks). |
+| `styles` | Custom paragraph style definitions. A YAML map of style names to property objects. See [Custom Styles](#custom-styles). |
 
 ### Heading and Title Font Configuration
 
@@ -109,7 +111,7 @@ title: [Main Title, Subtitle]
 ---
 ```
 
-Valid font style values: `bold`, `italic`, `underline`, `normal`, and any hyphenated combination of `bold`, `italic`, and `underline` in any order (e.g., `bold-italic`, `italic-underline-bold`). Hyphenated combinations are order-independent.
+Valid font style values: `bold`, `italic`, `underline`, `smallcaps`, `allcaps`, `center`, `normal`, or hyphenated combinations (e.g., `bold-italic`, `bold-center`, `bold-smallcaps`). `smallcaps` and `allcaps` are mutually exclusive. `normal` means no bold, no italic, no underline — useful for headings, which default to bold. `normal` may only appear alone (not in hyphenated combinations). Hyphenated combinations are order-independent.
 
 ### Font Customization Example
 
@@ -274,6 +276,58 @@ To disable the colored background and use indentation-based inset mode:
 code-background-color: none
 ---
 ```
+
+### Custom Styles
+
+The `styles` frontmatter field defines custom paragraph styles that can be applied to blocks of content using HTML comment directives. Each style is a named map of typographic properties:
+
+```yaml
+---
+styles:
+  epigraph:
+    font: Palatino
+    font-size: 10
+    font-style: italic
+    spacing-before: 12
+    spacing-after: 12
+  block-title:
+    font-style: bold-smallcaps-center
+    spacing-before: 6
+    spacing-after: 3
+---
+```
+
+#### Style Properties
+
+| Property | Description |
+|----------|-------------|
+| `font` | Font family. |
+| `font-size` | Font size in points. |
+| `font-style` | Same [font style values](#heading-and-title-font-configuration) as `header-font-style`. Since custom styles inherit from Normal, the default is already non-bold — `normal` is rarely needed here. |
+| `spacing-before` | Spacing before the paragraph in points. |
+| `spacing-after` | Spacing after the paragraph in points. |
+
+All properties are optional. Unspecified properties inherit from the Normal style.
+
+#### Block Directive Syntax
+
+Apply a custom style to a range of paragraphs using `<!-- style: name -->` / `<!-- /style -->` fencing, analogous to orientation fences:
+
+```markdown
+<!-- style: epigraph -->
+
+The mind is not a vessel to be filled, but a fire to be kindled.
+
+— Plutarch
+
+<!-- /style -->
+```
+
+All paragraphs between the opening and closing directives receive the named style. Nested style directives are not supported — opening a new style implicitly closes the previous one (with a warning).
+
+#### Round-Trip
+
+Custom styles are preserved through DOCX round-trips. On export, each style is created as a Word paragraph style (basedOn Normal) with a `MsCustomXxx` style ID. The style definitions are stored in the `MANUSCRIPT_CUSTOM_STYLES` custom property in `docProps/custom.xml`. On import, the custom property is read back and the style definitions are emitted in the frontmatter `styles` block, with `<!-- style: name -->` / `<!-- /style -->` directives re-emitted around the styled paragraphs.
 
 ## Standard Markdown
 
