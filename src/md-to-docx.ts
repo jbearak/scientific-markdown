@@ -2606,6 +2606,7 @@ export interface DocxGenState {
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
   activeCustomStyle?: string; // currently active <!-- style: X --> block name
+  activeListStartOverride?: { numId: number; ilvl: number }; // override numId for current ordered list with start ≠ 1
 }
 
 interface CommentEntry {
@@ -3155,9 +3156,9 @@ export function applyFontOverridesToTemplate(
       // Replace existing custom style or inject new one
       const existingRe = new RegExp('<w:style\\b[^>]*w:styleId="' + sid + '"[^>]*>[\\s\\S]*?</w:style>\\n?');
       if (existingRe.test(xml)) {
-        xml = xml.replace(existingRe, newStyleXml);
+        xml = xml.replace(existingRe, () => newStyleXml);
       } else {
-        xml = xml.replace('</w:styles>', newStyleXml + '</w:styles>');
+        xml = xml.replace('</w:styles>', () => newStyleXml + '</w:styles>');
       }
     }
   }
@@ -3209,10 +3210,11 @@ export function applyAlertColorsToTemplate(stylesXml: string, scheme: ColorSchem
 
 /** Convert a user-defined style name to a Word style ID: 'my-heading' → 'MsCustomMyHeading'. */
 export function customStyleId(name: string): string {
-  return 'MsCustom' + name
+  return ('MsCustom' + name
     .split(/[-_\s]+/)
     .map(s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
-    .join('');
+    .join('')
+  ).replace(/[^A-Za-z0-9]/g, '');
 }
 
 /** Convert a user-defined style name to a Word display name: 'my-heading' → 'Custom: my-heading'. */
@@ -3234,7 +3236,7 @@ function customStyleXml(
   let spacingParts = '';
   const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
   const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
-  if (beforeTwips) spacingParts += ' w:before="' + beforeTwips + '"';
+  if (beforeTwips !== undefined) spacingParts += ' w:before="' + beforeTwips + '"';
   if (afterTwips !== undefined) spacingParts += ' w:after="' + afterTwips + '"';
   const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
   const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
@@ -4625,6 +4627,10 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
           const overrideNumId = 3 + state.listStartOverrides.length; // numIds 1,2 are reserved
           state.listStartOverrides.push({ numId: overrideNumId, ilvl, start: token.startNumber });
           numId = String(overrideNumId);
+          state.activeListStartOverride = { numId: overrideNumId, ilvl };
+        } else if (token.ordered && state.activeListStartOverride && ilvl === state.activeListStartOverride.ilvl) {
+          // Subsequent items in the same restarted list share the override numId
+          numId = String(state.activeListStartOverride.numId);
         }
         pPr = '<w:pPr><w:numPr><w:ilvl w:val="' + ilvl + '"/><w:numId w:val="' + numId + '"/></w:numPr></w:pPr>';
         state.hasList = true;
@@ -5227,7 +5233,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
         if (inner) rPr = '<w:rPr>' + inner + '</w:rPr>';
       }
       const style = resolveAtIndex(fo?.titleStyles, i);
-      const jcEl = style && style.includes('center') ? '<w:jc w:val="center"/>' : '';
+      const wantsCenter = style && style.includes('center');
+      const titleStyleHasCenter = fo?.titleStyles?.[0]?.includes('center');
+      // Explicit left override needed when the shared Title style has centering but this paragraph does not
+      const jcEl = wantsCenter ? '<w:jc w:val="center"/>' : (titleStyleHasCenter ? '<w:jc w:val="left"/>' : '');
       body += '<w:p><w:pPr><w:pStyle w:val="Title"/>' + jcEl + '</w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
     }
   }
@@ -5350,6 +5359,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (needsSep) {
         body += separatorParagraph;
       }
+    }
+    // Reset active list start override when leaving a list context
+    if (token.type !== 'list_item') {
+      state.activeListStartOverride = undefined;
     }
     if (token.type === 'table') {
       if (token.sourceFormat) {

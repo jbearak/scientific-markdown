@@ -284,14 +284,14 @@ describe('Custom Styles — OOXML Generation', () => {
     expect(block).not.toContain('<w:caps/>');
   });
 
-  it('spacingBefore: 0 does not emit w:before="0", but spacingAfter: 0 emits w:after="0"', () => {
+  it('spacingBefore: 0 and spacingAfter: 0 both emit explicit zero values', () => {
     const customStyles: Record<string, CustomStyleDef> = {
       tight: { spacingBefore: 0, spacingAfter: 0 },
     };
     const xml = getStylesXmlWithCustom(customStyles);
     const block = extractStyleBlock(xml, 'MsCustomTight');
     expect(block).not.toBeNull();
-    expect(block).not.toContain('w:before="0"');
+    expect(block).toContain('w:before="0"');
     expect(block).toContain('w:after="0"');
   });
 

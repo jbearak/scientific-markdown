@@ -48,7 +48,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `table-col-widths` | Column width ratios for tables. Accepts space-separated (`2 1 1`), comma-separated (`2,1,1`), array (`[2, 1, 1]`), `equal`, or `auto`. Last value repeats for tables with more columns. Default: `auto` (Word auto-sizing). |
 | `header-font` | Heading font family. Accepts a single value or a comma-separated list for per-level control (H1–H6). Falls back to `font` if not set. |
 | `header-font-size` | Heading font sizes in points. Accepts a single value or a comma-separated list. Overrides proportional scaling from `font-size`. |
-| `header-font-style` | Heading font styles. Values: `bold`, `italic`, `underline`, `smallcaps`, `allcaps`, `center`, `normal`, or hyphenated combinations (e.g., `bold-italic`, `bold-center`, `bold-smallcaps`). `smallcaps` and `allcaps` are mutually exclusive. Default: `bold`. |
+| `header-font-style` | Heading font styles. Default: `bold`. See [valid font style values](#heading-and-title-font-configuration) below. |
 | `title-font` | Title paragraph font family. Accepts a single value or a comma-separated list (one per title paragraph). Falls back to `font` if not set. |
 | `title-font-size` | Title paragraph font sizes in points. Accepts a single value or a comma-separated list. |
 | `title-font-style` | Title paragraph font styles. Same values as `header-font-style`. No default style. |
@@ -302,7 +302,7 @@ styles:
 |----------|-------------|
 | `font` | Font family. |
 | `font-size` | Font size in points. |
-| `font-style` | Style values: `bold`, `italic`, `underline`, `smallcaps`, `allcaps`, `center`, `normal`, or hyphenated combinations (e.g., `bold-italic`, `bold-center`, `bold-smallcaps`). `normal` means no bold, no italic, no underline — since custom styles inherit from Normal, this is the default and rarely needed. Same values as `header-font-style`. |
+| `font-style` | Same [font style values](#heading-and-title-font-configuration) as `header-font-style`. Since custom styles inherit from Normal, the default is already non-bold — `normal` is rarely needed here. |
 | `spacing-before` | Spacing before the paragraph in points. |
 | `spacing-after` | Spacing after the paragraph in points. |
 

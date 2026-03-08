@@ -3992,7 +3992,8 @@ export function buildMarkdown(
   let i = 0;
   let tableIndex = 0;
   let lastListType: 'bullet' | 'ordered' | undefined;
-  let orderedListCounter = 1; // tracks next number for ordered list items
+  let lastListLevel: number | undefined;
+  const orderedListCounters = new Map<number, number>(); // per-level counters for ordered list items
   let codeBlockGroupIndex = 0;
   let lastAlertParagraphKey: string | undefined;
   let pendingAlertPrefixStrip: GfmAlertType | undefined;
@@ -4091,6 +4092,7 @@ export function buildMarkdown(
           output.push('\n\n');
         }
         lastListType = undefined;
+        lastListLevel = undefined;
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
         pendingAlertInlineLevelForHardBreak = undefined;
@@ -4292,8 +4294,6 @@ export function buildMarkdown(
         }
       }
 
-      lastListType = isCurrentList ? item.listMeta!.type : undefined;
-
       // Capture previous blockquote group index BEFORE updating, so the
       // alert-marker logic below can detect same-type group boundaries.
       const prevBlockquoteGroupIndex = lastBlockquoteGroupIndex;
@@ -4334,19 +4334,25 @@ export function buildMarkdown(
           : item.listMeta.type === 'bullet'
             ? ' '.repeat(2 * item.listMeta.level)
             : ' '.repeat(3 * item.listMeta.level);
-        // For ordered lists: use startNumber for the first item, then increment
+        // For ordered lists: use per-level counters to handle nested lists correctly.
+        // startNumber is only applied at a new list boundary (not for continuation items
+        // that share the same numId override and thus all carry startNumber).
         if (item.listMeta.type === 'ordered') {
-          if (item.listMeta.startNumber !== undefined) {
-            orderedListCounter = item.listMeta.startNumber;
-          } else if (!lastListType || lastListType !== 'ordered') {
-            orderedListCounter = 1; // new list starts at 1
+          const isNewListContext = !lastListType || lastListType !== 'ordered';
+          const isNewSubList = lastListLevel !== undefined && item.listMeta.level > lastListLevel;
+          if (item.listMeta.startNumber !== undefined && (isNewListContext || isNewSubList)) {
+            orderedListCounters.set(item.listMeta.level, item.listMeta.startNumber);
+          } else if (isNewListContext) {
+            orderedListCounters.set(item.listMeta.level, 1); // new list starts at 1
+          } else if (isNewSubList) {
+            orderedListCounters.set(item.listMeta.level, 1); // new nested sub-list starts at 1
           }
         }
-        const orderedNum = orderedListCounter;
+        const orderedNum = orderedListCounters.get(item.listMeta.level) ?? 1;
         const marker = item.listMeta.type === 'bullet'
           ? (useTab ? '-\t' : '- ')
           : (useTab ? orderedNum + '.\t' : orderedNum + '. ');
-        if (item.listMeta.type === 'ordered') orderedListCounter++;
+        if (item.listMeta.type === 'ordered') orderedListCounters.set(item.listMeta.level, orderedNum + 1);
         output.push(indent + marker);
       } else if (item.blockquoteLevel) {
         output.push('> '.repeat(item.blockquoteLevel));
@@ -4391,6 +4397,9 @@ export function buildMarkdown(
         pendingAlertPrefixStrip = undefined;
         pendingAlertInlineLevelForHardBreak = undefined;
       }
+
+      lastListType = isCurrentList ? item.listMeta!.type : undefined;
+      lastListLevel = isCurrentList ? item.listMeta!.level : undefined;
 
       i++;
       continue;
@@ -4502,6 +4511,7 @@ export function buildMarkdown(
       }
       output.push('<!-- references -->');
       lastListType = undefined;
+      lastListLevel = undefined;
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4553,6 +4563,7 @@ export function buildMarkdown(
       output.push(item.revision ? wrapWithRevision(mathBlock, item.revision) : mathBlock);
       // A display math block breaks list flow; reset list continuation state.
       lastListType = undefined;
+      lastListLevel = undefined;
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
@@ -4602,6 +4613,7 @@ export function buildMarkdown(
       }
       tableIndex++;
       lastListType = undefined;
+      lastListLevel = undefined;
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
       pendingAlertInlineLevelForHardBreak = undefined;
