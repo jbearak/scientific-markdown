@@ -5620,12 +5620,8 @@ export async function convertMdToDocx(
     }
 
     citeprocEngine = result.engine;
-    // Register all bib entries so makeCitationCluster() can resolve items
-    // during inline citation rendering. After document generation,
-    // updateItems() is called again with only cited keys for the bibliography.
-    if (citeprocEngine && bibEntries) {
-      citeprocEngine.updateItems([...bibEntries.keys()]);
-    }
+    // updateItems() is deferred until after the cited-keys pre-scan below
+    // so that citation numbers reflect document order, not bib-file order.
   }
 
   // Extract template parts if provided
@@ -5725,12 +5721,12 @@ export async function convertMdToDocx(
     activeListStartOverrides: new Map(),
   };
 
-  // Pre-scan footnote definitions for citation keys so the bibliography
-  // (generated inside generateDocumentXml) includes footnote-only citations.
-  if (bibEntries && footnoteDefs.size > 0) {
-    for (const [, bodyText] of footnoteDefs) {
-      const bodyTokens = parseMd(bodyText);
-      for (const token of bodyTokens) {
+  // Pre-scan all tokens (main document + footnotes) for citation keys so
+  // updateItems() registers only cited entries.  This ensures numeric styles
+  // assign citation numbers by document order, not bib-file order.
+  if (bibEntries) {
+    const collectCitedKeys = (tokenList: MdToken[]) => {
+      for (const token of tokenList) {
         for (const run of token.runs) {
           if (run.type === 'citation' && run.keys) {
             for (const k of run.keys) {
@@ -5752,7 +5748,17 @@ export async function convertMdToDocx(
           }
         }
       }
+    };
+    collectCitedKeys(tokens);
+    for (const [, bodyText] of footnoteDefs) {
+      collectCitedKeys(parseMd(bodyText));
     }
+  }
+
+  // Register only cited keys with citeproc so citation numbers reflect
+  // document order (not bib-file order) for numeric styles.
+  if (citeprocEngine && state.citedKeys.size > 0) {
+    citeprocEngine.updateItems([...state.citedKeys]);
   }
 
   // Resolve effective blockquote style: frontmatter > options > default
