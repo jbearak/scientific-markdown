@@ -1484,6 +1484,36 @@ function applyCustomStyleSentinels(tokens: MdToken[], warnings?: string[]): void
     const run = tokens[i].runs[0];
     if (run.type !== 'html_comment') continue;
     const text = run.text.trim();
+
+    // Single-line inline style: <!-- style: X -->content<!-- /style -->
+    const inlineMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->([\s\S]*?)<!--\s*\/style\s*-->$/i);
+    if (inlineMatch) {
+      if (activeStyle && warnings) {
+        warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
+      }
+      const styleName = inlineMatch[1];
+      const content = inlineMatch[2];
+
+      const openSentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: styleName };
+      openSentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+
+      // Re-parse content to recover inline formatting (bold, italic, links, etc.)
+      const md = createMarkdownIt();
+      const contentRuns = convertInlineTokens(md.parseInline(content, {}));
+      const contentToken: MdToken = {
+        type: 'paragraph',
+        runs: contentRuns.length > 0 ? contentRuns : [{ type: 'text', text: content }]
+      };
+
+      const closeSentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+      closeSentinel.blankLinesAfter = tokens[i].blankLinesAfter;
+
+      tokens.splice(i, 1, openSentinel, contentToken, closeSentinel);
+      i += 2; // skip past all three (loop's i++ handles the third)
+      activeStyle = undefined; // self-contained block, not open
+      continue;
+    }
+
     const openMatch = text.match(/^<!--\s*style:\s*(.+?)\s*-->$/i);
     if (openMatch) {
       if (activeStyle && warnings) {

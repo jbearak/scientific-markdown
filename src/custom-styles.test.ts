@@ -206,6 +206,33 @@ describe('Custom Styles — parseMd Sentinels', () => {
     expect(open!.customStyleOpen).toBe('My Custom Style');
   });
 
+  it('single-line inline style → open + paragraph + close sentinels', () => {
+    const tokens = parseMd('<!-- style: caption -->Table 1. Content<!-- /style -->');
+    const open = tokens.find(t => t.customStyleOpen);
+    expect(open).toBeDefined();
+    expect(open!.customStyleOpen).toBe('caption');
+    const close = tokens.find(t => t.customStyleClose);
+    expect(close).toBeDefined();
+    expect(close!.customStyleClose).toBe(true);
+    // Content paragraph should be between sentinels
+    const openIdx = tokens.indexOf(open!);
+    const closeIdx = tokens.indexOf(close!);
+    expect(closeIdx).toBe(openIdx + 2);
+    const contentToken = tokens[openIdx + 1];
+    expect(contentToken.type).toBe('paragraph');
+    expect(contentToken.runs.some(r => r.type === 'text' && r.text.includes('Table 1. Content'))).toBe(true);
+  });
+
+  it('single-line inline style with formatted content preserves runs', () => {
+    const tokens = parseMd('<!-- style: caption -->**Bold** and *italic*<!-- /style -->');
+    const open = tokens.find(t => t.customStyleOpen);
+    expect(open).toBeDefined();
+    const openIdx = tokens.indexOf(open!);
+    const contentToken = tokens[openIdx + 1];
+    expect(contentToken.runs.some(r => r.bold && r.text === 'Bold')).toBe(true);
+    expect(contentToken.runs.some(r => r.italic && r.text === 'italic')).toBe(true);
+  });
+
   it('multiple style blocks → correct sentinel sequence', () => {
     const md = [
       '<!-- style: alpha -->',
