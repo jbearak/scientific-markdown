@@ -6,7 +6,7 @@ import { PARA_PLACEHOLDER, preprocessCriticMarkup, findMatchingClose } from '../
 import { wrapBareLatexEnvironments } from '../latex-env-preprocess';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
 import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
-import { parseFrontmatter, type ColorScheme } from '../frontmatter';
+import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
 
 /** Escape HTML special characters for use in attribute values */
@@ -1021,6 +1021,27 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
       }
       css += 'h' + (i + 1) + ' { ' + rules.join('; ') + '; }\n';
     }
+    // Custom named styles CSS
+    if (metadata.styles) {
+      for (const [name, def] of Object.entries(metadata.styles)) {
+        const safeName = name.replace(/[^a-zA-Z0-9-]/g, '-');
+        const csRules: string[] = [];
+        if (def.font) csRules.push('font-family: "' + def.font + '"');
+        if (def.fontSize !== undefined) csRules.push('font-size: ' + def.fontSize + 'pt');
+        const fs = def.fontStyle ?? '';
+        if (fs.includes('bold')) csRules.push('font-weight: bold');
+        if (fs.includes('italic')) csRules.push('font-style: italic');
+        if (fs.includes('underline')) csRules.push('text-decoration: underline');
+        if (fs.includes('smallcaps')) csRules.push('font-variant: small-caps');
+        else if (fs.includes('allcaps')) csRules.push('text-transform: uppercase');
+        if (fs.includes('center')) csRules.push('text-align: center');
+        if (def.spacingBefore !== undefined) csRules.push('margin-top: ' + def.spacingBefore + 'pt');
+        if (def.spacingAfter !== undefined) csRules.push('margin-bottom: ' + def.spacingAfter + 'pt');
+        if (csRules.length > 0) {
+          css += '.ms-custom-style-' + safeName + ' p { ' + csRules.join('; ') + '; }\n';
+        }
+      }
+    }
     const token = new state.Token('html_block', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
     state.tokens.unshift(token);
@@ -1052,6 +1073,33 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
   md.core.ruler.after('inline', 'manuscript_markdown_associate_comments', associateCommentsRule);
   md.core.ruler.after('manuscript_markdown_associate_comments', 'manuscript_markdown_task_list', taskListRule);
   md.core.ruler.after('manuscript_markdown_task_list', 'manuscript_markdown_alert_blockquote', alertBlockquoteRule);
+
+  // Core rule: wrap <!-- style: X -->...<!-- /style --> blocks in <div class="ms-custom-style ms-custom-style-{name}">
+  md.core.ruler.after('manuscript_markdown_alert_blockquote', 'manuscript_custom_style_wrap', (state: any) => {
+    const tokens = state.tokens;
+    const OPEN_RE = /^<!--\s*style:\s*([a-zA-Z0-9_-]+)\s*-->\s*$/;
+    const CLOSE_RE = /^<!--\s*\/style\s*-->\s*$/;
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const tok = tokens[i];
+      if (tok.type !== 'html_block') continue;
+      const content = (tok.content || '').trim();
+      const closeMatch = CLOSE_RE.test(content);
+      if (closeMatch) {
+        const divClose = new state.Token('html_block', '', 0);
+        divClose.content = '</div>\n';
+        // Replace the comment with the closing div
+        tokens.splice(i, 1, divClose);
+        continue;
+      }
+      const openMatch = content.match(OPEN_RE);
+      if (openMatch) {
+        const safeName = openMatch[1].replace(/[^a-zA-Z0-9-]/g, '-');
+        const divOpen = new state.Token('html_block', '', 0);
+        divOpen.content = '<div class="ms-custom-style ms-custom-style-' + safeName + '">\n';
+        tokens.splice(i, 1, divOpen);
+      }
+    }
+  });
 
   // Inject a hidden marker element so the preview script can apply the color scheme
   // class to alert elements (needed because VS Code's built-in GFM alert renderer

@@ -3,10 +3,11 @@ import { XMLParser } from 'fast-xml-parser';
 import { ommlToLatex } from './omml';
 import { resolveMarkdownColor } from './highlight-colors';
 import { wrapColoredHighlight } from './formatting';
-import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths } from './frontmatter';
+import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths, type CustomStyleDef } from './frontmatter';
 import { gfmAlertTitle, parseGfmAlertMarker, toGfmAlertMarker, type GfmAlertType } from './gfm';
 import { emuToPixels, isSupportedImageFormat, resolveImageFilename } from './image-utils';
 import { parseBibtex, mergeBibtex } from './bibtex-parser';
+import { customStyleId } from './md-to-docx';
 
 // --- Implementation notes ---
 // Table parsing:
@@ -238,6 +239,7 @@ export type ContentItem =
       alertType?: GfmAlertType; // present for GitHub alert styles
       isCodeBlock?: boolean;   // true if Word "Code Block" paragraph style
       blockquoteGroupIndex?: number; // sequential group index from md→docx gap metadata
+      customStyleName?: string;      // user-defined custom style name (from MsCustomXxx pStyle)
     }
   | { type: 'math'; latex: string; display: boolean; commentIds: Set<string>; revision?: RevisionInfo }
   | { type: 'footnote_ref'; noteId: string; noteKind: 'footnote' | 'endnote'; commentIds: Set<string>; revision?: RevisionInfo }
@@ -247,7 +249,9 @@ export type ContentItem =
   | { type: 'landscape_close' }
   | { type: 'portrait_open' }
   | { type: 'portrait_close' }
-  | { type: 'bibliography_marker' };
+  | { type: 'bibliography_marker' }
+  | { type: 'custom_style_open'; styleName: string }
+  | { type: 'custom_style_close' };
 export interface FootnoteBody {
   id: string;
   content: ContentItem[];
@@ -415,6 +419,23 @@ export function parseHeadingLevel(pPrChildren: any[]): number | undefined {
   }
 
   return undefined;
+}
+
+/** Detect a custom style (MsCustomXxx) and return the user-facing name, or undefined. */
+export function parseCustomStyleName(pPrChildren: any[], knownStyles?: Record<string, CustomStyleDef>): string | undefined {
+  const pStyleElement = pPrChildren.find(child => child['w:pStyle'] !== undefined);
+  if (!pStyleElement) return undefined;
+  const val = getAttr(pStyleElement, 'val');
+  if (!val.startsWith('MsCustom')) return undefined;
+  // Reverse-lookup: if we have the known styles map, find the name whose customStyleId matches
+  if (knownStyles) {
+    for (const name of Object.keys(knownStyles)) {
+      if (customStyleId(name) === val) return name;
+    }
+  }
+  // Fallback: derive name from PascalCase by lowering and inserting hyphens
+  const suffix = val.slice('MsCustom'.length);
+  return suffix.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
 export function parseTitleStyle(pPrChildren: any[]): boolean {
@@ -1088,6 +1109,32 @@ export async function extractPortraitBreakOrdinals(data: Uint8Array | JSZip): Pr
       if (typeof v === 'number' && Number.isFinite(v)) result.add(v);
     }
     return result.size > 0 ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract custom style definitions from MANUSCRIPT_CUSTOM_STYLES_ custom property. */
+export async function extractCustomStyles(data: Uint8Array | JSZip): Promise<Record<string, CustomStyleDef> | null> {
+  const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_CUSTOM_STYLES');
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // Validate structure
+    const result: Record<string, CustomStyleDef> = {};
+    for (const [name, def] of Object.entries(parsed)) {
+      if (!def || typeof def !== 'object') continue;
+      const d = def as Record<string, unknown>;
+      const styleDef: CustomStyleDef = {};
+      if (typeof d.font === 'string') styleDef.font = d.font;
+      if (typeof d.fontSize === 'number') styleDef.fontSize = d.fontSize;
+      if (typeof d.fontStyle === 'string') styleDef.fontStyle = d.fontStyle;
+      if (typeof d.spacingBefore === 'number') styleDef.spacingBefore = d.spacingBefore;
+      if (typeof d.spacingAfter === 'number') styleDef.spacingAfter = d.spacingAfter;
+      result[name] = styleDef;
+    }
+    return Object.keys(result).length > 0 ? result : null;
   } catch {
     return null;
   }
@@ -1967,6 +2014,7 @@ export async function extractDocumentContent(
     imageRelationships?: Map<string, string>;
     imageFolder?: string;
     portraitBreakOrdinals?: Set<number>;
+    customStyles?: Record<string, CustomStyleDef>;
   }
 ): Promise<DocumentContentResult> {
   const zip = data instanceof JSZip ? data : await loadZip(data);
@@ -2267,6 +2315,7 @@ export async function extractDocumentContent(
           let blockquoteLevel: number | undefined;
           let alertType: GfmAlertType | undefined;
           let isCodeBlock = false;
+          let customStyle: string | undefined;
           let paraFormatting = currentFormatting;
           let isSpacerParagraph = false;
           let isSectionBreakHandled = false;
@@ -2348,6 +2397,7 @@ export async function extractDocumentContent(
               blockquoteLevel = parseBlockquoteLevel(pPrChildren);
               alertType = parseAlertType(pPrChildren);
               isCodeBlock = parseCodeBlockStyle(pPrChildren);
+              customStyle = parseCustomStyleName(pPrChildren, options?.customStyles ?? undefined);
               const pRPrElement = pPrChildren.find(pprChild => pprChild['w:rPr'] !== undefined);
               if (pRPrElement) {
                 const pRPrChildren = Array.isArray(pRPrElement['w:rPr']) ? pRPrElement['w:rPr'] : [pRPrElement['w:rPr']];
@@ -2380,9 +2430,10 @@ export async function extractDocumentContent(
             prevItem.listMeta !== undefined ||
             prevItem.isTitle === true ||
             prevItem.blockquoteLevel !== undefined ||
-            prevItem.isCodeBlock === true
+            prevItem.isCodeBlock === true ||
+            prevItem.customStyleName !== undefined
           );
-          const needsPara = inTableCell || (headingLevel || listMeta || isTitle || blockquoteLevel || isCodeBlock)
+          const needsPara = inTableCell || (headingLevel || listMeta || isTitle || blockquoteLevel || isCodeBlock || customStyle)
             ? true
             : target.length > 0 && (prevItem!.type !== 'para' || prevIsCodeBlockPara || prevIsStructuralPara);
 
@@ -2395,6 +2446,7 @@ export async function extractDocumentContent(
             if (blockquoteLevel) paraItem.blockquoteLevel = blockquoteLevel;
             if (alertType) paraItem.alertType = alertType;
             if (isCodeBlock) paraItem.isCodeBlock = true;
+            if (customStyle) paraItem.customStyleName = customStyle;
             target.push(paraItem);
           }
           walk(paraChildren, paraFormatting, target, inTableCell, currentRevision);
@@ -2759,7 +2811,7 @@ function computeSegmentEnd(
   let idx = startIndex;
   while (idx < segment.length) {
     const item = segment[idx];
-    if (item.type === 'para' || item.type === 'table' || item.type === 'landscape_open' || item.type === 'landscape_close' || item.type === 'portrait_open' || item.type === 'portrait_close' || item.type === 'bibliography_marker') break;
+    if (item.type === 'para' || item.type === 'table' || item.type === 'landscape_open' || item.type === 'landscape_close' || item.type === 'portrait_open' || item.type === 'portrait_close' || item.type === 'bibliography_marker' || item.type === 'custom_style_open' || item.type === 'custom_style_close') break;
     if (opts?.stopBeforeDisplayMath && item.type === 'math' && item.display) break;
     idx++;
   }
@@ -3800,6 +3852,7 @@ export function buildMarkdown(
   let skipNextPortraitClose = false;
   const sentinelGaps = options?.sentinelGaps;
   let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  let sentinelCsoIdx = 0, sentinelCscIdx = 0;
   // Emit separator before a sentinel using stored gap metadata.
   // Returns true if a gap-aware separator was emitted, false otherwise.
   function emitSentinelSep(gapKey: string): boolean {
@@ -4273,6 +4326,39 @@ export function buildMarkdown(
       pendingAlertInlineLevelForHardBreak = undefined;
       lastBlockquoteAlertType = undefined;
       lastBlockquoteLevel = undefined;
+      i++;
+      continue;
+    }
+
+    if (item.type === 'custom_style_open') {
+      const gapKey = 'cso' + sentinelCsoIdx;
+      sentinelCsoIdx++;
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
+        output.push(incomingSep);
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
+      }
+      output.push('<!-- style: ' + item.styleName + ' -->');
+      lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('cso', 'csoa');
+      i++;
+      continue;
+    }
+    if (item.type === 'custom_style_close') {
+      const gapKey = 'csc' + sentinelCscIdx;
+      sentinelCscIdx++;
+      if (emitSentinelSep(gapKey)) {
+        // gap metadata handled it
+      } else if (incomingSep !== null) {
+        output.push(incomingSep);
+      } else if (output.length > 0 && !output[output.length - 1].endsWith('\n\n')) {
+        output.push('\n\n');
+      }
+      output.push('<!-- /style -->');
+      lastWasSectionSentinel = true;
+      lastSentinelAfterGapKey = gapKey.replace('csc', 'csca');
       i++;
       continue;
     }
@@ -4930,6 +5016,44 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     }
   }
 
+  // Custom named styles: detect "Custom: ..." styles for fallback extraction
+  const extractedCustomStyles: Record<string, CustomStyleDef> = {};
+  let csSearchPos = 0;
+  while (true) {
+    const idx = stylesXml.indexOf('w:customStyle="1"', csSearchPos);
+    if (idx === -1) break;
+    // Find enclosing <w:style> block
+    const styleStart = stylesXml.lastIndexOf('<w:style ', idx);
+    const styleEnd = stylesXml.indexOf('</w:style>', idx);
+    if (styleStart === -1 || styleEnd === -1) { csSearchPos = idx + 17; continue; }
+    const block = stylesXml.substring(styleStart, styleEnd + '</w:style>'.length);
+    const nameMatch = block.match(/w:name\s+w:val="Custom:\s*([^"]+)"/);
+    if (!nameMatch) { csSearchPos = styleEnd + 10; continue; }
+    const styleName = nameMatch[1].trim();
+    const csStyleIdMatch = block.match(/w:styleId="([^"]+)"/);
+    const csStyleId = csStyleIdMatch ? csStyleIdMatch[1] : '';
+    const def: CustomStyleDef = {};
+    const csRpr = getStyleRPr(csStyleId);
+    if (csRpr) {
+      const f = extractFont(csRpr);
+      if (f && f !== bodyFont) def.font = f;
+      const s = extractSizeHp(csRpr);
+      if (s !== undefined) def.fontSize = s / 2;
+      const st = extractStyle(csRpr, getStylePPr(csStyleId));
+      if (st !== 'normal') def.fontStyle = st;
+    }
+    const csPpr = getStylePPr(csStyleId);
+    if (csPpr) {
+      const beforeMatch = csPpr.match(/w:before="(\d+)"/);
+      if (beforeMatch) def.spacingBefore = parseInt(beforeMatch[1], 10) / 20;
+      const afterMatch = csPpr.match(/w:after="(\d+)"/);
+      if (afterMatch) def.spacingAfter = parseInt(afterMatch[1], 10) / 20;
+    }
+    extractedCustomStyles[styleName] = def;
+    csSearchPos = styleEnd + 10;
+  }
+  if (Object.keys(extractedCustomStyles).length > 0) result.styles = extractedCustomStyles;
+
   return result;
 }
 
@@ -4939,7 +5063,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -4975,6 +5099,7 @@ export async function convertDocx(
     extractHtmlCommentAfterGapMapping(zip),
     extractSentinelGapMapping(zip),
     extractDefaultTableColWidths(zip),
+    extractCustomStyles(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -5022,10 +5147,40 @@ export async function convertDocx(
   const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, format };
 
   const [{ content: docContent, zoteroBiblData, imageEntries }, footnotes, endnotes] = await Promise.all([
-    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined }),
+    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined }),
     extractFootnotes(zip, fnContext),
     extractEndnotes(zip, enContext),
   ]);
+
+  // Post-process: inject custom_style_open/custom_style_close sentinels around
+  // runs of paragraphs that share a customStyleName.
+  {
+    let activeStyle: string | undefined;
+    for (let i = 0; i < docContent.length; i++) {
+      const item = docContent[i];
+      const styleName = (item.type === 'para' && item.customStyleName) ? item.customStyleName : undefined;
+      if (styleName && styleName !== activeStyle) {
+        // Close previous style if open
+        if (activeStyle) {
+          docContent.splice(i, 0, { type: 'custom_style_close' });
+          i++; // skip past the close we just inserted
+        }
+        // Open new style
+        docContent.splice(i, 0, { type: 'custom_style_open', styleName });
+        i++; // skip past the open we just inserted
+        activeStyle = styleName;
+      } else if (!styleName && activeStyle) {
+        // Style run ended
+        docContent.splice(i, 0, { type: 'custom_style_close' });
+        i++; // skip past the close we just inserted
+        activeStyle = undefined;
+      }
+    }
+    // Close any still-open style at end of document
+    if (activeStyle) {
+      docContent.push({ type: 'custom_style_close' });
+    }
+  }
 
   // Build unified notes map with renumbered labels
   const notesMap = new Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>();
@@ -5154,6 +5309,10 @@ export async function convertDocx(
     const stylesStr = await stylesFile.async('string');
     const fontFields = extractFontOverridesFromStyles(stylesStr, { explicitTableFontSize });
     Object.assign(fm, fontFields);
+  }
+  // Restore custom styles from custom property (primary source)
+  if (storedCustomStyles) {
+    fm.styles = storedCustomStyles;
   }
   if (codeBlockStyling) {
     const bg = codeBlockStyling.get('bg');

@@ -83,6 +83,8 @@ export interface MdToken {
   tableOrientation?: 'landscape' | 'portrait'; // table-only orientation from data-orientation
   tableColWidths?: number[] | 'equal' | 'auto'; // per-table column width ratios
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
+  customStyleOpen?: string;   // sentinel: start of custom style block (style name)
+  customStyleClose?: true;    // sentinel: end of custom style block
 }
 
 export interface MdTableCell {
@@ -1442,6 +1444,37 @@ export function parseMd(markdown: string, warnings?: string[]): MdToken[] {
     }
   }
 
+  // Post-process: convert <!-- style: X --> / <!-- /style --> into custom-style sentinel tokens
+  {
+    let activeStyle: string | undefined;
+    for (let i = 0; i < result.length; i++) {
+      if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
+      const run = result[i].runs[0];
+      if (run.type !== 'html_comment') continue;
+      const text = run.text.trim();
+      const openMatch = text.match(/^<!--\s*style:\s*([a-zA-Z0-9_-]+)\s*-->$/i);
+      if (openMatch) {
+        if (activeStyle && warnings) {
+          warnings.push('Nested <!-- style: --> directives are not supported; outer style "' + activeStyle + '" closed implicitly.');
+        }
+        const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: openMatch[1] };
+        sentinel.blankLinesBefore = result[i].blankLinesBefore;
+        sentinel.blankLinesAfter = result[i].blankLinesAfter;
+        result.splice(i, 1, sentinel);
+        activeStyle = openMatch[1];
+      } else if (/^<!--\s*\/style\s*-->$/i.test(text)) {
+        if (activeStyle) {
+          const sentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+          sentinel.blankLinesBefore = result[i].blankLinesBefore;
+          sentinel.blankLinesAfter = result[i].blankLinesAfter;
+          result.splice(i, 1, sentinel);
+          activeStyle = undefined;
+        }
+        // If not in a style block, leave the comment as-is (user error, but harmless)
+      }
+    }
+  }
+
   return result;
 }
 
@@ -2530,6 +2563,7 @@ export interface DocxGenState {
   templateSectPr?: string;      // trailing <w:sectPr> from template document.xml
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
+  activeCustomStyle?: string; // currently active <!-- style: X --> block name
 }
 
 interface CommentEntry {
@@ -2845,7 +2879,8 @@ function extractNormalStyleSizeHp(stylesXml: string): number | undefined {
 
 export function applyFontOverridesToTemplate(
   stylesXmlBytes: Uint8Array,
-  overrides: FontOverrides
+  overrides: FontOverrides,
+  customStyles?: Record<string, import('./frontmatter').CustomStyleDef>
 ): string {
   let xml = new TextDecoder('utf-8').decode(stylesXmlBytes);
 
@@ -3051,6 +3086,27 @@ export function applyFontOverridesToTemplate(
     xml = xml.slice(0, styleMatch.index) + openTag + innerContent + closeTag + xml.slice(styleMatch.index + styleMatch[0].length);
   }
 
+  // Inject custom styles before </w:styles>
+  if (customStyles) {
+    // Derive bodyFontStr from template's Normal style for custom style inheritance
+    const normalMatch = xml.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/);
+    let bodyFontStr = '';
+    if (normalMatch) {
+      const rFontsMatch = normalMatch[0].match(/<w:rFonts\s+[^>]*w:ascii="([^"]+)"[^>]*>/);
+      if (rFontsMatch) {
+        bodyFontStr = '<w:rFonts w:ascii="' + escapeXml(rFontsMatch[1]) + '" w:hAnsi="' + escapeXml(rFontsMatch[1]) + '"/>';
+      }
+    }
+    const localSzPair = (hp: number) => '<w:sz w:val="' + hp + '"/><w:szCs w:val="' + hp + '"/>';
+    for (const [name, def] of Object.entries(customStyles)) {
+      const sid = customStyleId(name);
+      // Only inject if the template doesn't already have this style
+      if (!xml.includes('w:styleId="' + sid + '"')) {
+        xml = xml.replace('</w:styles>', customStyleXml(name, def, bodyFontStr, localSzPair) + '</w:styles>');
+      }
+    }
+  }
+
   return xml;
 }
 
@@ -3096,7 +3152,63 @@ export function applyAlertColorsToTemplate(stylesXml: string, scheme: ColorSchem
   return xml;
 }
 
-export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme): string {
+/** Convert a user-defined style name to a Word style ID: 'my-heading' → 'MsCustomMyHeading'. */
+export function customStyleId(name: string): string {
+  return 'MsCustom' + name
+    .split(/[-_\s]+/)
+    .map(s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
+    .join('');
+}
+
+/** Convert a user-defined style name to a Word display name: 'my-heading' → 'Custom: my-heading'. */
+function customStyleDisplayName(name: string): string {
+  return 'Custom: ' + name;
+}
+
+/** Generate OOXML for a custom paragraph style definition. */
+function customStyleXml(
+  name: string,
+  def: import('./frontmatter').CustomStyleDef,
+  bodyFontStr: string,
+  szPairFn: (hp: number) => string,
+): string {
+  const styleId = customStyleId(name);
+  const displayName = customStyleDisplayName(name);
+
+  // pPr: spacing + center alignment (ordering: spacing → jc per OOXML schema)
+  let spacingParts = '';
+  if (def.spacingBefore !== undefined) spacingParts += ' w:before="' + Math.round(def.spacingBefore * 20) + '"';
+  if (def.spacingAfter !== undefined) spacingParts += ' w:after="' + Math.round(def.spacingAfter * 20) + '"';
+  const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
+  const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
+  const pPr = (spacingEl || jcEl) ? '<w:pPr>' + spacingEl + jcEl + '</w:pPr>\n' : '';
+
+  // rPr: style flags + font + size (ordering: style flags → rFonts → sz per dirty-flag invariant #4)
+  const fs = def.fontStyle ?? '';
+  let styleStr = '';
+  if (fs && fs !== 'normal') {
+    if (fs.includes('bold')) styleStr += '<w:b/>';
+    if (fs.includes('italic')) styleStr += '<w:i/>';
+    if (fs.includes('underline')) styleStr += '<w:u w:val="single"/>';
+    // smallcaps/allcaps: else-if because 'smallcaps' contains 'allcaps' as substring
+    if (fs.includes('smallcaps')) styleStr += '<w:smallCaps/>';
+    else if (fs.includes('allcaps')) styleStr += '<w:caps/>';
+  }
+  const fontStr = def.font
+    ? '<w:rFonts w:ascii="' + escapeXml(def.font) + '" w:hAnsi="' + escapeXml(def.font) + '"/>'
+    : bodyFontStr;
+  const szStr = def.fontSize !== undefined ? szPairFn(Math.round(def.fontSize * 2)) : '';
+  const rPrInner = styleStr + fontStr + szStr;
+  const rPr = rPrInner ? '<w:rPr>' + rPrInner + '</w:rPr>\n' : '';
+
+  return '<w:style w:type="paragraph" w:customStyle="1" w:styleId="' + styleId + '">\n' +
+    '<w:name w:val="' + escapeXml(displayName) + '"/>\n' +
+    '<w:basedOn w:val="Normal"/>\n' +
+    pPr + rPr +
+    '</w:style>\n';
+}
+
+export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme, customStyles?: Record<string, import('./frontmatter').CustomStyleDef>): string {
   const alertColors = alertColorsByScheme(colorScheme ?? getDefaultColorScheme());
   // Helper: build w:rFonts element for a given font name
   function rFonts(font: string): string {
@@ -3408,6 +3520,21 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr>\n' +
     '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>\n' +
     '</w:style>\n' +
+    // Append user-defined custom styles (deduplicate by style ID to avoid collisions)
+    (customStyles
+      ? (() => {
+          const seenIds = new Set<string>();
+          return Object.entries(customStyles)
+            .filter(([name]) => {
+              const sid = customStyleId(name);
+              if (seenIds.has(sid)) return false;
+              seenIds.add(sid);
+              return true;
+            })
+            .map(([name, def]) => customStyleXml(name, def, bodyFontStr, szPair))
+            .join('');
+        })()
+      : '') +
     '</w:styles>';
 }
 
@@ -4402,7 +4529,12 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
 
 export function generateParagraph(token: MdToken, state: DocxGenState, options?: MdToDocxOptions, bibEntries?: Map<string, BibtexEntry>, citeprocEngine?: any): string {
   let pPr = '';
-  
+
+  // Apply custom style when inside a <!-- style: X --> block (only for plain paragraphs)
+  if (token.type === 'paragraph' && state.activeCustomStyle) {
+    pPr = '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/></w:pPr>';
+  }
+
   switch (token.type) {
     case 'heading':
       pPr = '<w:pPr><w:pStyle w:val="Heading' + (token.level || 1) + '"/></w:pPr>';
@@ -4979,6 +5111,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   let preserveCloseForNextToken = false;
   // Track before-gap for each sentinel type (sequential index → blankLinesBefore)
   let sentinelLoIdx = 0, sentinelLcIdx = 0, sentinelPoIdx = 0, sentinelPcIdx = 0;
+  let sentinelCsoIdx = 0, sentinelCscIdx = 0;
   const sentinelGaps: Record<string, number> = {};
   for (const token of tokens) {
     // Any close sentinel directly preceding any open sentinel skips the open's break
@@ -4993,6 +5126,25 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     if (token.bibliographyMarker) {
       body += BIBL_PLACEHOLDER;
       preserveCloseForNextToken = !!prevWasClose;
+      prevToken = token;
+      continue;
+    }
+
+    // Custom style sentinels: update active custom style state (no OOXML output,
+    // just a state flag that generateParagraph reads).
+    if (token.customStyleOpen) {
+      if (token.blankLinesBefore !== undefined) sentinelGaps['cso' + sentinelCsoIdx] = token.blankLinesBefore;
+      if (token.blankLinesAfter !== undefined) sentinelGaps['csoa' + sentinelCsoIdx] = token.blankLinesAfter;
+      sentinelCsoIdx++;
+      state.activeCustomStyle = token.customStyleOpen;
+      prevToken = token;
+      continue;
+    }
+    if (token.customStyleClose) {
+      if (token.blankLinesBefore !== undefined) sentinelGaps['csc' + sentinelCscIdx] = token.blankLinesBefore;
+      if (token.blankLinesAfter !== undefined) sentinelGaps['csca' + sentinelCscIdx] = token.blankLinesAfter;
+      sentinelCscIdx++;
+      state.activeCustomStyle = undefined;
       prevToken = token;
       continue;
     }
@@ -5203,6 +5355,26 @@ export async function convertMdToDocx(
   // Create citeproc engine if CSL style specified in frontmatter
   let citeprocEngine: any;
   const earlyWarnings: string[] = [...parseWarnings];
+
+  // Detect custom style name collisions (e.g. 'my-heading' and 'my_heading' both → MsCustomMyHeading)
+  if (frontmatter.styles && Object.keys(frontmatter.styles).length > 1) {
+    const idToNames = new Map<string, string[]>();
+    for (const name of Object.keys(frontmatter.styles)) {
+      const sid = customStyleId(name);
+      const existing = idToNames.get(sid);
+      if (existing) existing.push(name);
+      else idToNames.set(sid, [name]);
+    }
+    for (const [sid, names] of idToNames) {
+      if (names.length > 1) {
+        earlyWarnings.push(
+          'Custom style names ' + names.map(n => '"' + n + '"').join(' and ') +
+          ' produce the same Word style ID "' + sid + '"; only the first definition will be used.'
+        );
+      }
+    }
+  }
+
   if (frontmatter.csl && bibEntries) {
     let styleName = frontmatter.csl;
 
@@ -5545,7 +5717,8 @@ export async function convertMdToDocx(
   if (templateParts?.has('word/styles.xml') && fontOverrides) {
     let mutated = applyFontOverridesToTemplate(
       templateParts.get('word/styles.xml')!,
-      fontOverrides
+      fontOverrides,
+      frontmatter.styles
     );
     mutated = applyAlertColorsToTemplate(mutated, effectiveColors);
     zip.file('word/styles.xml', mutated);
@@ -5553,7 +5726,7 @@ export async function convertMdToDocx(
     const decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
     zip.file('word/styles.xml', applyAlertColorsToTemplate(decoded, effectiveColors));
   } else {
-    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors));
+    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles));
   }
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15
@@ -5645,6 +5818,9 @@ export async function convertMdToDocx(
   }
   if (frontmatter.tableFontSize !== undefined) {
     customProps.push({ name: 'MANUSCRIPT_EXPLICIT_TABLE_FONT_SIZE', value: '1' });
+  }
+  if (frontmatter.styles && Object.keys(frontmatter.styles).length > 0) {
+    customProps.push(...chunkCustomProps('MANUSCRIPT_CUSTOM_STYLES_', JSON.stringify(frontmatter.styles)));
   }
   customProps.push(...frontmatterBlankLineProps(frontmatterBlankLines));
   customProps.push(...frontmatterFieldOrderProps(fieldOrder));

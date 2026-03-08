@@ -27,6 +27,15 @@ export function noteTypeToNumber(nt: NoteType): number {
 
 export type NotesMode = 'footnotes' | 'endnotes';
 
+/** A user-defined custom paragraph style declared in the `styles:` frontmatter block. */
+export interface CustomStyleDef {
+  font?: string;
+  fontSize?: number;       // points
+  fontStyle?: string;      // normalized: bold-italic-...-center
+  spacingBefore?: number;  // points
+  spacingAfter?: number;   // points
+}
+
 /** Parse a value that may be a YAML inline array `[v1, v2, ...]` or bare comma-separated values. */
 export function parseInlineArray(value: string): string[] {
   let inner = value;
@@ -113,6 +122,7 @@ export interface Frontmatter {
   tableColWidths?: number[] | 'equal' | 'auto';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
+  styles?: Record<string, CustomStyleDef>;
 }
 
 /** Parse a col-widths value: "2 1 1", "2,1,1", "[2, 1, 1]", "equal", "auto". */
@@ -177,7 +187,9 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
   const metadata: Frontmatter = {};
   const fieldOrder: string[] = [];
   const seenFields = new Set<string>();
-  for (const line of yamlBlock.split('\n')) {
+  const yamlLines = yamlBlock.split('\n');
+  for (let lineIdx = 0; lineIdx < yamlLines.length; lineIdx++) {
+    const line = yamlLines[lineIdx];
     const colonIdx = line.indexOf(':');
     if (colonIdx < 0) continue;
     const key = line.slice(0, colonIdx).trim();
@@ -186,6 +198,65 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
       seenFields.add(key);
       fieldOrder.push(key);
     }
+
+    // Handle nested `styles:` block specially
+    if (key === 'styles') {
+      const styles: Record<string, CustomStyleDef> = {};
+      let currentName: string | undefined;
+      let nameIndent = -1; // indent of the first style-name line (auto-detected)
+      // Scan subsequent indented lines
+      while (lineIdx + 1 < yamlLines.length) {
+        const nextLine = yamlLines[lineIdx + 1];
+        // Stop at non-indented lines (next top-level key or blank)
+        if (nextLine.length > 0 && !nextLine.startsWith(' ') && !nextLine.startsWith('\t')) break;
+        lineIdx++;
+        const trimmed = nextLine.trimStart();
+        if (!trimmed) continue; // skip blank lines within the block
+        const indent = nextLine.length - trimmed.length;
+        const innerColon = trimmed.indexOf(':');
+        if (innerColon < 0) continue;
+        const innerKey = trimmed.slice(0, innerColon).trim();
+        const innerVal = trimmed.slice(innerColon + 1).trim().replace(/^["']|["']$/g, '');
+        // Auto-detect the style-name indent level from the first indented line
+        if (nameIndent < 0) nameIndent = indent;
+        if (indent <= nameIndent) {
+          // Style name level
+          currentName = innerKey;
+          if (!styles[currentName]) styles[currentName] = {};
+        } else if (currentName) {
+          // Property level (4-space indent)
+          const def = styles[currentName];
+          switch (innerKey) {
+            case 'font':
+              if (innerVal) def.font = innerVal;
+              break;
+            case 'font-size': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n > 0) def.fontSize = n;
+              break;
+            }
+            case 'font-style': {
+              const norm = normalizeFontStyle(innerVal);
+              if (norm) def.fontStyle = norm;
+              break;
+            }
+            case 'spacing-before': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n >= 0) def.spacingBefore = n;
+              break;
+            }
+            case 'spacing-after': {
+              const n = parseFloat(innerVal);
+              if (isFinite(n) && n >= 0) def.spacingAfter = n;
+              break;
+            }
+          }
+        }
+      }
+      if (Object.keys(styles).length > 0) metadata.styles = styles;
+      continue;
+    }
+
     switch (key) {
       case 'title':
         if (!metadata.title) metadata.title = [];
@@ -385,6 +456,18 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'grid-table-max-line-width': () => { if (metadata.gridTableMaxLineWidth !== undefined) lines.push('grid-table-max-line-width: ' + metadata.gridTableMaxLineWidth); },
     'blockquote-style': () => { if (metadata.blockquoteStyle) lines.push('blockquote-style: ' + metadata.blockquoteStyle); },
     'colors': () => { if (metadata.colors) lines.push('colors: ' + metadata.colors); },
+    'styles': () => {
+      if (!metadata.styles || Object.keys(metadata.styles).length === 0) return;
+      lines.push('styles:');
+      for (const [name, def] of Object.entries(metadata.styles)) {
+        lines.push('  ' + name + ':');
+        if (def.font) lines.push('    font: ' + def.font);
+        if (def.fontSize !== undefined) lines.push('    font-size: ' + def.fontSize);
+        if (def.fontStyle) lines.push('    font-style: ' + def.fontStyle);
+        if (def.spacingBefore !== undefined) lines.push('    spacing-before: ' + def.spacingBefore);
+        if (def.spacingAfter !== undefined) lines.push('    spacing-after: ' + def.spacingAfter);
+      }
+    },
   };
 
   // Default emission order (backward compatible)
@@ -396,7 +479,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'table-font', 'table-font-size', 'table-col-widths',
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
-    'blockquote-style', 'colors',
+    'blockquote-style', 'colors', 'styles',
   ];
 
   const aliasToCanonical: Record<string, string> = {

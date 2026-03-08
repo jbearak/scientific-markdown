@@ -341,6 +341,7 @@ connection.onCompletion(async (params: CompletionParams): Promise<CompletionItem
 				['code-font', 'Code font family (e.g., code-font: Fira Code)'],
 				['font-size', 'Body font size in points (e.g., font-size: 12)'],
 				['code-font-size', 'Code font size in points (e.g., code-font-size: 10)'],
+				['styles', 'Custom named paragraph styles (nested YAML block)'],
 			];
 			const replaceRange = Range.create(doc.positionAt(lineStart + lineText.length - lineText.trimStart().length), params.position);
 			const items: CompletionItem[] = [];
