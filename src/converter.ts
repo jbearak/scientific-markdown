@@ -2636,7 +2636,7 @@ function renderInlineSegment(
   const result = renderInlineRange(segment, 0, comments, undefined, renderOpts);
   return {
     // Keep parity with paragraph-level emission behavior.
-    text: result.text.replace(/\n+$/, ''),
+    text: result.text.replace(/(\\?\n)+$/, ''),
     deferredComments: result.deferredComments,
   };
 }
@@ -4442,7 +4442,7 @@ export function buildMarkdown(
     pendingAlertInlineLevelForHardBreak = undefined;
     if (rendered.deferredComments.length > 0) {
       // Strip trailing newlines (from <w:br/> between comment references in round-tripped DOCX)
-      output.push(textOut.replace(/\n+$/, ''));
+      output.push(textOut.replace(/(\\?\n)+$/, ''));
       output.push('\n');
       output.push(rendered.deferredComments.join('\n'));
     } else {

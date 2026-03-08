@@ -324,7 +324,8 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         break;
       }
       case 'breaks':
-        metadata.breaks = (value === 'true');
+        if (value === 'true') metadata.breaks = true;
+        else if (value === 'false') metadata.breaks = false;
         break;
     }
   }

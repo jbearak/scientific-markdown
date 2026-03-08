@@ -1177,6 +1177,18 @@ export function pipeTableAlignedProps(aligned: Map<number, boolean>): CustomProp
   return chunkCustomProps('MANUSCRIPT_PIPE_TABLE_ALIGNED_', JSON.stringify(mapping));
 }
 
+/** Recursively promote all softbreak runs to hardbreak (for `breaks` mode and grid table cells). */
+function promoteSoftbreaks(runs: MdRun[]): void {
+  for (let i = 0; i < runs.length; i++) {
+    if (runs[i].type === 'softbreak') {
+      runs[i] = { ...runs[i], type: 'hardbreak' };
+    }
+    if (runs[i].innerRuns) promoteSoftbreaks(runs[i].innerRuns!);
+    if (runs[i].oldRuns) promoteSoftbreaks(runs[i].oldRuns!);
+    if (runs[i].newRuns) promoteSoftbreaks(runs[i].newRuns!);
+  }
+}
+
 export function parseMd(markdown: string, warnings?: string[], breaks = false): MdToken[] {
   const md = createMarkdownIt();
   // Preserve explicit source semantics for blockquotes by disabling markdown-it
@@ -1195,22 +1207,12 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
 
   // When breaks mode is enabled, treat all bare newlines as hard breaks
   if (breaks) {
-    const promoteRuns = (runs: MdRun[]) => {
-      for (let i = 0; i < runs.length; i++) {
-        if (runs[i].type === 'softbreak') {
-          runs[i] = { ...runs[i], type: 'hardbreak' };
-        }
-        if (runs[i].innerRuns) promoteRuns(runs[i].innerRuns!);
-        if (runs[i].oldRuns) promoteRuns(runs[i].oldRuns!);
-        if (runs[i].newRuns) promoteRuns(runs[i].newRuns!);
-      }
-    };
     for (const tok of result) {
-      promoteRuns(tok.runs);
+      promoteSoftbreaks(tok.runs);
       if (tok.rows) {
         for (const row of tok.rows) {
           for (const cell of row.cells) {
-            promoteRuns(cell.runs);
+            promoteSoftbreaks(cell.runs);
           }
         }
       }
@@ -1756,8 +1758,7 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
               cells: row.cells.map(cellText => ({
                 // Grid table cells always treat bare newlines as hard breaks
                 runs: cellText
-                  ? convertInlineTokens(md.parseInline(cellText, {})).map(
-                      r => r.type === 'softbreak' ? { ...r, type: 'hardbreak' as const } : r)
+                  ? (() => { const runs = convertInlineTokens(md.parseInline(cellText, {})); promoteSoftbreaks(runs); return runs; })()
                   : [],
               })),
               header: row.header,
@@ -1940,11 +1941,11 @@ function processInlineChildren(tokens: any[]): MdRun[] {
         break;
         
       case 'softbreak':
-        runs.push({ type: 'softbreak', text: '\n' });
+        runs.push({ type: 'softbreak', text: '\n', ...formatStack, href: currentHref });
         break;
 
       case 'hardbreak':
-        runs.push({ type: 'hardbreak', text: '\n' });
+        runs.push({ type: 'hardbreak', text: '\n', ...formatStack, href: currentHref });
         break;
 
       case 'strong_open':
@@ -3997,7 +3998,13 @@ function generateDeletedCriticContent(
 
   let xml = '';
   for (const run of formattedRuns) {
-    if (run.type === 'softbreak' || run.type === 'hardbreak') {
+    if (run.type === 'softbreak') {
+      const merged = mergeRunFormatting(run, outer, forced);
+      const rPr = generateRPr(merged, extraRPr);
+      xml += '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve"> </w:delText></w:r>';
+      continue;
+    }
+    if (run.type === 'hardbreak') {
       xml += '<w:r><w:br/></w:r>';
       continue;
     }
@@ -4046,9 +4053,11 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
         xml += generateRun(run.text, rPr);
       }
     } else if (run.type === 'softbreak') {
-      xml += '<w:r><w:t xml:space="preserve"> </w:t></w:r>';
+      const rPr = generateRPr(run, state.tableRunRPrExtra || undefined);
+      xml += '<w:r>' + (rPr ? rPr : '') + '<w:t xml:space="preserve"> </w:t></w:r>';
     } else if (run.type === 'hardbreak') {
-      xml += '<w:r><w:br/></w:r>';
+      const rPr = generateRPr(run, state.tableRunRPrExtra || undefined);
+      xml += '<w:r>' + (rPr ? rPr : '') + '<w:br/></w:r>';
     } else if (run.type === 'critic_add') {
       const author = run.author || options?.authorName || 'Unknown';
       const date = normalizeToUtcIso(run.date || '', state.timezone);

@@ -1071,6 +1071,7 @@ describe('generateTable', () => {
     expect(result).toContain('line1');
     expect(result).toContain('<w:t xml:space="preserve"> </w:t>');
     expect(result).toContain('line2');
+    expect(result).not.toContain('<w:br/>');
   });
 
   it('renders hardbreaks as w:br in table cells', () => {
@@ -1092,6 +1093,7 @@ describe('generateTable', () => {
     expect(result).toContain('line1');
     expect(result).toContain('<w:r><w:br/></w:r>');
     expect(result).toContain('line2');
+    expect(result).not.toContain('<w:t xml:space="preserve"> </w:t>');
   });
 
   it('renders bold and italic formatting in table cells', () => {

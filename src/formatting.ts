@@ -622,6 +622,10 @@ function runsToMarkdown(runs: HtmlTableRun[]): string {
       result += '\n';
       continue;
     }
+    if (run.type === 'hardbreak') {
+      result += '\\\n';
+      continue;
+    }
     if (run.type !== 'text') {
       result += run.text;
       continue;
