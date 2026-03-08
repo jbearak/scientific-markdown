@@ -3146,8 +3146,11 @@ export function applyFontOverridesToTemplate(
       }
     }
     const localSzPair = (hp: number) => '<w:sz w:val="' + hp + '"/><w:szCs w:val="' + hp + '"/>';
+    const seenIds = new Set<string>();
     for (const [name, def] of Object.entries(customStyles)) {
       const sid = customStyleId(name);
+      if (seenIds.has(sid)) continue;
+      seenIds.add(sid);
       const newStyleXml = customStyleXml(name, def, bodyFontStr, localSzPair);
       // Replace existing custom style or inject new one
       const existingRe = new RegExp('<w:style\\b[^>]*w:styleId="' + sid + '"[^>]*>[\\s\\S]*?</w:style>\\n?');
@@ -4918,7 +4921,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         if (pending.colspan > 1) {
           tcPr += '<w:gridSpan w:val="' + pending.colspan + '"/>';
         }
-        tcPr += '<w:vMerge/></w:tcPr>';
+        tcPr += '<w:vMerge/>';
+        if (horizontalCellBorders) tcPr += horizontalCellBorders;
+        tcPr += '</w:tcPr>';
         xml += '<w:tc>' + tcPr + '<w:p/></w:tc>';
         pending.remaining--;
         if (pending.remaining === 0) mergeMap.delete(gridCol);
