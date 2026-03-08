@@ -4347,8 +4347,10 @@ export function buildMarkdown(
         // that share the same numId override and thus all carry startNumber).
         if (item.listMeta.type === 'ordered') {
           // Check if the list at this level is continuing or new.
-          // When returning from a nested sub-list (e.g. bullet) to a parent ordered list,
-          // the per-level type map correctly identifies this as a continuation.
+          // `listTypeByLevel` tracks the list type at each nesting level independently,
+          // so returning from a nested sub-list (e.g. ordered → bullet → back to ordered)
+          // correctly identifies the parent ordered list as a continuation — without this,
+          // `lastListType` alone would see "bullet" and reset the counter to 1.
           const levelType = listTypeByLevel.get(item.listMeta.level);
           const isNewListContext = levelType !== 'ordered' && (!lastListType || lastListType !== 'ordered');
           const isNewSubList = lastListLevel !== undefined && item.listMeta.level > lastListLevel;

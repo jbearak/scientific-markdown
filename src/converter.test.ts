@@ -1061,6 +1061,16 @@ describe('Tab-after-marker list round-trip', () => {
   });
 });
 
+describe('Ordered list counter continuation after nested bullets', () => {
+  test('counter resumes after nested bullet sub-list', async () => {
+    const md = '1. A\n2. B\n   - X\n   - Y\n3. C';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    // The ordered list must continue at 3 after returning from the nested bullets
+    expect(result.markdown).toMatch(/3\.\s+C/);
+  });
+});
+
 describe('HTML comment blank line round-trip', () => {
   test('blank lines before HTML comment are preserved', async () => {
     const md = 'Paragraph one.\n\n\n\n<!-- A comment -->\n\nParagraph two.';
