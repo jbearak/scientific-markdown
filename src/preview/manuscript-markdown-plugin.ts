@@ -1061,12 +1061,12 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
         + 'table th, table td { border: none; }\n';
     } else if (borders === 'solid') {
       css = 'table { border-collapse: collapse; }\n'
-        + 'table th, table td { border: 1px solid #555; }\n';
+        + 'table th, table td { border: 1px solid var(--vscode-editor-foreground, currentColor); }\n';
     } else {
-      // 'horizontal': grey separators between body rows, black header underline, no vertical borders
+      // 'horizontal': light separators between body rows, stronger header underline, no vertical borders
       css = 'table { border-collapse: collapse; }\n'
-        + 'table th, table td { border: none; border-bottom: 1px solid #ddd; padding: 6px 8px; }\n'
-        + 'table thead th { border-bottom: 1px solid #555; }\n';
+        + 'table th, table td { border: none; border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground, currentColor) 25%, transparent); padding: 6px 8px; }\n'
+        + 'table thead th { border-bottom: 1px solid var(--vscode-editor-foreground, currentColor); }\n';
     }
     const token = new state.Token('manuscript_style', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
