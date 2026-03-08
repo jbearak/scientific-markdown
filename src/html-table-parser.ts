@@ -1,5 +1,5 @@
 export interface HtmlTableRun {
-  type: 'text' | 'softbreak';
+  type: 'text' | 'softbreak' | 'hardbreak';
   text: string;
   bold?: boolean;
   italic?: boolean;
