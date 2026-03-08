@@ -285,10 +285,10 @@ describe('parseMd HTML tables', () => {
     const table = tokens.find(t => t.type === 'table');
     const cellRuns = table?.rows?.[0].cells[0].runs;
 
-    // Should produce: bold "A & B", softbreak, plain "line"
+    // Should produce: bold "A & B", hardbreak (HTML <br> is always a hard break), plain "line"
     expect(cellRuns).toHaveLength(3);
     expect(cellRuns?.[0]).toMatchObject({ type: 'text', text: 'A & B', bold: true });
-    expect(cellRuns?.[1]).toMatchObject({ type: 'softbreak' });
+    expect(cellRuns?.[1]).toMatchObject({ type: 'hardbreak' });
     expect(cellRuns?.[2]).toMatchObject({ type: 'text', text: 'line' });
   });
 
@@ -760,12 +760,26 @@ describe('generateParagraph', () => {
     expect(state.relationships.get('https://example.com')).toBe('rId4');
   });
 
-  it('generates softbreak', () => {
+  it('generates softbreak as space', () => {
     const token: MdToken = {
       type: 'paragraph',
       runs: [
         { type: 'text', text: 'Line 1' },
         { type: 'softbreak', text: '\n' },
+        { type: 'text', text: 'Line 2' }
+      ]
+    };
+    const state = createState();
+    const result = generateParagraph(token, state);
+    expect(result).toBe('<w:p><w:r><w:t>Line 1</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:t>Line 2</w:t></w:r></w:p>');
+  });
+
+  it('generates hardbreak as w:br', () => {
+    const token: MdToken = {
+      type: 'paragraph',
+      runs: [
+        { type: 'text', text: 'Line 1' },
+        { type: 'hardbreak', text: '\n' },
         { type: 'text', text: 'Line 2' }
       ]
     };
@@ -1038,7 +1052,7 @@ describe('generateTable', () => {
     expect(state.relationships.has('https://example.com')).toBe(true);
   });
 
-  it('renders softbreaks in table cells', () => {
+  it('renders softbreaks as spaces in table cells', () => {
     const rows: MdTableRow[] = [
       {
         header: false,
@@ -1046,6 +1060,27 @@ describe('generateTable', () => {
           { runs: [
             { type: 'text', text: 'line1' },
             { type: 'softbreak', text: '\n' },
+            { type: 'text', text: 'line2' },
+          ] }
+        ]
+      }
+    ];
+    const token: MdToken = { type: 'table', runs: [], rows };
+    const result = generateTable(token, makeState());
+
+    expect(result).toContain('line1');
+    expect(result).toContain('<w:t xml:space="preserve"> </w:t>');
+    expect(result).toContain('line2');
+  });
+
+  it('renders hardbreaks as w:br in table cells', () => {
+    const rows: MdTableRow[] = [
+      {
+        header: false,
+        cells: [
+          { runs: [
+            { type: 'text', text: 'line1' },
+            { type: 'hardbreak', text: '\n' },
             { type: 'text', text: 'line2' },
           ] }
         ]

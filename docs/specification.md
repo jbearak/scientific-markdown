@@ -57,6 +57,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `code-block-inset` | Border width for code blocks in shading mode, in eighths of a point (`w:sz`). A positive integer. Default: `48`. Does not affect inline code. |
 | `blockquote-style` | Word paragraph style for blockquotes: `Quote`, `IntenseQuote`, or `GitHub` (gray left border bar). Case-insensitive. Default: `GitHub`. Overrides the VS Code setting. |
 | `pipe-table-max-line-width` | Maximum line width for pipe tables in DOCX→MD conversion. Tables wider than this fall back to HTML. `0` disables pipe tables entirely. Default: `120`. Overrides the VS Code `pipeTableMaxLineWidth` setting but is itself overridden by the CLI `--pipe-table-max-line-width` flag. |
+| `breaks` | When `true`, bare newlines within a paragraph are treated as hard line breaks (`<w:br/>`) in DOCX output. When `false` (default), bare newlines are soft breaks rendered as spaces — use a trailing `\` for an explicit hard line break. See [Line Breaks](#line-breaks). |
 
 ### Heading and Title Font Configuration
 
@@ -285,6 +286,27 @@ Manuscript Markdown supports CommonMark plus the implemented [GitHub Flavored Ma
 - **Code blocks**: fenced with triple backticks. Optional language annotation (e.g., `` ```stata ``) is preserved on round-trip via the `MANUSCRIPT_CODE_BLOCK_LANGS` custom property in the DOCX. In Word, code blocks use the "Code Block" paragraph style (Consolas, shaded background). Consecutive code blocks are separated by an empty paragraph to prevent merging.
 - **Blockquotes**: `> quoted text`
 - **Tables**: simple tables are emitted as pipe tables (pipe-delimited with alignment support). Tables that contain colspans, rowspans, multi-paragraph cells, or that exceed the configured line width fall back to indented HTML. The line-width threshold is controlled by the `pipe-table-max-line-width` frontmatter field, the VS Code `pipeTableMaxLineWidth` setting, or the CLI `--pipe-table-max-line-width` flag. Tables support per-table font overrides via comment directives (`<!-- table-font-size: N -->`) and HTML data attributes (`data-font-size`, `data-font`); see [Table Font Configuration](#table-font-configuration). Pandoc-style grid tables are also supported for multi-line cells (see below).
+
+### Line Breaks
+
+Manuscript Markdown follows CommonMark line break semantics by default:
+
+- **Soft break** (bare newline): A plain newline within a paragraph is treated as a space. It does not produce a line break in DOCX output.
+- **Hard break** (trailing `\` or two trailing spaces): A backslash or two spaces at the end of a line followed by a newline produces a hard line break (`<w:br/>` in DOCX). The trailing `\` form is preferred because trailing spaces are invisible and easily stripped by editors.
+
+```
+This line has a backslash\
+and this continues on a new line.
+
+This line has nothing special
+and this flows into the same paragraph (no line break).
+```
+
+The `breaks: true` frontmatter setting changes the default behavior so that bare newlines within a paragraph are treated as hard line breaks, matching the behavior of some other Markdown tools.
+
+**Grid tables**: Within grid table cells, bare newlines are always treated as hard line breaks regardless of the `breaks` setting, since the grid structure makes every line placement deliberate.
+
+**DOCX→MD**: When converting from Word, line breaks (`<w:br/>`) are always emitted as `\` + newline in the Markdown output, making the hard break intent explicit.
 
 ### GitHub Flavored Markdown Extension Notes
 

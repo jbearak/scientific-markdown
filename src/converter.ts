@@ -1541,7 +1541,7 @@ function parseNoteBody(
           if (!brType || brType === 'textWrapping') {
             target.push({
               type: 'text',
-              text: '\n',
+              text: '\\\n',
               commentIds: new Set(),
               formatting: currentFormatting,
               ...(currentRevision ? { revision: currentRevision } : {}),
@@ -2231,7 +2231,7 @@ export async function extractDocumentContent(
             if (!inBibliographyField && !inCitationField) {
               target.push({
                 type: 'text',
-                text: '\n',
+                text: '\\\n',
                 commentIds: new Set(activeComments),
                 formatting: currentFormatting,
                 ...(currentRevision ? { revision: currentRevision } : {}),
@@ -2929,6 +2929,13 @@ function renderInlineRange(
       continue;
     }
 
+    // Hard line breaks must not be wrapped in formatting markers (e.g. **\\\n**)
+    // because the backslash must be the final character on its line.
+    if (item.text === '\\\n') {
+      out += '\\\n';
+      i++;
+      continue;
+    }
     let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
       if (item.text !== item.href || hasFormatting(item.formatting)) {
@@ -3145,6 +3152,13 @@ function renderInlineRangeWithIds(
 
     prevCommentIds = new Set(currentIds);
 
+    // Hard line breaks must not be wrapped in formatting markers (e.g. **\\\n**)
+    // because the backslash must be the final character on its line.
+    if (item.text === '\\\n') {
+      out += '\\\n';
+      i++;
+      continue;
+    }
     let formattedText = wrapWithFormatting(item.text, item.formatting);
     if (item.href) {
       if (item.text !== item.href || hasFormatting(item.formatting)) {
@@ -3479,8 +3493,10 @@ function tryRenderGridTable(
                 : item)
           : para;
         const r = renderInlineSegment(mergeConsecutiveRuns(items), comments, renderOpts);
-        // Split on newlines within a paragraph (e.g. hard breaks)
-        cellLines.push(...r.text.split('\n'));
+        // Split on newlines within a paragraph (e.g. hard breaks).
+        // Strip trailing backslash from each line — grid table cells treat
+        // bare newlines as hard breaks, so the backslash is redundant.
+        cellLines.push(...r.text.split('\n').map(l => l.replace(/\\$/, '')));
         cellDeferred.push(...r.deferredComments);
       }
       if (cellLines.length === 0) cellLines.push('');
@@ -4408,7 +4424,7 @@ export function buildMarkdown(
         strippedAlertLeadHadHardBreak = true;
       }
     }
-    if (pendingAlertInlineLevelForHardBreak !== undefined && (textOut.startsWith('\n') || strippedAlertLeadHadHardBreak)) {
+    if (pendingAlertInlineLevelForHardBreak !== undefined && (textOut.startsWith('\n') || textOut.startsWith('\\\n') || strippedAlertLeadHadHardBreak)) {
       const markerIdx = output.length - 1;
       const continuationPrefix = '\n' + '> '.repeat(pendingAlertInlineLevelForHardBreak);
       if (markerIdx >= 0 && output[markerIdx].endsWith(' ')) {
@@ -4416,7 +4432,9 @@ export function buildMarkdown(
       } else {
         output.push(continuationPrefix);
       }
-      if (textOut.startsWith('\n')) {
+      if (textOut.startsWith('\\\n')) {
+        textOut = textOut.slice(2);
+      } else if (textOut.startsWith('\n')) {
         textOut = textOut.slice(1);
       }
     }
