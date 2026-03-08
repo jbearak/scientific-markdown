@@ -994,6 +994,38 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
   });
 
+  // Inject <style> block for header-font-style preview (smallcaps, allcaps, center, bold, italic, underline)
+  md.core.ruler.push('manuscript_header_font_style', (state: any) => {
+    const { metadata } = parseFrontmatter(state.src);
+    const styles = metadata.headerFontStyle;
+    if (!styles || styles.length === 0) return;
+    let css = '';
+    for (let i = 0; i < 6; i++) {
+      const style = i < styles.length ? styles[i] : styles[styles.length - 1];
+      const rules: string[] = [];
+      if (style === 'normal') {
+        rules.push('font-weight: normal', 'font-style: normal', 'text-decoration: none', 'font-variant: normal', 'text-transform: none', 'text-align: left');
+      } else {
+        rules.push(style.includes('bold') ? 'font-weight: bold' : 'font-weight: normal');
+        rules.push(style.includes('italic') ? 'font-style: italic' : 'font-style: normal');
+        rules.push(style.includes('underline') ? 'text-decoration: underline' : 'text-decoration: none');
+        // smallcaps/allcaps: check smallcaps first since 'smallcaps' contains 'allcaps' as substring
+        if (style.includes('smallcaps')) {
+          rules.push('font-variant: small-caps', 'text-transform: none');
+        } else if (style.includes('allcaps')) {
+          rules.push('font-variant: normal', 'text-transform: uppercase');
+        } else {
+          rules.push('font-variant: normal', 'text-transform: none');
+        }
+        rules.push(style.includes('center') ? 'text-align: center' : 'text-align: left');
+      }
+      css += 'h' + (i + 1) + ' { ' + rules.join('; ') + '; }\n';
+    }
+    const token = new state.Token('html_block', '', 0);
+    token.content = '<style>\n' + css + '</style>\n';
+    state.tokens.unshift(token);
+  });
+
   // Register grid table block rule before html_block so the placeholder comment
   // is consumed before markdown-it's html_block rule can swallow it (VS Code's
   // preview enables html: true).

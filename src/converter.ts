@@ -4809,13 +4809,36 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     return v === 'true' || v === '1' || v === 'on';
   }
 
-  function extractStyle(rpr: string): string {
+  function extractStyle(rpr: string, ppr?: string | null): string {
     const parts: string[] = [];
     if (isXmlToggleOn(rpr, 'w:b')) parts.push('bold');
     if (isXmlToggleOn(rpr, 'w:i')) parts.push('italic');
     // Underline: bare <w:u/> or any w:val except "none"
     if (rpr.includes('<w:u/>') || (rpr.includes('<w:u ') && !rpr.includes('w:val="none"'))) parts.push('underline');
+    if (isXmlToggleOn(rpr, 'w:smallCaps')) parts.push('smallcaps');
+    if (isXmlToggleOn(rpr, 'w:caps')) parts.push('allcaps');
+    // Center alignment from pPr (paragraph-level property)
+    if (ppr && ppr.includes('<w:jc w:val="center"/>')) parts.push('center');
     return parts.length > 0 ? parts.join('-') : 'normal';
+  }
+
+  /** Extract pPr content from a style block. */
+  function getStylePPr(styleId: string): string | null {
+    let searchFrom = 0;
+    while (true) {
+      const idx = stylesXml.indexOf('<w:style ', searchFrom);
+      if (idx === -1) return null;
+      const closeTag = stylesXml.indexOf('</w:style>', idx);
+      if (closeTag === -1) return null;
+      const block = stylesXml.substring(idx, closeTag + '</w:style>'.length);
+      if (block.includes('w:styleId="' + styleId + '"')) {
+        const pPrStart = block.indexOf('<w:pPr');
+        const pPrEnd = block.indexOf('</w:pPr>');
+        if (pPrStart !== -1 && pPrEnd !== -1) return block.substring(pPrStart, pPrEnd + '</w:pPr>'.length);
+        return null;
+      }
+      searchFrom = closeTag + '</w:style>'.length;
+    }
   }
 
   // Extract Normal (body) font for comparison
@@ -4842,7 +4865,7 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     if (rpr) {
       fonts.push(extractFont(rpr));
       sizes.push(extractSizeHp(rpr));
-      styles.push(extractStyle(rpr));
+      styles.push(extractStyle(rpr, getStylePPr(id)));
     } else {
       fonts.push(undefined);
       sizes.push(undefined);
@@ -4885,7 +4908,7 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
     if (tFont && tFont !== bodyFont) result.titleFont = [tFont];
     const tSizeHp = extractSizeHp(titleRpr);
     if (tSizeHp !== undefined && tSizeHp !== 56) result.titleFontSize = [tSizeHp / 2];
-    const tStyle = extractStyle(titleRpr);
+    const tStyle = extractStyle(titleRpr, getStylePPr('Title'));
     if (tStyle !== 'normal') result.titleFontStyle = [tStyle];
   }
 

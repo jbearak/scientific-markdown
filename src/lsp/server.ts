@@ -333,7 +333,7 @@ connection.onCompletion(async (params: CompletionParams): Promise<CompletionItem
 			const fmKeys: [string, string][] = [
 				['header-font', 'Heading font family (e.g., header-font: Georgia)'],
 				['header-font-size', 'Heading font sizes (e.g., header-font-size: [24, 20, 16])'],
-				['header-font-style', 'Heading font styles (e.g., header-font-style: bold-italic)'],
+				['header-font-style', 'Heading font styles (e.g., header-font-style: bold-italic, bold-center, smallcaps)'],
 				['title-font', 'Title font family (e.g., title-font: Georgia)'],
 				['title-font-size', 'Title font sizes (e.g., title-font-size: [28, 24])'],
 				['title-font-style', 'Title font styles (e.g., title-font-style: bold)'],

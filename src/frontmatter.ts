@@ -42,10 +42,10 @@ export function parseInlineArray(value: string): string[] {
 //    font-style, font-weight, and text-decoration are unfamiliar.
 // 3. Word only supports bold on/off (no numeric weights 100–900), so a
 //    separate font-weight field accepting numbers would be misleading.
-const VALID_STYLE_PARTS = new Set(['bold', 'italic', 'underline']);
-const CANONICAL_ORDER = ['bold', 'italic', 'underline'];
+const VALID_STYLE_PARTS = new Set(['bold', 'italic', 'underline', 'smallcaps', 'allcaps', 'center']);
+const CANONICAL_ORDER = ['bold', 'italic', 'underline', 'smallcaps', 'allcaps', 'center'];
 
-/** Validate and normalize a Font_Style value to canonical order (bold-italic-underline). */
+/** Validate and normalize a Font_Style value to canonical order (bold-italic-underline-smallcaps-allcaps-center). */
 export function normalizeFontStyle(raw: string): string | undefined {
   const lower = raw.toLowerCase().trim();
   if (!lower) return undefined;
@@ -54,6 +54,8 @@ export function normalizeFontStyle(raw: string): string | undefined {
   const unique = [...new Set(parts)];
   if (unique.length !== parts.length) return undefined;
   if (!unique.every(p => VALID_STYLE_PARTS.has(p))) return undefined;
+  // smallcaps and allcaps are mutually exclusive (Word only supports one at a time)
+  if (unique.includes('smallcaps') && unique.includes('allcaps')) return undefined;
   return unique.sort((a, b) => CANONICAL_ORDER.indexOf(a) - CANONICAL_ORDER.indexOf(b)).join('-');
 }
 

@@ -320,6 +320,8 @@ Each completion item includes a description snippet showing example syntax.
 | `bold` | `bold` |
 | `italic` | `italic` |
 | `underline` | `underline` |
+| `smallcaps` | `smallcaps` |
+| `allcaps` | `allcaps` |
 | `normal` | `normal` |
 | `bold-italic` | `bold-italic` |
 | `italic-bold` | `bold-italic` |
@@ -329,6 +331,15 @@ Each completion item includes a description snippet showing example syntax.
 | `underline-italic` | `italic-underline` |
 | `bold-italic-underline` | `bold-italic-underline` |
 | `italic-underline-bold` | `bold-italic-underline` |
+| `center` | `center` |
+| `bold-center` | `bold-center` |
+| `center-bold` | `bold-center` |
+| `bold-smallcaps` | `bold-smallcaps` |
+| `smallcaps-bold` | `bold-smallcaps` |
+| `bold-allcaps` | `bold-allcaps` |
+| `allcaps-bold` | `bold-allcaps` |
+| `bold-italic-center` | `bold-italic-center` |
+| `smallcaps-allcaps` | undefined (mutually exclusive) |
 | (any other) | undefined (ignored) |
 
 ### Array Inheritance Resolution
@@ -349,7 +360,7 @@ A single `header-font-style` (and `title-font-style`) field was chosen over sepa
 
 3. **Word's limited granularity.** Word does not support CSS-level font-weight customization (numeric weights 100–900). Word only provides bold on/off, italic on/off, and underline on/off. A separate `font-weight` field accepting numeric values would create a false expectation of granularity that the output format cannot honor.
 
-The hyphenated combination syntax (`bold-italic`, `bold-underline`, `bold-italic-underline`) provides all necessary combinations while remaining readable and order-independent (normalization handles any input order).
+The hyphenated combination syntax (`bold-italic`, `bold-underline`, `bold-smallcaps`, `bold-center`) provides all necessary combinations while remaining readable and order-independent (normalization handles any input order). The `smallcaps` and `allcaps` values map to Word's `<w:smallCaps/>` and `<w:caps/>` elements respectively, and are mutually exclusive (Word only supports one at a time). The `center` value maps to Word's `<w:jc w:val="center"/>` paragraph property, enabling centered headings and titles.
 
 ## Correctness Properties
 

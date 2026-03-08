@@ -2947,6 +2947,29 @@ export function applyFontOverridesToTemplate(
       ? '<w:szCs w:val="' + sizeHp + '"/>'
       : undefined;
 
+    // Apply center alignment override to <w:pPr> for headings and title
+    if (fontStyleOverride !== undefined) {
+      const wantsCenter = fontStyleOverride.includes('center');
+      const pPrMatch = /(<w:pPr\b[^>]*>)([\s\S]*?)(<\/w:pPr>)/.exec(innerContent);
+      if (pPrMatch) {
+        let pPrContent = pPrMatch[2];
+        // Remove any existing w:jc element, then insert before outlineLvl (schema order: spacing → ind → jc → outlineLvl)
+        pPrContent = pPrContent.replace(/<w:jc\b[^>]*(?:\/>|><\/w:jc>)/g, '');
+        if (wantsCenter) {
+          const outlineLvlIdx = pPrContent.indexOf('<w:outlineLvl');
+          if (outlineLvlIdx !== -1) {
+            pPrContent = pPrContent.slice(0, outlineLvlIdx) + '<w:jc w:val="center"/>' + pPrContent.slice(outlineLvlIdx);
+          } else {
+            pPrContent = pPrContent + '<w:jc w:val="center"/>';
+          }
+        }
+        innerContent = innerContent.slice(0, pPrMatch.index) + pPrMatch[1] + pPrContent + pPrMatch[3] + innerContent.slice(pPrMatch.index + pPrMatch[0].length);
+      } else if (wantsCenter) {
+        // No pPr block — insert one at the start
+        innerContent = '<w:pPr><w:jc w:val="center"/></w:pPr>' + innerContent;
+      }
+    }
+
     // Skip past any <w:pPr>...</w:pPr> block so we match the style-level
     // <w:rPr>, not one nested inside paragraph properties.
     const pPrClose = innerContent.indexOf('</w:pPr>');
@@ -2987,16 +3010,20 @@ export function applyFontOverridesToTemplate(
 
       // Apply font-style overrides (bold, italic, underline) for headings and title
       if (fontStyleOverride !== undefined) {
-        // Remove existing b, i, u elements (all toggle forms: self-closing, with attributes, open+close)
+        // Remove existing b, i, u, smallCaps, caps elements (all toggle forms: self-closing, with attributes, open+close)
         rPrContent = rPrContent.replace(/<w:b\b[^>]*(?:\/>|><\/w:b>)/g, '');
         rPrContent = rPrContent.replace(/<w:i\b[^>]*(?:\/>|><\/w:i>)/g, '');
         rPrContent = rPrContent.replace(/<w:u\b[^>]*(?:\/>|><\/w:u>)/g, '');
+        rPrContent = rPrContent.replace(/<w:smallCaps\b[^>]*(?:\/>|><\/w:smallCaps>)/g, '');
+        rPrContent = rPrContent.replace(/<w:caps\b[^>]*(?:\/>|><\/w:caps>)/g, '');
         // Add new style elements at the start
         let styleEls = '';
         if (fontStyleOverride !== 'normal') {
           if (fontStyleOverride.includes('bold')) styleEls += '<w:b/>';
           if (fontStyleOverride.includes('italic')) styleEls += '<w:i/>';
           if (fontStyleOverride.includes('underline')) styleEls += '<w:u w:val="single"/>';
+          if (fontStyleOverride.includes('smallcaps')) styleEls += '<w:smallCaps/>';
+          else if (fontStyleOverride.includes('allcaps')) styleEls += '<w:caps/>';
         }
         rPrContent = styleEls + rPrContent;
       }
@@ -3012,6 +3039,8 @@ export function applyFontOverridesToTemplate(
         if (fontStyleOverride.includes('bold')) rPrContent += '<w:b/>';
         if (fontStyleOverride.includes('italic')) rPrContent += '<w:i/>';
         if (fontStyleOverride.includes('underline')) rPrContent += '<w:u w:val="single"/>';
+        if (fontStyleOverride.includes('smallcaps')) rPrContent += '<w:smallCaps/>';
+        else if (fontStyleOverride.includes('allcaps')) rPrContent += '<w:caps/>';
       }
       if (rFontsEl !== undefined) rPrContent += rFontsEl;
       if (szEl !== undefined) rPrContent += szEl;
@@ -3110,10 +3139,19 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
       if (style.includes('bold')) styleStr += '<w:b/>';
       if (style.includes('italic')) styleStr += '<w:i/>';
       if (style.includes('underline')) styleStr += '<w:u w:val="single"/>';
+      // smallcaps/allcaps: use else-if because 'smallcaps' contains 'allcaps' as a substring
+      if (style.includes('smallcaps')) styleStr += '<w:smallCaps/>';
+      else if (style.includes('allcaps')) styleStr += '<w:caps/>';
     } else {
       styleStr = '<w:b/>';
     }
     return '<w:rPr>' + styleStr + font + sz + '</w:rPr>\n';
+  }
+
+  /** Return '<w:jc w:val="center"/>' if the heading style includes center, else ''. */
+  function headingJc(styleId: string): string {
+    const style = overrides?.headingStyles?.get(styleId);
+    return style && style.includes('center') ? '<w:jc w:val="center"/>' : '';
   }
 
   // CodeChar: code font only (no size override for character style)
@@ -3159,6 +3197,8 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     if (titleStyle0.includes('bold')) titleStyleStr += '<w:b/>';
     if (titleStyle0.includes('italic')) titleStyleStr += '<w:i/>';
     if (titleStyle0.includes('underline')) titleStyleStr += '<w:u w:val="single"/>';
+    if (titleStyle0.includes('smallcaps')) titleStyleStr += '<w:smallCaps/>';
+    else if (titleStyle0.includes('allcaps')) titleStyleStr += '<w:caps/>';
   }
   const titleRpr = '<w:rPr>' + titleStyleStr + titleFont + titleSz + '</w:rPr>\n';
 
@@ -3225,37 +3265,37 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:style w:type="paragraph" w:styleId="Heading1">\n' +
     '<w:name w:val="heading 1"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="240" w:after="0"/><w:outlineLvl w:val="0"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="240" w:after="0"/>' + headingJc('Heading1') + '<w:outlineLvl w:val="0"/></w:pPr>\n' +
     headingRpr('Heading1', 32) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading2">\n' +
     '<w:name w:val="heading 2"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="200" w:after="0"/><w:outlineLvl w:val="1"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="200" w:after="0"/>' + headingJc('Heading2') + '<w:outlineLvl w:val="1"/></w:pPr>\n' +
     headingRpr('Heading2', 26) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading3">\n' +
     '<w:name w:val="heading 3"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:before="200" w:after="0"/><w:outlineLvl w:val="2"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:before="200" w:after="0"/>' + headingJc('Heading3') + '<w:outlineLvl w:val="2"/></w:pPr>\n' +
     headingRpr('Heading3', 24) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading4">\n' +
     '<w:name w:val="heading 4"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="3"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading4') + '<w:outlineLvl w:val="3"/></w:pPr>\n' +
     headingRpr('Heading4', null) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading5">\n' +
     '<w:name w:val="heading 5"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="4"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading5') + '<w:outlineLvl w:val="4"/></w:pPr>\n' +
     headingRpr('Heading5', 20) +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading6">\n' +
     '<w:name w:val="heading 6"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="0"/><w:outlineLvl w:val="5"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="0"/>' + headingJc('Heading6') + '<w:outlineLvl w:val="5"/></w:pPr>\n' +
     headingRpr('Heading6', 18) +
     '</w:style>\n' +
     '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont">\n' +
@@ -3317,7 +3357,7 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:style w:type="paragraph" w:styleId="Title">\n' +
     '<w:name w:val="Title"/>\n' +
     '<w:basedOn w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="300"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="300"/>' + (titleStyle0 && titleStyle0.includes('center') ? '<w:jc w:val="center"/>' : '') + '</w:pPr>\n' +
     titleRpr +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="FootnoteText">\n' +
@@ -4897,6 +4937,17 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
           inner += style.includes('bold') ? '<w:b/>' : '<w:b w:val="0"/>';
           inner += style.includes('italic') ? '<w:i/>' : '<w:i w:val="0"/>';
           inner += style.includes('underline') ? '<w:u w:val="single"/>' : '<w:u w:val="none"/>';
+          // smallcaps/allcaps: mutually exclusive, and 'smallcaps' contains 'allcaps' as substring
+          if (style.includes('smallcaps')) {
+            inner += '<w:smallCaps/>';
+            inner += '<w:caps w:val="0"/>';
+          } else if (style.includes('allcaps')) {
+            inner += '<w:smallCaps w:val="0"/>';
+            inner += '<w:caps/>';
+          } else {
+            inner += '<w:smallCaps w:val="0"/>';
+            inner += '<w:caps w:val="0"/>';
+          }
         }
         const font = resolveAtIndex(fo.titleFonts, i);
         if (font) inner += '<w:rFonts w:ascii="' + escapeXml(font) + '" w:hAnsi="' + escapeXml(font) + '"/>';
@@ -4904,7 +4955,9 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
         if (sizeHp) inner += '<w:sz w:val="' + sizeHp + '"/><w:szCs w:val="' + sizeHp + '"/>';
         if (inner) rPr = '<w:rPr>' + inner + '</w:rPr>';
       }
-      body += '<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
+      const style = resolveAtIndex(fo?.titleStyles, i);
+      const jcEl = style && style.includes('center') ? '<w:jc w:val="center"/>' : '';
+      body += '<w:p><w:pPr><w:pStyle w:val="Title"/>' + jcEl + '</w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
     }
   }
 

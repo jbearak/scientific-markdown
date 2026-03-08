@@ -59,12 +59,14 @@ describe("Property 1: Inline array parsing equivalence", () => {
 
 // Feature: header-font-config, Property 2: Font style normalization is canonical and idempotent
 describe("Property 2: Font style normalization is canonical and idempotent", () => {
-  const ALL_PARTS = ["bold", "italic", "underline"];
+  const ALL_PARTS = ["bold", "italic", "underline", "smallcaps", "allcaps", "center"];
 
   it("normalizes any permutation to canonical order and is idempotent", () => {
     fc.assert(
       fc.property(
-        fc.subarray(ALL_PARTS, { minLength: 1, maxLength: 3 }),
+        fc.subarray(ALL_PARTS, { minLength: 1, maxLength: 4 }).filter(
+          (s) => !(s.includes("smallcaps") && s.includes("allcaps")),
+        ),
         (subset) => {
           // Generate all permutations of subset
           const permute = (a: string[]): string[][] => {
@@ -102,7 +104,7 @@ describe("Property 2: Font style normalization is canonical and idempotent", () 
 // Feature: header-font-config, Property 3: Invalid font styles are rejected
 describe("Property 3: Invalid font styles are rejected", () => {
   it("rejects duplicate parts", () => {
-    const part = fc.constantFrom("bold", "italic", "underline");
+    const part = fc.constantFrom("bold", "italic", "underline", "smallcaps", "allcaps", "center");
     fc.assert(
       fc.property(part, (p) => {
         expect(normalizeFontStyle(p + "-" + p)).toBeUndefined();
@@ -126,6 +128,12 @@ describe("Property 3: Invalid font styles are rejected", () => {
       expect(normalizeFontStyle(bad)).toBeUndefined();
       expect(normalizeFontStyle("bold-" + bad)).toBeUndefined();
     }
+  });
+
+  it("rejects mutually exclusive smallcaps-allcaps", () => {
+    expect(normalizeFontStyle("smallcaps-allcaps")).toBeUndefined();
+    expect(normalizeFontStyle("allcaps-smallcaps")).toBeUndefined();
+    expect(normalizeFontStyle("bold-smallcaps-allcaps")).toBeUndefined();
   });
 
   it("rejects empty and whitespace-only strings", () => {
@@ -210,7 +218,7 @@ describe("Property 5: Repeated keys use last occurrence", () => {
   });
 
   it("last header-font-style value wins on repeated keys", () => {
-    const styles = ["bold", "italic", "underline", "normal", "bold-italic"];
+    const styles = ["bold", "italic", "underline", "normal", "bold-italic", "smallcaps", "allcaps", "bold-smallcaps", "center", "bold-center"];
     fc.assert(
       fc.property(
         fc.array(fc.constantFrom(...styles), { minLength: 2, maxLength: 4 }),
@@ -326,6 +334,15 @@ describe("Property 8: Parse-serialize-parse round-trip", () => {
       "bold-underline",
       "italic-underline",
       "bold-italic-underline",
+      "smallcaps",
+      "allcaps",
+      "bold-smallcaps",
+      "bold-allcaps",
+      "italic-smallcaps",
+      "bold-italic-smallcaps",
+      "center",
+      "bold-center",
+      "bold-italic-center",
     );
 
     fc.assert(
@@ -556,6 +573,13 @@ function extractRPr(block: string): string {
   return block.substring(start, end + "</w:rPr>".length);
 }
 
+function extractPPr(block: string): string {
+  const start = block.indexOf("<w:pPr>");
+  const end = block.indexOf("</w:pPr>");
+  if (start === -1 || end === -1) return "";
+  return block.substring(start, end + "</w:pPr>".length);
+}
+
 // Feature: header-font-config, Property 11: stylesXml heading and title output correctness
 describe("Property 11: stylesXml heading and title output correctness", () => {
   it("heading styles reflect per-heading font overrides", () => {
@@ -605,6 +629,14 @@ describe("Property 11: stylesXml heading and title output correctness", () => {
       "bold-underline",
       "italic-underline",
       "bold-italic-underline",
+      "smallcaps",
+      "allcaps",
+      "bold-smallcaps",
+      "bold-allcaps",
+      "italic-smallcaps",
+      "center",
+      "bold-center",
+      "bold-italic-center",
     ];
     fc.assert(
       fc.property(
@@ -637,6 +669,8 @@ describe("Property 11: stylesXml heading and title output correctness", () => {
               expect(rpr).not.toContain("<w:b/>");
               expect(rpr).not.toContain("<w:i/>");
               expect(rpr).not.toContain("<w:u ");
+              expect(rpr).not.toContain("<w:smallCaps/>");
+              expect(rpr).not.toContain("<w:caps/>");
             } else {
               if (s.includes("bold")) expect(rpr).toContain("<w:b/>");
               else expect(rpr).not.toContain("<w:b/>");
@@ -645,6 +679,24 @@ describe("Property 11: stylesXml heading and title output correctness", () => {
               if (s.includes("underline"))
                 expect(rpr).toContain('<w:u w:val="single"/>');
               else expect(rpr).not.toContain("<w:u ");
+              // smallcaps/allcaps: check smallcaps first since 'smallcaps' contains 'allcaps' as substring
+              if (s.includes("smallcaps")) {
+                expect(rpr).toContain("<w:smallCaps/>");
+                expect(rpr).not.toContain("<w:caps/>");
+              } else if (s.includes("allcaps")) {
+                expect(rpr).toContain("<w:caps/>");
+                expect(rpr).not.toContain("<w:smallCaps/>");
+              } else {
+                expect(rpr).not.toContain("<w:smallCaps/>");
+                expect(rpr).not.toContain("<w:caps/>");
+              }
+              // center: paragraph-level property in pPr
+              const ppr = extractPPr(block!);
+              if (s.includes("center")) {
+                expect(ppr).toContain('<w:jc w:val="center"/>');
+              } else {
+                expect(ppr).not.toContain('<w:jc w:val="center"/>');
+              }
             }
           }
         },
@@ -829,6 +881,32 @@ describe("Property 14: Full pipeline round-trip (md→docx→md)", () => {
     expect(metadata.headerFont).toEqual(["Georgia", "Palatino"]);
     expect(metadata.headerFontSize).toEqual([24, 18]);
     expect(metadata.headerFontStyle).toEqual(["bold-italic", "italic"]);
+  });
+
+  it("smallcaps/allcaps header font styles survive md→docx→md round-trip", async () => {
+    const fm: Frontmatter = {
+      title: ["Test Document"],
+      headerFontStyle: ["bold-smallcaps", "allcaps"],
+    };
+    const yaml = serializeFrontmatter(fm);
+    const md = yaml + "\n# Heading 1\n\n## Heading 2\n\nBody text.";
+    const { docx } = await convertMdToDocx(md);
+    const { markdown } = await convertDocx(docx);
+    const { metadata } = parseFrontmatter(markdown);
+    expect(metadata.headerFontStyle).toEqual(["bold-smallcaps", "allcaps"]);
+  });
+
+  it("center header font style survives md→docx→md round-trip", async () => {
+    const fm: Frontmatter = {
+      title: ["Test Document"],
+      headerFontStyle: ["bold-center", "center"],
+    };
+    const yaml = serializeFrontmatter(fm);
+    const md = yaml + "\n# Heading 1\n\n## Heading 2\n\nBody text.";
+    const { docx } = await convertMdToDocx(md);
+    const { markdown } = await convertDocx(docx);
+    const { metadata } = parseFrontmatter(markdown);
+    expect(metadata.headerFontStyle).toEqual(["bold-center", "center"]);
   });
 
   it("title font fields survive md→docx→md round-trip", async () => {
