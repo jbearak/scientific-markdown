@@ -106,6 +106,28 @@ export function getDefaultHighlightColor(): string {
 }
 
 /**
+ * Detect `{#id>>` comment-with-ID opener starting at position i (where text[i] == '{').
+ * Returns the content start index (position after `>>`) if matched, or -1 otherwise.
+ * The ID must be [a-zA-Z0-9_-]+.
+ */
+function detectCommentIdOpener(text: string, i: number, len: number): number {
+  if (i + 3 >= len || text.charCodeAt(i + 1) !== 0x23) return -1; // not {#
+  let j = i + 2;
+  while (j < len) {
+    const ch = text.charCodeAt(j);
+    if ((ch >= 0x30 && ch <= 0x39) || (ch >= 0x41 && ch <= 0x5A) ||
+        (ch >= 0x61 && ch <= 0x7A) || ch === 0x5F || ch === 0x2D) {
+      j++;
+    } else break;
+  }
+  if (j === i + 2) return -1; // no ID chars
+  if (j + 1 < len && text.charCodeAt(j) === 0x3E && text.charCodeAt(j + 1) === 0x3E) {
+    return j + 2; // content starts here
+  }
+  return -1;
+}
+
+/**
  * Replace all paired CriticMarkup delimiters with spaces, preserving string length.
  * This allows the format-highlight regex (`==...==`) to match across CriticMarkup
  * blocks without being blocked by `=` or `}` characters in the delimiters.
@@ -155,6 +177,16 @@ export function maskCriticDelimiters(text: string): string {
           mask(i, 3);
           mask(ci, 3);
           i = ci + 3; continue;
+        }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            mask(i, contentStart - i);
+            mask(ci, 3);
+            i = ci + 3; continue;
+          }
         }
       } else if (c2 === 0x2B && c3 === 0x2B) { // {++
         const ci = text.indexOf('++}', i + 3);
@@ -238,10 +270,12 @@ export function extractHighlightRanges(text: string, defaultColor: string): Map<
  */
 export function extractCommentRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
-  const re = /\{>>([\s\S]*?)<<\}/g;
+  const re = /\{(?:#[a-zA-Z0-9_-]+)?>>(([\s\S]*?))<<\}/g;
   let m;
   while ((m = re.exec(text)) !== null) {
-    ranges.push({ start: m.index + 3, end: m.index + m[0].length - 3 });
+    const contentEnd = m.index + m[0].length - 3;
+    const contentStart = contentEnd - m[1].length;
+    ranges.push({ start: contentStart, end: contentEnd });
   }
   return ranges;
 }
@@ -508,6 +542,18 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
         }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            commentDelimiters.push({ start: i, end: contentStart });
+            comments.push({ start: contentStart, end: ci });
+            commentDelimiters.push({ start: ci, end: ci + 3 });
+            scanFormatHighlights(contentStart, ci);
+            i = ci + 3; continue;
+          }
+        }
       } else if (c2 === 0x3D && c3 === 0x3D) { // {==
         const ci = text.indexOf('==}', i + 3);
         if (ci !== -1) {
@@ -577,6 +623,18 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
                 commentDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
+              }
+            } else if (d2 === 0x23) { // {# — possible {#id>>
+              const innerContentStart = detectCommentIdOpener(text, k, len);
+              if (innerContentStart !== -1) {
+                const ci = findMatchingClose(text, innerContentStart);
+                if (ci !== -1) {
+                  commentDelimiters.push({ start: k, end: innerContentStart });
+                  comments.push({ start: innerContentStart, end: ci });
+                  commentDelimiters.push({ start: ci, end: ci + 3 });
+                  scanFormatHighlights(innerContentStart, ci);
+                  hasContent = true; k = ci + 3; continue;
+                }
               }
             } else if (d2 === 0x2B && d3 === 0x2B) { // {++
               const ci = text.indexOf('++}', k + 3);

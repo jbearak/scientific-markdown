@@ -5,6 +5,9 @@ import {
   VALID_COLOR_IDS,
   extractHighlightRanges,
   extractCriticDelimiterRanges,
+  extractCommentRanges,
+  extractAllDecorationRanges,
+  maskCriticDelimiters,
   setDefaultHighlightColor,
   getDefaultHighlightColor,
   resolveMarkdownColor,
@@ -217,5 +220,50 @@ describe('resolveMarkdownColor', () => {
     expect(resolveMarkdownColor('unknown')).toBeUndefined();
     expect(resolveMarkdownColor('FF8C00')).toBeUndefined();
     expect(resolveMarkdownColor('')).toBeUndefined();
+  });
+});
+
+describe('Comment-with-ID {#id>>...<<} handling', () => {
+  it('extractCommentRanges returns content range for {#id>>...<<}', () => {
+    const text = '{#abc>>hello<<}';
+    const ranges = extractCommentRanges(text);
+    expect(ranges.length).toBe(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe('hello');
+  });
+
+  it('extractCommentRanges handles both plain and ID comments', () => {
+    const text = '{>>plain<<} and {#x1>>with id<<}';
+    const ranges = extractCommentRanges(text);
+    expect(ranges.length).toBe(2);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe('plain');
+    expect(text.slice(ranges[1].start, ranges[1].end)).toBe('with id');
+  });
+
+  it('maskCriticDelimiters masks {#id>> and <<} delimiters', () => {
+    const text = '{#abc>>hello<<}';
+    const masked = maskCriticDelimiters(text);
+    expect(masked).toBe('       hello   ');
+    expect(masked.length).toBe(text.length);
+  });
+
+  it('extractAllDecorationRanges populates comments and commentDelimiters for {#id>>...<<}', () => {
+    const text = '{#foo>>note<<}';
+    const result = extractAllDecorationRanges(text, 'yellow');
+    expect(result.comments.length).toBe(1);
+    expect(text.slice(result.comments[0].start, result.comments[0].end)).toBe('note');
+    expect(result.commentDelimiters.length).toBe(2);
+    // Opener: {#foo>>
+    expect(text.slice(result.commentDelimiters[0].start, result.commentDelimiters[0].end)).toBe('{#foo>>');
+    // Closer: <<}
+    expect(text.slice(result.commentDelimiters[1].start, result.commentDelimiters[1].end)).toBe('<<}');
+  });
+
+  it('format highlight spanning {#id>>...<<} is detected', () => {
+    const text = '==before {#x>>comment<<} after==';
+    const result = extractAllDecorationRanges(text, 'yellow');
+    const yellowRanges = result.highlights.get('yellow') || [];
+    expect(yellowRanges.length).toBe(1);
+    expect(result.comments.length).toBe(1);
+    expect(text.slice(result.comments[0].start, result.comments[0].end)).toBe('comment');
   });
 });

@@ -37,6 +37,8 @@ const safeContent = fc.array(safeChar, { minLength: 1, maxLength: 15 }).map(a =>
 // CriticMarkup and highlight pattern generators
 const criticHighlight = safeContent.map(s => `{==${s}==}`);
 const criticComment = safeContent.map(s => `{>>${s}<<}`);
+const safeId = fc.array(fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz0123456789'.split('')), { minLength: 1, maxLength: 5 }).map(a => a.join(''));
+const criticCommentWithId = fc.tuple(safeId, safeContent).map(([id, s]) => `{#` + id + `>>` + s + `<<}`);
 const criticAddition = safeContent.map(s => `{++${s}++}`);
 const criticDeletion = safeContent.map(s => `{--${s}--}`);
 const criticSubstitution = fc.tuple(safeContent, safeContent).map(([a, b]) => `{~~${a}~>${b}~~}`);
@@ -50,6 +52,7 @@ const nestedHighlightInAddition = safeContent.map(s => `{++text ==` + s + `== mo
 const nestedHighlightInDeletion = safeContent.map(s => `{--text ==` + s + `== more--}`);
 const nestedHighlightInCritic = safeContent.map(s => `{==text ==` + s + `== more==}`);
 const nestedHighlightInComment = safeContent.map(s => `{>>text ==` + s + `== more<<}`);
+const nestedHighlightInIdComment = fc.tuple(safeId, safeContent).map(([id, s]) => `{#` + id + `>>text ==` + s + `== more<<}`);
 const nestedColoredInAddition = fc.tuple(safeContent, fc.constantFrom(...VALID_COLOR_IDS)).map(
   ([s, c]) => `{++before ==${s}=={${c}} after++}`
 );
@@ -64,6 +67,7 @@ const mixedTextGen = fc.array(
     { weight: 2, arbitrary: coloredHighlight },
     { weight: 2, arbitrary: criticHighlight },
     { weight: 1, arbitrary: criticComment },
+    { weight: 1, arbitrary: criticCommentWithId },
     { weight: 1, arbitrary: criticAddition },
     { weight: 1, arbitrary: criticDeletion },
     { weight: 1, arbitrary: criticSubstitution },
@@ -71,6 +75,7 @@ const mixedTextGen = fc.array(
     { weight: 2, arbitrary: nestedHighlightInDeletion },
     { weight: 2, arbitrary: nestedHighlightInCritic },
     { weight: 1, arbitrary: nestedHighlightInComment },
+    { weight: 1, arbitrary: nestedHighlightInIdComment },
     { weight: 1, arbitrary: nestedColoredInAddition },
   ),
   { minLength: 1, maxLength: 8 }
