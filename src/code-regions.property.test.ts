@@ -240,6 +240,7 @@ describe('Property 1: Code Region Inertness', () => {
 				for (const r of raw.additions.filter(keep)) allRanges.push({ ...r, label: 'addition' });
 				for (const r of raw.deletions.filter(keep)) allRanges.push({ ...r, label: 'deletion' });
 				for (const r of raw.substitutionNew.filter(keep)) allRanges.push({ ...r, label: 'substitutionNew' });
+				for (const r of raw.substitutionOld.filter(keep)) allRanges.push({ ...r, label: 'substitutionOld' });
 				for (const r of raw.additionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
 				for (const r of raw.deletionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
 				for (const r of raw.substitutionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
@@ -418,6 +419,7 @@ describe('Property 2: Preservation — Non-Code-Region Behavior Unchanged', () =
 				expect(result1.additions).toEqual(result2.additions);
 				expect(result1.deletions).toEqual(result2.deletions);
 				expect(result1.substitutionNew).toEqual(result2.substitutionNew);
+				expect(result1.substitutionOld).toEqual(result2.substitutionOld);
 				expect(result1.additionDelimiters).toEqual(result2.additionDelimiters);
 				expect(result1.deletionDelimiters).toEqual(result2.deletionDelimiters);
 				expect(result1.substitutionDelimiters).toEqual(result2.substitutionDelimiters);
