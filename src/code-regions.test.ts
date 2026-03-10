@@ -197,8 +197,13 @@ function filterDecorations(text: string, defaultColor: string) {
 	all.comments.splice(0, all.comments.length, ...all.comments.filter(keep));
 	all.additions.splice(0, all.additions.length, ...all.additions.filter(keep));
 	all.deletions.splice(0, all.deletions.length, ...all.deletions.filter(keep));
-	all.delimiters.splice(0, all.delimiters.length, ...all.delimiters.filter(keep));
+	all.additionDelimiters.splice(0, all.additionDelimiters.length, ...all.additionDelimiters.filter(keep));
+	all.deletionDelimiters.splice(0, all.deletionDelimiters.length, ...all.deletionDelimiters.filter(keep));
+	all.substitutionDelimiters.splice(0, all.substitutionDelimiters.length, ...all.substitutionDelimiters.filter(keep));
+	all.substitutionOld.splice(0, all.substitutionOld.length, ...all.substitutionOld.filter(keep));
 	all.substitutionNew.splice(0, all.substitutionNew.length, ...all.substitutionNew.filter(keep));
+	all.highlightDelimiters.splice(0, all.highlightDelimiters.length, ...all.highlightDelimiters.filter(keep));
+	all.commentDelimiters.splice(0, all.commentDelimiters.length, ...all.commentDelimiters.filter(keep));
 	return all;
 }
 
@@ -207,7 +212,7 @@ describe('call-site code-region filtering skips code regions', () => {
 		const text = '`{++added++}`';
 		const result = filterDecorations(text, 'yellow');
 		expect(result.additions.length).toBe(0);
-		expect(result.delimiters.length).toBe(0);
+		expect(result.additionDelimiters.length).toBe(0);
 	});
 
 	test('inline code with highlight: `==highlighted==` — no highlight ranges', () => {
@@ -226,7 +231,7 @@ describe('call-site code-region filtering skips code regions', () => {
 		const text = '```\n{--deleted--}\n```';
 		const result = filterDecorations(text, 'yellow');
 		expect(result.deletions.length).toBe(0);
-		expect(result.delimiters.length).toBe(0);
+		expect(result.deletionDelimiters.length).toBe(0);
 	});
 
 	test('CriticMarkup both inside and outside code — only outside ranges returned', () => {
@@ -264,7 +269,7 @@ describe('call-site code-region filtering skips code regions', () => {
 		const text = '```\n{~~old~>new~~}\n```';
 		const result = filterDecorations(text, 'yellow');
 		expect(result.substitutionNew.length).toBe(0);
-		expect(result.delimiters.length).toBe(0);
+		expect(result.substitutionDelimiters.length).toBe(0);
 	});
 
 	test('inline code with colored highlight: `==text=={red}` — no highlight ranges', () => {

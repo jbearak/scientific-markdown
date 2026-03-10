@@ -8,6 +8,7 @@ import {
   extractAdditionRanges,
   extractDeletionRanges,
   extractCriticDelimiterRanges,
+  extractSubstitutionOldRanges,
   extractSubstitutionNewRanges,
   extractAllDecorationRanges,
   VALID_COLOR_IDS,
@@ -101,6 +102,7 @@ describe('Property 3: Single-pass decoration extraction equivalence', () => {
         const expectedAdditions = extractAdditionRanges(text);
         const expectedDeletions = extractDeletionRanges(text);
         const expectedDelimiters = extractCriticDelimiterRanges(text);
+        const expectedSubOld = extractSubstitutionOldRanges(text);
         const expectedSubNew = extractSubstitutionNewRanges(text);
 
         expect(normalizeHighlights(all.highlights)).toEqual(normalizeHighlights(expectedHighlights));
@@ -109,7 +111,9 @@ describe('Property 3: Single-pass decoration extraction equivalence', () => {
         expect(all.deletions).toEqual(expectedDeletions);
         const sortRanges = (a: { start: number; end: number }[]) =>
           [...a].sort((x, y) => x.start - y.start || x.end - y.end);
-        expect(sortRanges(all.delimiters)).toEqual(sortRanges(expectedDelimiters));
+        const allDelimiters = [...all.additionDelimiters, ...all.deletionDelimiters, ...all.substitutionDelimiters];
+        expect(sortRanges(allDelimiters)).toEqual(sortRanges(expectedDelimiters));
+        expect(all.substitutionOld).toEqual(expectedSubOld);
         expect(all.substitutionNew).toEqual(expectedSubNew);
       }),
       { numRuns: 200 }
