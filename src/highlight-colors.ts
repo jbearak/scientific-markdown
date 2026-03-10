@@ -270,7 +270,7 @@ export function extractHighlightRanges(text: string, defaultColor: string): Map<
  */
 export function extractCommentRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
-  const re = /\{(?:#[a-zA-Z0-9_-]+)?>>(([\s\S]*?))<<\}/g;
+  const re = /\{(?:#[a-zA-Z0-9_-]+)?>>([\s\S]*?)<<\}/g;
   let m;
   while ((m = re.exec(text)) !== null) {
     const contentEnd = m.index + m[0].length - 3;
