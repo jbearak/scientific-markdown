@@ -11,17 +11,52 @@ export function findMatchingClose(src: string, startPos: number): number {
   let depth = 1;
   let pos = startPos;
   while (pos < src.length && depth > 0) {
-    const nextOpen = src.indexOf('{>>', pos);
+    const nextPlainOpen = src.indexOf('{>>', pos);
+    const nextIdOpen = findNextIdOpener(src, pos);
+    // Pick whichever opener comes first
+    let nextOpen = -1;
+    let openLen = 3;
+    if (nextPlainOpen !== -1 && (nextIdOpen === -1 || nextPlainOpen <= nextIdOpen.index)) {
+      nextOpen = nextPlainOpen;
+    } else if (nextIdOpen !== -1) {
+      nextOpen = nextIdOpen.index;
+      openLen = nextIdOpen.length;
+    }
     const nextClose = src.indexOf('<<}', pos);
     if (nextClose === -1) break;
     if (nextOpen !== -1 && nextOpen < nextClose) {
       depth++;
-      pos = nextOpen + 3;
+      pos = nextOpen + openLen;
     } else {
       depth--;
       if (depth === 0) return nextClose;
       pos = nextClose + 3;
     }
+  }
+  return -1;
+}
+
+/** Find next `{#id>>` opener at or after pos. Returns index and length, or -1. */
+function findNextIdOpener(src: string, pos: number): { index: number; length: number } | -1 {
+  let i = pos;
+  while (i < src.length - 4) { // minimum: {#x>>
+    i = src.indexOf('{#', i);
+    if (i === -1) return -1;
+    let j = i + 2;
+    // scan id chars: [a-zA-Z0-9_-]
+    while (j < src.length) {
+      const ch = src.charCodeAt(j);
+      if ((ch >= 0x30 && ch <= 0x39) || (ch >= 0x41 && ch <= 0x5A) ||
+          (ch >= 0x61 && ch <= 0x7A) || ch === 0x5F || ch === 0x2D) {
+        j++;
+      } else {
+        break;
+      }
+    }
+    if (j > i + 2 && j + 1 < src.length && src.charCodeAt(j) === 0x3E && src.charCodeAt(j + 1) === 0x3E) {
+      return { index: i, length: j + 2 - i };
+    }
+    i = j;
   }
   return -1;
 }
