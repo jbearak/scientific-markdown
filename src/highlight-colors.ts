@@ -270,12 +270,30 @@ export function extractHighlightRanges(text: string, defaultColor: string): Map<
  */
 export function extractCommentRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
-  const re = /\{(?:#[a-zA-Z0-9_-]+)?>>([\s\S]*?)<<\}/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const contentEnd = m.index + m[0].length - 3;
-    const contentStart = contentEnd - m[1].length;
-    ranges.push({ start: contentStart, end: contentEnd });
+  const len = text.length;
+  let i = 0;
+  while (i < len - 2) {
+    if (text.charCodeAt(i) === 0x7B) { // {
+      const c2 = text.charCodeAt(i + 1);
+      if (c2 === 0x3E && i + 2 < len && text.charCodeAt(i + 2) === 0x3E) { // {>>
+        const contentStart = i + 3;
+        const ci = findMatchingClose(text, contentStart);
+        if (ci !== -1) {
+          ranges.push({ start: contentStart, end: ci });
+          i = ci + 3; continue;
+        }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            ranges.push({ start: contentStart, end: ci });
+            i = ci + 3; continue;
+          }
+        }
+      }
+    }
+    i++;
   }
   return ranges;
 }
