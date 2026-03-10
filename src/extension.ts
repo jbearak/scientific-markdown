@@ -637,10 +637,32 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(commentDecType);
 
-	const delimiterDecType = vscode.window.createTextEditorDecorationType({
-		color: new vscode.ThemeColor('descriptionForeground'),
+	const highlightDelimiterDecType = vscode.window.createTextEditorDecorationType({
+		light: { backgroundColor: CRITIC_COMMENT_DECORATION.light },
+		dark: { backgroundColor: CRITIC_COMMENT_DECORATION.dark },
 	});
-	context.subscriptions.push(delimiterDecType);
+	context.subscriptions.push(highlightDelimiterDecType);
+
+	const commentDelimiterDecType = vscode.window.createTextEditorDecorationType({
+		light: { backgroundColor: CRITIC_COMMENT_DECORATION.light },
+		dark: { backgroundColor: CRITIC_COMMENT_DECORATION.dark },
+	});
+	context.subscriptions.push(commentDelimiterDecType);
+
+	const additionDelimiterDecType = vscode.window.createTextEditorDecorationType({
+		color: new vscode.ThemeColor('gitDecoration.addedResourceForeground'),
+	});
+	context.subscriptions.push(additionDelimiterDecType);
+
+	const deletionDelimiterDecType = vscode.window.createTextEditorDecorationType({
+		color: new vscode.ThemeColor('gitDecoration.deletedResourceForeground'),
+	});
+	context.subscriptions.push(deletionDelimiterDecType);
+
+	const substitutionDelimiterDecType = vscode.window.createTextEditorDecorationType({
+		color: new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'),
+	});
+	context.subscriptions.push(substitutionDelimiterDecType);
 
 	const additionDecType = vscode.window.createTextEditorDecorationType({
 		color: new vscode.ThemeColor('gitDecoration.addedResourceForeground'),
@@ -648,9 +670,16 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(additionDecType);
 
 	const deletionDecType = vscode.window.createTextEditorDecorationType({
+		color: new vscode.ThemeColor('gitDecoration.deletedResourceForeground'),
 		textDecoration: 'line-through',
 	});
 	context.subscriptions.push(deletionDecType);
+
+	const substitutionOldDecType = vscode.window.createTextEditorDecorationType({
+		color: new vscode.ThemeColor('gitDecoration.deletedResourceForeground'),
+		textDecoration: 'line-through',
+	});
+	context.subscriptions.push(substitutionOldDecType);
 
 	const substitutionNewDecType = vscode.window.createTextEditorDecorationType({
 		color: new vscode.ThemeColor('gitDecoration.addedResourceForeground'),
@@ -682,8 +711,13 @@ export function activate(context: vscode.ExtensionContext) {
 			all.comments.splice(0, all.comments.length, ...all.comments.filter(keep));
 			all.additions.splice(0, all.additions.length, ...all.additions.filter(keep));
 			all.deletions.splice(0, all.deletions.length, ...all.deletions.filter(keep));
-			all.delimiters.splice(0, all.delimiters.length, ...all.delimiters.filter(keep));
+			all.additionDelimiters.splice(0, all.additionDelimiters.length, ...all.additionDelimiters.filter(keep));
+			all.deletionDelimiters.splice(0, all.deletionDelimiters.length, ...all.deletionDelimiters.filter(keep));
+			all.substitutionDelimiters.splice(0, all.substitutionDelimiters.length, ...all.substitutionDelimiters.filter(keep));
+			all.substitutionOld.splice(0, all.substitutionOld.length, ...all.substitutionOld.filter(keep));
 			all.substitutionNew.splice(0, all.substitutionNew.length, ...all.substitutionNew.filter(keep));
+			all.highlightDelimiters.splice(0, all.highlightDelimiters.length, ...all.highlightDelimiters.filter(keep));
+			all.commentDelimiters.splice(0, all.commentDelimiters.length, ...all.commentDelimiters.filter(keep));
 		}
 
 		// Clear all decoration types, then set those with ranges
@@ -710,27 +744,24 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		// Apply addition/deletion content decorations
-		editor.setDecorations(additionDecType, all.additions.map(r => new vscode.Range(
-			editor.document.positionAt(r.start),
-			editor.document.positionAt(r.end)
-		)));
+		const toRanges = (arr: Array<{ start: number; end: number }>) =>
+			arr.map(r => new vscode.Range(editor.document.positionAt(r.start), editor.document.positionAt(r.end)));
 
-		editor.setDecorations(deletionDecType, all.deletions.map(r => new vscode.Range(
-			editor.document.positionAt(r.start),
-			editor.document.positionAt(r.end)
-		)));
+		editor.setDecorations(additionDecType, toRanges(all.additions));
+		editor.setDecorations(deletionDecType, toRanges(all.deletions));
 
-		// Apply muted delimiter decorations
-		editor.setDecorations(delimiterDecType, all.delimiters.map(r => new vscode.Range(
-			editor.document.positionAt(r.start),
-			editor.document.positionAt(r.end)
-		)));
+		// Apply typed delimiter decorations
+		editor.setDecorations(additionDelimiterDecType, toRanges(all.additionDelimiters));
+		editor.setDecorations(deletionDelimiterDecType, toRanges(all.deletionDelimiters));
+		editor.setDecorations(substitutionDelimiterDecType, toRanges(all.substitutionDelimiters));
 
-		// Apply substitution "new" text decorations
-		editor.setDecorations(substitutionNewDecType, all.substitutionNew.map(r => new vscode.Range(
-			editor.document.positionAt(r.start),
-			editor.document.positionAt(r.end)
-		)));
+		// Apply substitution old/new text decorations
+		editor.setDecorations(substitutionOldDecType, toRanges(all.substitutionOld));
+		editor.setDecorations(substitutionNewDecType, toRanges(all.substitutionNew));
+
+		// Apply highlight/comment delimiter background decorations
+		editor.setDecorations(highlightDelimiterDecType, toRanges(all.highlightDelimiters));
+		editor.setDecorations(commentDelimiterDecType, toRanges(all.commentDelimiters));
 	}
 	let highlightDecorationUpdateTimer: ReturnType<typeof setTimeout> | undefined;
 	function scheduleHighlightDecorationsUpdate(editor: vscode.TextEditor) {

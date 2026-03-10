@@ -5,12 +5,14 @@ import { findMatchingClose } from './critic-markup';
 // - Config access: module-level get/set passes VS Code settings to markdown-it plugin
 //   without importing vscode
 // - Fallback hierarchy: configured default → yellow/amber; keep preview/editor aligned
-// - Deletion styling: no explicit foreground; strikethrough only, let theme drive foreground
+// - Deletion styling: explicit foreground via gitDecoration.deletedResourceForeground + strikethrough
 // - Comment styling: no explicit foreground; background + italic only
 // - TextMate inline highlight regex: exclude = inside ==...== captures ([^}=]+) for
 //   multi-span tokenization
 // - extractCriticDelimiterRanges(): skip comment/highlight delimiters so decoration
 //   doesn't override TextMate scopes
+// - Typed delimiter arrays (additionDelimiters, deletionDelimiters, substitutionDelimiters)
+//   enable per-type coloring: green for additions, red for deletions, modified for substitutions
 // - extractAllDecorationRanges(): preserve extractHighlightRanges() behavior for ==...==
 //   inside any CriticMarkup span
 // - Comment token scope: use meta.comment* not comment.block* — comment.block suppresses
@@ -104,6 +106,28 @@ export function getDefaultHighlightColor(): string {
 }
 
 /**
+ * Detect `{#id>>` comment-with-ID opener starting at position i (where text[i] == '{').
+ * Returns the content start index (position after `>>`) if matched, or -1 otherwise.
+ * The ID must be [a-zA-Z0-9_-]+.
+ */
+function detectCommentIdOpener(text: string, i: number, len: number): number {
+  if (i + 3 >= len || text.charCodeAt(i + 1) !== 0x23) return -1; // not {#
+  let j = i + 2;
+  while (j < len) {
+    const ch = text.charCodeAt(j);
+    if ((ch >= 0x30 && ch <= 0x39) || (ch >= 0x41 && ch <= 0x5A) ||
+        (ch >= 0x61 && ch <= 0x7A) || ch === 0x5F || ch === 0x2D) {
+      j++;
+    } else break;
+  }
+  if (j === i + 2) return -1; // no ID chars
+  if (j + 1 < len && text.charCodeAt(j) === 0x3E && text.charCodeAt(j + 1) === 0x3E) {
+    return j + 2; // content starts here
+  }
+  return -1;
+}
+
+/**
  * Replace all paired CriticMarkup delimiters with spaces, preserving string length.
  * This allows the format-highlight regex (`==...==`) to match across CriticMarkup
  * blocks without being blocked by `=` or `}` characters in the delimiters.
@@ -153,6 +177,16 @@ export function maskCriticDelimiters(text: string): string {
           mask(i, 3);
           mask(ci, 3);
           i = ci + 3; continue;
+        }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            mask(i, contentStart - i);
+            mask(ci, 3);
+            i = ci + 3; continue;
+          }
         }
       } else if (c2 === 0x2B && c3 === 0x2B) { // {++
         const ci = text.indexOf('++}', i + 3);
@@ -236,10 +270,30 @@ export function extractHighlightRanges(text: string, defaultColor: string): Map<
  */
 export function extractCommentRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
-  const re = /\{>>([\s\S]*?)<<\}/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    ranges.push({ start: m.index + 3, end: m.index + m[0].length - 3 });
+  const len = text.length;
+  let i = 0;
+  while (i < len - 2) {
+    if (text.charCodeAt(i) === 0x7B) { // {
+      const c2 = text.charCodeAt(i + 1);
+      if (c2 === 0x3E && i + 2 < len && text.charCodeAt(i + 2) === 0x3E) { // {>>
+        const contentStart = i + 3;
+        const ci = findMatchingClose(text, contentStart);
+        if (ci !== -1) {
+          ranges.push({ start: contentStart, end: ci });
+          i = ci + 3; continue;
+        }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            ranges.push({ start: contentStart, end: ci });
+            i = ci + 3; continue;
+          }
+        }
+      }
+    }
+    i++;
   }
   return ranges;
 }
@@ -329,13 +383,35 @@ export function extractSubstitutionNewRanges(text: string): Array<{ start: numbe
   return ranges;
 }
 
+/**
+ * For each {~~old~>new~~}, extract the range of the "old" portion (between {~~ and ~>).
+ */
+export function extractSubstitutionOldRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  const re = /\{~~([\s\S]*?)~>([\s\S]*?)~~\}/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const oldStart = m.index + 3; // skip {~~
+    const oldEnd = m.index + 3 + m[1].length; // before ~>
+    if (oldEnd > oldStart) {
+      ranges.push({ start: oldStart, end: oldEnd });
+    }
+  }
+  return ranges;
+}
+
 export interface AllDecorationRanges {
   highlights: Map<string, Array<{ start: number; end: number }>>;
   comments: Array<{ start: number; end: number }>;
   additions: Array<{ start: number; end: number }>;
   deletions: Array<{ start: number; end: number }>;
-  delimiters: Array<{ start: number; end: number }>;
+  additionDelimiters: Array<{ start: number; end: number }>;
+  deletionDelimiters: Array<{ start: number; end: number }>;
+  substitutionDelimiters: Array<{ start: number; end: number }>;
+  substitutionOld: Array<{ start: number; end: number }>;
   substitutionNew: Array<{ start: number; end: number }>;
+  highlightDelimiters: Array<{ start: number; end: number }>;
+  commentDelimiters: Array<{ start: number; end: number }>;
 }
 
 export function extractAllDecorationRanges(text: string, defaultColor: string): AllDecorationRanges {
@@ -344,8 +420,13 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
   const comments: Array<{ start: number; end: number }> = [];
   const additions: Array<{ start: number; end: number }> = [];
   const deletions: Array<{ start: number; end: number }> = [];
-  const delimiters: Array<{ start: number; end: number }> = [];
+  const additionDelimiters: Array<{ start: number; end: number }> = [];
+  const deletionDelimiters: Array<{ start: number; end: number }> = [];
+  const substitutionDelimiters: Array<{ start: number; end: number }> = [];
+  const substitutionOld: Array<{ start: number; end: number }> = [];
   const substitutionNew: Array<{ start: number; end: number }> = [];
+  const highlightDelimiters: Array<{ start: number; end: number }> = [];
+  const commentDelimiters: Array<{ start: number; end: number }> = [];
 
   const pushHighlight = (key: string, start: number, end: number) => {
     if (!highlights.has(key)) highlights.set(key, []);
@@ -434,9 +515,9 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
       if (c2 === 0x2B && c3 === 0x2B) { // {++
         const ci = text.indexOf('++}', i + 3);
         if (ci !== -1) {
-          delimiters.push({ start: i, end: i + 3 });
+          additionDelimiters.push({ start: i, end: i + 3 });
           if (ci > i + 3) additions.push({ start: i + 3, end: ci });
-          delimiters.push({ start: ci, end: ci + 3 });
+          additionDelimiters.push({ start: ci, end: ci + 3 });
           // Scan content for nested format highlights
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
@@ -444,9 +525,9 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
       } else if (c2 === 0x2D && c3 === 0x2D) { // {--
         const ci = text.indexOf('--}', i + 3);
         if (ci !== -1) {
-          delimiters.push({ start: i, end: i + 3 });
+          deletionDelimiters.push({ start: i, end: i + 3 });
           if (ci > i + 3) deletions.push({ start: i + 3, end: ci });
-          delimiters.push({ start: ci, end: ci + 3 });
+          deletionDelimiters.push({ start: ci, end: ci + 3 });
           // Scan content for nested format highlights
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
@@ -454,15 +535,17 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
       } else if (c2 === 0x7E && c3 === 0x7E) { // {~~
         const ci = text.indexOf('~~}', i + 3);
         if (ci !== -1) {
-          delimiters.push({ start: i, end: i + 3 });
+          substitutionDelimiters.push({ start: i, end: i + 3 });
           const content = text.slice(i + 3, ci);
           const cai = content.indexOf('~>');
           if (cai !== -1) {
-            delimiters.push({ start: i + 3 + cai, end: i + 3 + cai + 2 });
+            substitutionDelimiters.push({ start: i + 3 + cai, end: i + 3 + cai + 2 });
+            const oldEnd = i + 3 + cai;
+            if (oldEnd > i + 3) substitutionOld.push({ start: i + 3, end: oldEnd });
             const newStart = i + 3 + cai + 2;
             if (ci > newStart) substitutionNew.push({ start: newStart, end: ci });
           }
-          delimiters.push({ start: ci, end: ci + 3 });
+          substitutionDelimiters.push({ start: ci, end: ci + 3 });
           // Scan content for nested format highlights
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
@@ -470,17 +553,32 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
       } else if (c2 === 0x3E && c3 === 0x3E) { // {>>
         const ci = findMatchingClose(text, i + 3);
         if (ci !== -1) {
-          // Skip comment delimiters (preserves TextMate tag punctuation scopes)
+          commentDelimiters.push({ start: i, end: i + 3 });
           comments.push({ start: i + 3, end: ci });
+          commentDelimiters.push({ start: ci, end: ci + 3 });
           // Scan content for nested format highlights
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
         }
+      } else if (c2 === 0x23) { // {# — possible {#id>>
+        const contentStart = detectCommentIdOpener(text, i, len);
+        if (contentStart !== -1) {
+          const ci = findMatchingClose(text, contentStart);
+          if (ci !== -1) {
+            commentDelimiters.push({ start: i, end: contentStart });
+            comments.push({ start: contentStart, end: ci });
+            commentDelimiters.push({ start: ci, end: ci + 3 });
+            scanFormatHighlights(contentStart, ci);
+            i = ci + 3; continue;
+          }
+        }
       } else if (c2 === 0x3D && c3 === 0x3D) { // {==
         const ci = text.indexOf('==}', i + 3);
         if (ci !== -1) {
+          highlightDelimiters.push({ start: i, end: i + 3 });
           // Record critic highlight content range (skip delimiters for TextMate scopes)
           pushHighlight('critic', i + 3, ci);
+          highlightDelimiters.push({ start: ci, end: ci + 3 });
           // Scan content for nested format highlights
           scanFormatHighlights(i + 3, ci);
           i = ci + 3; continue;
@@ -507,8 +605,13 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
         const snapComments = comments.length;
         const snapAdditions = additions.length;
         const snapDeletions = deletions.length;
-        const snapDelimiters = delimiters.length;
+        const snapAddDelim = additionDelimiters.length;
+        const snapDelDelim = deletionDelimiters.length;
+        const snapSubDelim = substitutionDelimiters.length;
+        const snapSubOld = substitutionOld.length;
         const snapSubNew = substitutionNew.length;
+        const snapHlDelim = highlightDelimiters.length;
+        const snapCmDelim = commentDelimiters.length;
         const snapHighlightSizes = new Map<string, number>();
         for (const [key, arr] of highlights) snapHighlightSizes.set(key, arr.length);
 
@@ -524,47 +627,65 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
             if (d2 === 0x3D && d3 === 0x3D) { // {==
               const ci = text.indexOf('==}', k + 3);
               if (ci !== -1) {
+                highlightDelimiters.push({ start: k, end: k + 3 });
                 pushHighlight('critic', k + 3, ci);
+                highlightDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
               }
             } else if (d2 === 0x3E && d3 === 0x3E) { // {>>
               const ci = findMatchingClose(text, k + 3);
               if (ci !== -1) {
+                commentDelimiters.push({ start: k, end: k + 3 });
                 comments.push({ start: k + 3, end: ci });
+                commentDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
+              }
+            } else if (d2 === 0x23) { // {# — possible {#id>>
+              const innerContentStart = detectCommentIdOpener(text, k, len);
+              if (innerContentStart !== -1) {
+                const ci = findMatchingClose(text, innerContentStart);
+                if (ci !== -1) {
+                  commentDelimiters.push({ start: k, end: innerContentStart });
+                  comments.push({ start: innerContentStart, end: ci });
+                  commentDelimiters.push({ start: ci, end: ci + 3 });
+                  scanFormatHighlights(innerContentStart, ci);
+                  hasContent = true; k = ci + 3; continue;
+                }
               }
             } else if (d2 === 0x2B && d3 === 0x2B) { // {++
               const ci = text.indexOf('++}', k + 3);
               if (ci !== -1) {
-                delimiters.push({ start: k, end: k + 3 });
+                additionDelimiters.push({ start: k, end: k + 3 });
                 if (ci > k + 3) additions.push({ start: k + 3, end: ci });
-                delimiters.push({ start: ci, end: ci + 3 });
+                additionDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
               }
             } else if (d2 === 0x2D && d3 === 0x2D) { // {--
               const ci = text.indexOf('--}', k + 3);
               if (ci !== -1) {
-                delimiters.push({ start: k, end: k + 3 });
+                deletionDelimiters.push({ start: k, end: k + 3 });
                 if (ci > k + 3) deletions.push({ start: k + 3, end: ci });
-                delimiters.push({ start: ci, end: ci + 3 });
+                deletionDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
               }
             } else if (d2 === 0x7E && d3 === 0x7E) { // {~~
               const ci = text.indexOf('~~}', k + 3);
               if (ci !== -1) {
-                delimiters.push({ start: k, end: k + 3 });
+                substitutionDelimiters.push({ start: k, end: k + 3 });
                 const subContent = text.slice(k + 3, ci);
                 const cai = subContent.indexOf('~>');
                 if (cai !== -1) {
-                  delimiters.push({ start: k + 3 + cai, end: k + 3 + cai + 2 });
+                  substitutionDelimiters.push({ start: k + 3 + cai, end: k + 3 + cai + 2 });
+                  const subOldEnd = k + 3 + cai;
+                  if (subOldEnd > k + 3) substitutionOld.push({ start: k + 3, end: subOldEnd });
                   const newStart = k + 3 + cai + 2;
                   if (ci > newStart) substitutionNew.push({ start: newStart, end: ci });
                 }
-                delimiters.push({ start: ci, end: ci + 3 });
+                substitutionDelimiters.push({ start: ci, end: ci + 3 });
                 scanFormatHighlights(k + 3, ci);
                 hasContent = true; k = ci + 3; continue;
               }
@@ -616,8 +737,13 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
         comments.length = snapComments;
         additions.length = snapAdditions;
         deletions.length = snapDeletions;
-        delimiters.length = snapDelimiters;
+        additionDelimiters.length = snapAddDelim;
+        deletionDelimiters.length = snapDelDelim;
+        substitutionDelimiters.length = snapSubDelim;
+        substitutionOld.length = snapSubOld;
         substitutionNew.length = snapSubNew;
+        highlightDelimiters.length = snapHlDelim;
+        commentDelimiters.length = snapCmDelim;
         for (const [key, arr] of highlights) {
           const snap = snapHighlightSizes.get(key);
           if (snap !== undefined) arr.length = snap;
@@ -635,6 +761,9 @@ export function extractAllDecorationRanges(text: string, defaultColor: string): 
   }
 
   return {
-    highlights, comments, additions, deletions, substitutionNew, delimiters,
+    highlights, comments, additions, deletions,
+    additionDelimiters, deletionDelimiters, substitutionDelimiters,
+    substitutionOld, substitutionNew,
+    highlightDelimiters, commentDelimiters,
   };
 }

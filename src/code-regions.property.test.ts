@@ -240,7 +240,12 @@ describe('Property 1: Code Region Inertness', () => {
 				for (const r of raw.additions.filter(keep)) allRanges.push({ ...r, label: 'addition' });
 				for (const r of raw.deletions.filter(keep)) allRanges.push({ ...r, label: 'deletion' });
 				for (const r of raw.substitutionNew.filter(keep)) allRanges.push({ ...r, label: 'substitutionNew' });
-				for (const r of raw.delimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
+				for (const r of raw.substitutionOld.filter(keep)) allRanges.push({ ...r, label: 'substitutionOld' });
+				for (const r of raw.additionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
+				for (const r of raw.deletionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
+				for (const r of raw.substitutionDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
+				for (const r of raw.highlightDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
+				for (const r of raw.commentDelimiters.filter(keep)) allRanges.push({ ...r, label: 'delimiter' });
 
 				for (const range of allRanges) {
 					if (overlapsCodeRegion(range.start, range.end, regions)) {
@@ -349,7 +354,9 @@ describe('Property 2: Preservation — Non-Code-Region Behavior Unchanged', () =
 						result.additions.length +
 						result.deletions.length +
 						result.substitutionNew.length +
-						result.delimiters.length +
+						result.additionDelimiters.length +
+						result.deletionDelimiters.length +
+						result.substitutionDelimiters.length +
 						[...result.highlights.values()].reduce((sum, arr) => sum + arr.length, 0);
 
 					expect(totalRanges).toBeGreaterThan(0);
@@ -412,7 +419,12 @@ describe('Property 2: Preservation — Non-Code-Region Behavior Unchanged', () =
 				expect(result1.additions).toEqual(result2.additions);
 				expect(result1.deletions).toEqual(result2.deletions);
 				expect(result1.substitutionNew).toEqual(result2.substitutionNew);
-				expect(result1.delimiters).toEqual(result2.delimiters);
+				expect(result1.substitutionOld).toEqual(result2.substitutionOld);
+				expect(result1.additionDelimiters).toEqual(result2.additionDelimiters);
+				expect(result1.deletionDelimiters).toEqual(result2.deletionDelimiters);
+				expect(result1.substitutionDelimiters).toEqual(result2.substitutionDelimiters);
+				expect(result1.highlightDelimiters).toEqual(result2.highlightDelimiters);
+				expect(result1.commentDelimiters).toEqual(result2.commentDelimiters);
 				expect([...result1.highlights.entries()]).toEqual([...result2.highlights.entries()]);
 			}),
 			{ numRuns: 300 }
