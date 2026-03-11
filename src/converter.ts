@@ -4382,7 +4382,12 @@ export function buildMarkdown(
           const isAlertStart = lastAlertParagraphKey !== alertKey || groupChanged;
           if (isAlertStart) {
             output.push(toGfmAlertMarker(item.alertType));
-            output.push('\n' + '> '.repeat(item.blockquoteLevel));
+            const isInlineMarker = options?.blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex ?? -1) === true;
+            if (isInlineMarker) {
+              output.push(' ');
+            } else {
+              output.push('\n' + '> '.repeat(item.blockquoteLevel));
+            }
             pendingAlertInlineLevelForHardBreak = undefined;
             const next = i + 1 < mergedContent.length ? mergedContent[i + 1] : undefined;
             pendingAlertPrefixStrip = (next && next.type !== 'para') ? item.alertType : undefined;

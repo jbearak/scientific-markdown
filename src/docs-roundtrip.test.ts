@@ -476,12 +476,18 @@ describe('alerts integration: md -> docx -> md', () => {
     expect(rt.markdown).toBe(md + '\n');
   });
 
-  it('normalizes inline authored alert marker to separate-line form', async () => {
+  it('preserves inline alert marker form on round-trip', async () => {
     const md = '> [!NOTE] inline note body';
-
     const { docx } = await convertMdToDocx(md);
     const rt = await convertDocx(docx);
-    expect(rt.markdown).toBe('> [!NOTE]\n> inline note body\n');
+    expect(rt.markdown).toBe('> [!NOTE] inline note body\n');
+  });
+
+  it('preserves separate-line alert marker form on round-trip', async () => {
+    const md = '> [!NOTE]\n> separate note body';
+    const { docx } = await convertMdToDocx(md);
+    const rt = await convertDocx(docx);
+    expect(rt.markdown).toBe('> [!NOTE]\n> separate note body\n');
   });
 
   it('round-trips multi-paragraph alert blocks and preserves only one marker per alert block', async () => {
