@@ -4732,7 +4732,8 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
     ? generateRun(token.taskChecked ? '☒ ' : '☐ ', '')
     : '';
   const alertPrefix = token.type === 'blockquote' && token.alertType && token.alertLead
-    ? generateRun(ALERT_GLYPH_BY_TYPE[token.alertType] + ' ' + gfmAlertTitle(token.alertType) + ' ', '<w:rPr><w:b/><w:color w:val="' + alertColorMap[token.alertType] + '"/></w:rPr>')
+    ? generateRun(ALERT_GLYPH_BY_TYPE[token.alertType] + ' ' + gfmAlertTitle(token.alertType), '<w:rPr><w:b/><w:color w:val="' + alertColorMap[token.alertType] + '"/></w:rPr>')
+      + '<w:r><w:br/></w:r>'
     : '';
 
   let xml = '<w:p>' + pPr + alertPrefix + taskPrefix + runs + '</w:p>';
