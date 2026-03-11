@@ -3394,7 +3394,7 @@ describe('Blockquote round-trip', () => {
     );
     const buf = await buildSyntheticDocx(xml);
     const result = await convertDocx(buf);
-    expect(result.markdown).toContain('> [!TIP] Helpful advice');
+    expect(result.markdown).toContain('> [!TIP]\n> Helpful advice');
   });
 
   test('DOCX alert with hard break after prefix keeps marker-only form and paragraph break', async () => {

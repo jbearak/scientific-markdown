@@ -3614,7 +3614,7 @@ function escapeRegExp(value: string): string {
 }
 
 // Hardened alert prefix stripping: matches the exact format emitted by
-// generateParagraph (`GLYPH + ' ' + Title + ' '`) as well as bold-wrapped,
+// generateParagraph (`GLYPH + ' ' + Title + <w:br/>`) as well as bold-wrapped,
 // colon-suffixed, and bare-title variants.  The plain-glyph-title pattern
 // is checked first (most common roundtrip case) so we don't rely on the
 // more permissive regexes for the happy path.
@@ -3622,22 +3622,23 @@ function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
   // 1. Standard [!TYPE] marker (e.g. from a re-imported markdown)
   const marker = parseGfmAlertMarker(text.trimStart());
   if (marker?.type === alertType) {
-    return text.replace(/^\s*\[![A-Za-z]+\](?:[ \t]+|$)/, '');
+    return text.replace(/^\s*\[![A-Za-z]+\](?:[ \t]+|\\?\n\s*|$)/, '');
   }
   const title = gfmAlertTitle(alertType);
   const glyphAlternation = Object.keys(ALERT_GLYPH_TO_TYPE).map(escapeRegExp).join('|');
 
-  // 2. Exact generateParagraph format: `GLYPH ' ' Title ' '` (plain, no
-  //    bold, no colon).  This is the most common roundtrip format — check
-  //    it before the bold-wrapped and colon-suffixed variants.
+  // 2. Exact generateParagraph format: `GLYPH ' ' Title` followed by
+  //    optional space or `\\\n` (line break from <w:br/>).  This is the
+  //    most common roundtrip format — check it before the bold-wrapped
+  //    and colon-suffixed variants.
   const exactPlain = new RegExp(
-    '^\\s*(?:' + glyphAlternation + ') ' + escapeRegExp(title) + ' ?'
+    '^\\s*(?:' + glyphAlternation + ') ' + escapeRegExp(title) + '(?:\\\\?\\n\\s*| )'
   );
   if (exactPlain.test(text)) return text.replace(exactPlain, '');
 
   // 3. Bold-wrapped: **GLYPH Title** or __GLYPH Title__
   const titleCore = '(?:' + glyphAlternation + ')\\s*' + escapeRegExp(title);
-  const boldWrapped = text.match(/^\s*(\*\*|__)(.+?)\1\s*/);
+  const boldWrapped = text.match(/^\s*(\*\*|__)(.+?)\1\s*(?:\\?\n\s*)?/);
   if (boldWrapped) {
     const inner = boldWrapped[2].trim();
     if (new RegExp('^' + titleCore + '\\s*[:：-]?$').test(inner)) {
@@ -3646,11 +3647,11 @@ function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
   }
 
   // 4. Glyph + title with optional colon/dash separator
-  const withGlyph = new RegExp('^\\s*(?:' + glyphAlternation + ')\\s*' + escapeRegExp(title) + '\\s*[:：-]?\\s*');
+  const withGlyph = new RegExp('^\\s*(?:' + glyphAlternation + ')\\s*' + escapeRegExp(title) + '(?:\\s*[:：-]\\s*|\\s+|\\\\?\\n\\s*|$)');
   if (withGlyph.test(text)) return text.replace(withGlyph, '');
 
   // 5. Bare title with required colon/dash (e.g. "Note:" without glyph)
-  const titleOnly = new RegExp('^\\s*' + escapeRegExp(title) + '\\s*[:：-]\\s*');
+  const titleOnly = new RegExp('^\\s*' + escapeRegExp(title) + '\\s*[:：-]\\s*(?:\\\\?\\n\\s*)?');
   if (titleOnly.test(text)) return text.replace(titleOnly, '');
 
   return text;
@@ -4020,7 +4021,6 @@ export function buildMarkdown(
   const blockquoteGaps = options?.blockquoteGaps;
   const blockquotePreContentBlankLines = options?.blockquotePreContentBlankLines;
   const blockquotePostContentBlankLines = options?.blockquotePostContentBlankLines;
-  const blockquoteAlertInlineByGroup = options?.blockquoteAlertInlineByGroup;
   const htmlCommentGaps = options?.htmlCommentGaps;
   const htmlCommentAfterGaps = options?.htmlCommentAfterGaps;
   let htmlCommentIndex = 0;
@@ -4381,17 +4381,14 @@ export function buildMarkdown(
             && item.blockquoteGroupIndex !== prevBlockquoteGroupIndex;
           const isAlertStart = lastAlertParagraphKey !== alertKey || groupChanged;
           if (isAlertStart) {
-            const markerInline = item.blockquoteGroupIndex !== undefined
-              ? (blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex) ?? true)
-              : true;
             output.push(toGfmAlertMarker(item.alertType));
-            if (markerInline) {
+            const isInlineMarker = options?.blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex ?? -1) === true;
+            if (isInlineMarker) {
               output.push(' ');
-              pendingAlertInlineLevelForHardBreak = item.blockquoteLevel;
             } else {
               output.push('\n' + '> '.repeat(item.blockquoteLevel));
-              pendingAlertInlineLevelForHardBreak = undefined;
             }
+            pendingAlertInlineLevelForHardBreak = undefined;
             const next = i + 1 < mergedContent.length ? mergedContent[i + 1] : undefined;
             pendingAlertPrefixStrip = (next && next.type !== 'para') ? item.alertType : undefined;
             if (!pendingAlertPrefixStrip) {

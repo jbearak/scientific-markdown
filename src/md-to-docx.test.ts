@@ -638,7 +638,8 @@ describe('generateParagraph', () => {
     const state = createState();
     const result = generateParagraph(token, state);
     expect(result).toContain('w:pStyle w:val=\"GitHubCaution\"');
-    expect(result).toContain('⛒ Caution ');
+    expect(result).toContain('⛒ Caution');
+    expect(result).toContain('<w:br/>');
     expect(result).toContain('Watch out');
   });
 
@@ -2371,7 +2372,8 @@ describe('blockquote-style frontmatter', () => {
     const zip = await JSZip.loadAsync(docx);
     const docXml = await zip.file('word/document.xml')!.async('string');
     expect(docXml).toContain('w:pStyle w:val=\"GitHubTip\"');
-    expect(docXml).toContain('◈ Tip ');
+    expect(docXml).toContain('◈ Tip');
+    expect(docXml).toContain('<w:br/>');
     expect(docXml).not.toContain('[!TIP]');
   });
 });
