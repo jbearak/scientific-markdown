@@ -3622,7 +3622,7 @@ function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
   // 1. Standard [!TYPE] marker (e.g. from a re-imported markdown)
   const marker = parseGfmAlertMarker(text.trimStart());
   if (marker?.type === alertType) {
-    return text.replace(/^\s*\[![A-Za-z]+\](?:[ \t]+|$)/, '');
+    return text.replace(/^\s*\[![A-Za-z]+\](?:[ \t]+|\\?\n\s*|$)/, '');
   }
   const title = gfmAlertTitle(alertType);
   const glyphAlternation = Object.keys(ALERT_GLYPH_TO_TYPE).map(escapeRegExp).join('|');
