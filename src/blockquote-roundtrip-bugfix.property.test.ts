@@ -598,4 +598,32 @@ describe('Property 2: Preservation — Non-Buggy Blockquote and Non-Blockquote C
       { numRuns: 5, verbose: true },
     );
   }, { timeout: 30000 });
+
+  /**
+   * **Validates: stripAlertLeadPrefix separator handling**
+   *
+   * When a Word doc uses "※ Note: body" (colon separator, no line break),
+   * the colon must not leak into the output. Pattern 2 (exactPlain) should
+   * fall through to pattern 4 (withGlyph) which strips "※ Note: ".
+   */
+  test('colon after alert title is stripped, not leaked into body', async () => {
+    const md = '> [!NOTE]\n> Note: body text';
+    const result = stripFrontmatter(await roundtrip(md));
+    // The body text should survive without a stray leading colon
+    expect(result.trim()).toContain('body text');
+    expect(result.trim()).not.toMatch(/^>\s*: body text/m);
+  }, { timeout: 30000 });
+
+  /**
+   * **Validates: stripAlertLeadPrefix dash separator handling**
+   *
+   * Similar to the colon case — a dash separator after the alert title
+   * should be cleanly stripped on round-trip.
+   */
+  test('dash after alert title is stripped, not leaked into body', async () => {
+    const md = '> [!TIP]\n> Tip- body text';
+    const result = stripFrontmatter(await roundtrip(md));
+    expect(result.trim()).toContain('body text');
+    expect(result.trim()).not.toMatch(/^>\s*- body text/m);
+  }, { timeout: 30000 });
 });

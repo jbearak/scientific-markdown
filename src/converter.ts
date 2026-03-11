@@ -3632,7 +3632,7 @@ function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
   //    most common roundtrip format — check it before the bold-wrapped
   //    and colon-suffixed variants.
   const exactPlain = new RegExp(
-    '^\\s*(?:' + glyphAlternation + ') ' + escapeRegExp(title) + '(?:\\\\?\\n\\s*| ?)'
+    '^\\s*(?:' + glyphAlternation + ') ' + escapeRegExp(title) + '(?:\\\\?\\n\\s*| )'
   );
   if (exactPlain.test(text)) return text.replace(exactPlain, '');
 
@@ -3647,7 +3647,7 @@ function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
   }
 
   // 4. Glyph + title with optional colon/dash separator
-  const withGlyph = new RegExp('^\\s*(?:' + glyphAlternation + ')\\s*' + escapeRegExp(title) + '\\s*[:：-]?\\s*(?:\\\\?\\n\\s*)?');
+  const withGlyph = new RegExp('^\\s*(?:' + glyphAlternation + ')\\s*' + escapeRegExp(title) + '(?:\\s*[:：-]\\s*|\\s+|\\\\?\\n\\s*|$)');
   if (withGlyph.test(text)) return text.replace(withGlyph, '');
 
   // 5. Bare title with required colon/dash (e.g. "Note:" without glyph)
