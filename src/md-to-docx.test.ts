@@ -928,7 +928,8 @@ describe('generateTable', () => {
 
     expect(result).toContain('<w:gridSpan w:val="2"/>');
     expect(result).toContain('<w:tblGrid>');
-    expect(result).toContain('<w:gridCol/>');
+    // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each)
+    expect(result).toContain('<w:gridCol w:w="4680"/>');
     expect(result).toContain('Span');
   });
 
@@ -1013,13 +1014,13 @@ describe('generateTable', () => {
     expect(result).toContain('B');
     expect(result).toContain('C');
     expect(result).toContain('D');
-    // Grid should have 3 columns
-    expect((result.match(/<w:gridCol\/>/g) || []).length).toBe(3);
+    // Grid should have 3 columns with explicit dxa widths (Word Online requirement)
+    expect((result.match(/<w:gridCol w:w="\d+"\/>/g) || []).length).toBe(3);
     // 3 w:tr rows (2 explicit + vMerge continuation is implicit within the 2 rows)
     expect((result.match(/<w:tr>/g) || []).length).toBe(2);
   });
 
-  it('does not emit tblGrid when no spans are present', () => {
+  it('emits tblGrid with dxa widths for Word Online even when no spans are present', () => {
     const rows: MdTableRow[] = [
       {
         header: false,
@@ -1032,7 +1033,10 @@ describe('generateTable', () => {
     const token: MdToken = { type: 'table', runs: [], rows };
     const result = generateTable(token, makeState());
 
-    expect(result).not.toContain('<w:tblGrid>');
+    // tblGrid is always emitted (Word Online needs it to size columns correctly)
+    expect(result).toContain('<w:tblGrid>');
+    // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each)
+    expect(result).toContain('<w:gridCol w:w="4680"/><w:gridCol w:w="4680"/>');
     expect(result).not.toContain('<w:gridSpan');
     expect(result).not.toContain('<w:vMerge');
   });
@@ -1172,8 +1176,8 @@ describe('generateTable', () => {
     const result = generateTable(token, makeState());
     // tblW should be pct-based
     expect(result).toContain('<w:tblW w:w="5000" w:type="pct"/>');
-    // gridCol elements should be bare (Word computes grid from tcW pct)
-    expect(result).toContain('<w:gridCol/><w:gridCol/><w:gridCol/>');
+    // gridCol elements have explicit dxa widths: [2,1,1] → pcts [2500,1250,1250] → dxa [4680,2340,2340]
+    expect(result).toContain('<w:gridCol w:w="4680"/><w:gridCol w:w="2340"/><w:gridCol w:w="2340"/>');
     // Each cell should have tcW
     expect(result).toContain('<w:tcW w:w="2500" w:type="pct"/>');
     expect(result).toContain('<w:tcW w:w="1250" w:type="pct"/>');
@@ -1192,7 +1196,7 @@ describe('generateTable', () => {
     expect(result).toContain('<w:tcW w:w="3750" w:type="pct"/>');
   });
 
-  it('no col-widths: tblW auto, no tcW elements', () => {
+  it('no col-widths: tblW stays auto but tblGrid gains dxa widths for Word Online', () => {
     const rows: MdTableRow[] = [
       { header: false, cells: [
         { runs: [{ type: 'text', text: 'A' }] },
@@ -1201,9 +1205,12 @@ describe('generateTable', () => {
     ];
     const token: MdToken = { type: 'table', runs: [], rows };
     const result = generateTable(token, makeState());
+    // tblW stays auto so Word Desktop continues to auto-size (no forced full-page-width)
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
+    // No tcW — Word Desktop auto-sizes cells; Word Online uses gridCol for sizing
     expect(result).not.toContain('<w:tcW');
-    expect(result).not.toContain('<w:gridCol');
+    // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each) for Word Online
+    expect(result).toContain('<w:gridCol w:w="4680"/>');
   });
 
   it('equal col-widths gives equal distribution', () => {

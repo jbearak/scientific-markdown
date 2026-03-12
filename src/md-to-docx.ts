@@ -83,6 +83,7 @@ export interface MdToken {
   portraitClose?: true;     // sentinel: end of portrait section
   tableOrientation?: 'landscape' | 'portrait'; // table-only orientation from data-orientation
   tableColWidths?: number[] | 'equal' | 'auto'; // per-table column width ratios
+  gridSourceColWidths?: number[]; // column char-widths inferred from +---+---+ source; used for Word Online layout only, never persisted
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
   customStyleOpen?: string;   // sentinel: start of custom style block (style name)
   customStyleClose?: true;    // sentinel: end of custom style block
@@ -1830,12 +1831,14 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
               })),
               header: row.header,
             }));
-            result.push({
+            const gridToken: MdToken = {
               type: 'table',
               runs: [],
               rows: gridRows,
               sourceFormat: 'grid',
-            });
+            };
+            if (gridData.colWidths) gridToken.gridSourceColWidths = gridData.colWidths;
+            result.push(gridToken);
           } catch {
             // Invalid JSON — emit as regular HTML comment
             result.push({
@@ -3690,6 +3693,10 @@ function settingsXml(rsid: string, hasFootnotes?: boolean, hasEndnotes?: boolean
     '<w:zoom w:percent="100"/>\n' +
     '<w:defaultTabStop w:val="720"/>\n' +
     '<w:characterSpacingControl w:val="doNotCompress"/>\n' +
+    // Prevent Word Online from showing hidden text (w:vanish runs used for HTML comments).
+    // Without this, Word Desktop may save its "Show Hidden Text" preference into the file,
+    // causing Word Online to reveal all vanish-hidden content on subsequent opens.
+    '<w:showDraftContent w:val="0"/>\n' +
     '<w:compat>\n' +
     '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>\n' +
     '<w:compatSetting w:name="overrideTableStyleFontSizeAndJustification" w:uri="http://schemas.microsoft.com/office/word" w:val="1"/>\n' +
@@ -4698,8 +4705,11 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 
   // Pure HTML-comment paragraphs are hidden (vanish) — collapse their spacing
   // so they don't contribute visible gaps in Word's layout engine.
+  // The paragraph mark is also vanished (via pPr>rPr) so the paragraph is
+  // completely hidden; without this, Word Online may show the paragraph after
+  // Word Desktop saves its "Show Hidden Text" preference into settings.xml.
   if (token.type === 'paragraph' && token.runs.length > 0 && token.runs.every(r => r.type === 'html_comment')) {
-    pPr = '<w:pPr><w:spacing w:after="0" w:line="1" w:lineRule="exact"/></w:pPr>';
+    pPr = '<w:pPr><w:spacing w:after="0" w:line="1" w:lineRule="exact"/><w:rPr><w:vanish/></w:rPr></w:pPr>';
   }
 
   if (token.type === 'code_block') {
@@ -4848,13 +4858,35 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   }
   if (totalCols === 0) totalCols = 1;
 
-  // Resolve column widths: 'auto' (per-table or document-level) skips widths entirely;
-  // otherwise per-table token > document-level fontOverrides > none (Word auto-sizing).
+  // Compute page text width in dxa for gridCol w:w attributes (required for Word Online).
+  // Use landscape page width (pgSz.h) when the table lives in a landscape section or
+  // carries a per-table landscape orientation, otherwise use portrait width (pgSz.w).
+  const pgSz = parseTemplatePgSz(state.templateSectPr);
+  const marginsStr = parseTemplateMargins(state.templateSectPr);
+  const leftMarginDxa = parseInt(marginsStr.match(/w:left="(\d+)"/)?.[1] ?? '1440', 10);
+  const rightMarginDxa = parseInt(marginsStr.match(/w:right="(\d+)"/)?.[1] ?? '1440', 10);
+  const isLandscape = state.inLandscapeSection || token.tableOrientation === 'landscape';
+  const textWidthDxa = (isLandscape ? pgSz.h : pgSz.w) - leftMarginDxa - rightMarginDxa;
+
+  // Resolve column widths.
+  // colWidthPcts: set when user explicitly specifies table-col-widths — drives tblW pct,
+  //   tblLayout fixed, tcW pct, and gridCol dxa.  Preserves Word Desktop fixed-layout.
+  // implicitGridColDxa: set when no explicit widths — only drives gridCol w:w so Word
+  //   Online has a column grid to work from.  tblW/tblLayout/tcW stay as "auto" so
+  //   Word Desktop continues to auto-size the table (no full-page-width forcing).
   let colWidthPcts: number[] | undefined;
+  let implicitGridColDxa: number[] | undefined;
   const resolvedWidths = token.tableColWidths ?? fo?.tableColWidths;
   if (resolvedWidths && resolvedWidths !== 'auto') {
     const expanded = expandColWidths(resolvedWidths, totalCols);
     colWidthPcts = colWidthsToPct(expanded);
+  } else if (!resolvedWidths) {
+    // No explicit setting: compute proportional dxa widths for gridCol only.
+    // Grid tables use source proportions; pipe tables use equal weights.
+    const implicitWeights = token.gridSourceColWidths ?? new Array(totalCols).fill(1);
+    const expanded = expandColWidths(implicitWeights, totalCols);
+    const pcts = colWidthsToPct(expanded);
+    implicitGridColDxa = pcts.map(p => Math.round(p / 5000 * textWidthDxa));
   }
 
   // Check if any cell uses colspan or rowspan
@@ -4909,11 +4941,19 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
     : '<w:tblW w:w="0" w:type="auto"/>';
   xml += '<w:tblPr>' + tblBorders + tblLayout + '<w:tblCellMar><w:top w:w="36" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="36" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
 
-  // Emit tblGrid (required when widths or spans are present)
-  if (hasSpans || colWidthPcts) {
+  // Emit tblGrid (required when widths or spans are present).
+  // Include w:w in dxa on each gridCol so Word Online can size columns correctly;
+  // without explicit widths, Word Online collapses all columns to a single character wide.
+  if (hasSpans || colWidthPcts || implicitGridColDxa) {
     xml += '<w:tblGrid>';
     for (let c = 0; c < totalCols; c++) {
-      xml += '<w:gridCol/>';
+      if (colWidthPcts) {
+        xml += '<w:gridCol w:w="' + Math.round(colWidthPcts[c] / 5000 * textWidthDxa) + '"/>';
+      } else if (implicitGridColDxa) {
+        xml += '<w:gridCol w:w="' + implicitGridColDxa[c] + '"/>';
+      } else {
+        xml += '<w:gridCol/>';
+      }
     }
     xml += '</w:tblGrid>';
   }

@@ -676,7 +676,8 @@ describe('Font customization unit tests', () => {
       const zip = await JSZip.loadAsync(result.docx);
       const docXml = await zip.file('word/document.xml')!.async('string');
       expect(docXml).toContain('<w:tblW w:w="5000" w:type="pct"/>');
-      expect(docXml).toContain('<w:gridCol/><w:gridCol/><w:gridCol/>');
+      // gridCol elements have explicit dxa widths (not bare) for Word Online compatibility
+      expect(docXml).toContain('<w:gridCol w:w=');
       expect(docXml).toContain('<w:tcW w:w="2500" w:type="pct"/>');
     });
 

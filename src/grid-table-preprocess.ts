@@ -5,6 +5,7 @@ export const GRID_TABLE_PLACEHOLDER_PREFIX = '<!-- MANUSCRIPT_GRID_TABLE:';
 
 export interface GridTableData {
   rows: Array<{ cells: string[]; header: boolean }>;
+  colWidths?: number[]; // inner character widths of each column, derived from +---+---+ separators
 }
 
 /**
@@ -148,5 +149,9 @@ function parseGridTable(lines: string[]): GridTableData | null {
     }
   }
 
-  return rows.length > 0 ? { rows } : null;
+  const colWidths: number[] = [];
+  for (let c = 0; c < numCols; c++) {
+    colWidths.push(colBoundaries[c + 1] - colBoundaries[c] - 1);
+  }
+  return rows.length > 0 ? { rows, colWidths } : null;
 }
