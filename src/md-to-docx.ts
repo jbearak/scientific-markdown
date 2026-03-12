@@ -4865,7 +4865,11 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const marginsStr = parseTemplateMargins(state.templateSectPr);
   const leftMarginDxa = parseInt(marginsStr.match(/w:left="(\d+)"/)?.[1] ?? '1440', 10);
   const rightMarginDxa = parseInt(marginsStr.match(/w:right="(\d+)"/)?.[1] ?? '1440', 10);
-  const isLandscape = state.inLandscapeSection || token.tableOrientation === 'landscape';
+  // Mirror the guard in generateDocumentXml: table-only landscape orientation is only
+  // active when NOT already inside a portrait fence (in that case no landscape section
+  // break is emitted, so the table renders in portrait context).
+  const isLandscape = state.inLandscapeSection ||
+    (token.tableOrientation === 'landscape' && !state.inPortraitSection);
   const textWidthDxa = (isLandscape ? pgSz.h : pgSz.w) - leftMarginDxa - rightMarginDxa;
 
   // Resolve column widths.
