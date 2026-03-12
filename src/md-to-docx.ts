@@ -4140,7 +4140,10 @@ export function generateRun(text: string, rPr: string): string {
 function generateHiddenHtmlCommentRun(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = normalized.split('\n');
-  let xml = '<w:r><w:rPr><w:vanish/></w:rPr>';
+  // vanish hides the run in Word Desktop; white color makes it invisible in Word Online
+  // (which shows hidden text in editing mode regardless of showDraftContent).
+  // Schema order: vanish precedes color in CT_RPr.
+  let xml = '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>';
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {
       xml += '<w:br/>';
@@ -4709,7 +4712,7 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
   // completely hidden; without this, Word Online may show the paragraph after
   // Word Desktop saves its "Show Hidden Text" preference into settings.xml.
   if (token.type === 'paragraph' && token.runs.length > 0 && token.runs.every(r => r.type === 'html_comment')) {
-    pPr = '<w:pPr><w:spacing w:after="0" w:line="1" w:lineRule="exact"/><w:rPr><w:vanish/></w:rPr></w:pPr>';
+    pPr = '<w:pPr><w:spacing w:after="0" w:line="1" w:lineRule="exact"/><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr></w:pPr>';
   }
 
   if (token.type === 'code_block') {
