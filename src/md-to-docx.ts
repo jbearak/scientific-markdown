@@ -1,5 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import { escapeXml, generateCitation, generateMathXml, createCiteprocEngineLocal, createCiteprocEngineAsync, generateBibliographyXml, generateMissingKeysXml } from './md-to-docx-citations';
+import { escapeXml, escapeXmlText, generateCitation, generateMathXml, createCiteprocEngineLocal, createCiteprocEngineAsync, generateBibliographyXml, generateMissingKeysXml } from './md-to-docx-citations';
 import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
@@ -51,10 +51,12 @@ export { extractHtmlTables } from './html-table-parser';
 // 12. DEFLATE compression: use DEFLATE (not STORE) when generating the zip.
 //     Word re-compresses uncompressed entries on open and marks the file dirty.
 //
-// Known limitation: documents with Zotero/citation field codes (w:fldChar +
-// w:instrText "ADDIN ZOTERO_ITEM CSL_CITATION ...") are always marked as
-// modified by Word on open, regardless of these invariants. This is a Word
-// behavior — it processes/recalculates citation fields during open.
+// Known limitation — Word recalculation triggers dirty flag:
+//   - Tables: Word recalculates column widths/layout on open.
+//   - Citation field codes: Word recalculates Zotero/citation fields on open.
+// In both cases, even Word's own saved version of the document is marked as
+// modified when re-opened. This is inherent Word behavior that cannot be
+// prevented by any XML structure we emit.
 
 // Placeholder for deferred bibliography insertion (NUL bytes cannot appear in valid XML)
 const BIBL_PLACEHOLDER = '\x00MANUSCRIPT_BIBL_MARKER\x00';
@@ -4163,7 +4165,9 @@ export function generateRPr(run: MdRun, extraRPr?: string): string {
 // leading or trailing spaces. Word strips the attribute from text that doesn't
 // need it, which sets the dirty flag. See dirty-flag invariant #1.
 function wt(text: string): string {
-  const escaped = escapeXml(text);
+  // Use escapeXmlText (not escapeXml) — quotes don't need escaping in element
+  // text content, and &quot; triggers Word's dirty flag (see invariant #7 note).
+  const escaped = escapeXmlText(text);
   if (escaped.length > 0 && (escaped[0] === ' ' || escaped[escaped.length - 1] === ' ')) {
     return '<w:t xml:space="preserve">' + escaped + '</w:t>';
   }
@@ -4960,26 +4964,16 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   // Resolve border style: default is 'horizontal'
   const borderStyle = fo?.tableBorders ?? 'horizontal';
 
+  // Word strips border entries with w:val="none" on open and marks the file
+  // dirty.  Only emit borders that have a visible style.
   let tblBorders: string;
   if (borderStyle === 'none') {
-    tblBorders = '<w:tblBorders>'
-      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '</w:tblBorders>';
+    tblBorders = '';
   } else if (borderStyle === 'horizontal') {
     // Grey horizontal separators between body rows, no vertical/outer borders.
     // Header underline is applied per-cell via tcBorders below.
     tblBorders = '<w:tblBorders>'
-      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
       + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>'
-      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
       + '</w:tblBorders>';
   } else {
     // 'solid': all borders single black
@@ -5000,7 +4994,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
   const tblW = colWidthPcts
     ? '<w:tblW w:w="5000" w:type="pct"/>'
     : '<w:tblW w:w="0" w:type="auto"/>';
-  xml += '<w:tblPr>' + tblBorders + tblLayout + '<w:tblCellMar><w:top w:w="36" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="36" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' + tblW + (hasHeaderRow ? '<w:tblLook w:firstRow="1"/>' : '') + '</w:tblPr>';
+  // tblPr element order: tblW before tblBorders (Word normalizes out-of-order).
+  // Omit default left/right cell margins (108 dxa) — Word strips these as defaults.
+  xml += '<w:tblPr>' + tblW + tblBorders + tblLayout + '<w:tblCellMar><w:top w:w="36" w:type="dxa"/><w:bottom w:w="36" w:type="dxa"/></w:tblCellMar>' + (hasHeaderRow ? '<w:tblLook w:val="0020" w:firstRow="1"/>' : '') + '</w:tblPr>';
 
   // Emit tblGrid (required when widths or spans are present).
   // Include w:w in dxa on each gridCol so Word Online can size columns correctly;
@@ -5057,6 +5053,8 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
           let w = 0;
           for (let ci = 0; ci < pending.colspan && gridCol + ci < colWidthPcts.length; ci++) w += colWidthPcts[gridCol + ci];
           tcPr += '<w:tcW w:w="' + w + '" w:type="pct"/>';
+        } else {
+          tcPr += '<w:tcW w:w="0" w:type="auto"/>';
         }
         if (pending.colspan > 1) {
           tcPr += '<w:gridSpan w:val="' + pending.colspan + '"/>';
@@ -5077,7 +5075,7 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
         if (colWidthPcts && gridCol < colWidthPcts.length) {
           xml += '<w:tc><w:tcPr><w:tcW w:w="' + colWidthPcts[gridCol] + '" w:type="pct"/></w:tcPr><w:p/></w:tc>';
         } else {
-          xml += '<w:tc><w:p/></w:tc>';
+          xml += '<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p/></w:tc>';
         }
         gridCol++;
         continue;
@@ -5095,6 +5093,9 @@ export function generateTable(token: MdToken, state: DocxGenState, options?: MdT
           let w = 0;
           for (let ci = 0; ci < cs && gridCol + ci < colWidthPcts.length; ci++) w += colWidthPcts[gridCol + ci];
           parts.push('<w:tcW w:w="' + w + '" w:type="pct"/>');
+        } else {
+          // Word adds tcW auto to every cell on open — emit it to prevent dirty flag
+          parts.push('<w:tcW w:w="0" w:type="auto"/>');
         }
         if (cs > 1) parts.push('<w:gridSpan w:val="' + cs + '"/>');
         if (rs > 1) parts.push('<w:vMerge w:val="restart"/>');

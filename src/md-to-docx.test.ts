@@ -475,7 +475,9 @@ describe('generateRun', () => {
 
   it('escapes XML characters', () => {
     const result = generateRun('<test> & "quotes"', '');
-    expect(result).toBe('<w:r><w:t>&lt;test&gt; &amp; &quot;quotes&quot;</w:t></w:r>');
+    // Quotes don't need escaping in element text (only in attributes).
+    // Using &quot; triggers Word's dirty flag.
+    expect(result).toBe('<w:r><w:t>&lt;test&gt; &amp; "quotes"</w:t></w:r>');
   });
 });
 
@@ -863,7 +865,7 @@ describe('generateTable', () => {
     ];
     const token: MdToken = { type: 'table', runs: [], rows };
     const result = generateTable(token, makeState());
-    expect(result).toContain('<w:tblLook w:firstRow="1"/>');
+    expect(result).toContain('<w:tblLook w:val="0020" w:firstRow="1"/>');
   });
 
   it('does not emit tblLook firstRow when no header rows', () => {
@@ -1212,8 +1214,8 @@ describe('generateTable', () => {
     const result = generateTable(token, makeState());
     // tblW stays auto so Word Desktop continues to auto-size (no forced full-page-width)
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
-    // No tcW — Word Desktop auto-sizes cells; Word Online uses gridCol for sizing
-    expect(result).not.toContain('<w:tcW');
+    // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
+    expect(result).toContain('<w:tcW w:w="0" w:type="auto"/>');
     // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each) for Word Online
     expect(result).toContain('<w:gridCol w:w="4680"/>');
   });
@@ -1248,7 +1250,8 @@ describe('generateTable', () => {
     state.fontOverrides = { tableColWidths: [2, 1] };
     const result = generateTable(token, state);
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
-    expect(result).not.toContain('<w:tcW');
+    // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
+    expect(result).toContain('<w:tcW w:w="0" w:type="auto"/>');
   });
 
   it('frontmatter table-col-widths: auto round-trips through DOCX', async () => {
@@ -1269,9 +1272,10 @@ describe('generateTable', () => {
       const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
       const result = generateTable(token, makeState());
       expect(result).toContain('w:color="BFBFBF"');
-      expect(result).toContain('<w:insideV w:val="none"');
-      expect(result).toContain('<w:left w:val="none"');
-      expect(result).toContain('<w:right w:val="none"');
+      // val="none" borders are omitted (Word strips them on open and marks dirty)
+      expect(result).not.toContain('<w:insideV');
+      expect(result).not.toContain('<w:left w:val="none"');
+      expect(result).not.toContain('<w:right w:val="none"');
     });
 
     it('horizontal style adds black bottom border on last header row cells', () => {
@@ -1296,9 +1300,8 @@ describe('generateTable', () => {
       state.fontOverrides = { tableBorders: 'none' };
       const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
       const result = generateTable(token, state);
-      expect(result).toContain('<w:top w:val="none"');
-      expect(result).toContain('<w:insideH w:val="none"');
-      expect(result).toContain('<w:insideV w:val="none"');
+      // val="none" borders are omitted entirely (Word strips them and marks dirty)
+      expect(result).not.toContain('<w:tblBorders>');
       expect(result).not.toContain('<w:tcBorders>');
     });
 

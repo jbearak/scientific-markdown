@@ -20,6 +20,13 @@ export function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Escape for XML element text content — only &, <, > need escaping.
+ *  Quotes do NOT need escaping in element text; using &quot; causes Word to
+ *  decode them on open and set the dirty flag. */
+export function escapeXmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function stripHtmlTags(html: string): string {
   return decodeHtmlEntities(html.replace(/<[^>]+>/g, ''));
 }
@@ -107,7 +114,10 @@ export function htmlToOoxmlRuns(html: string, extraRPr?: string): string {
     if (extraRPr) rPr.push(extraRPr);
 
     const rPrXml = rPr.length > 0 ? '<w:rPr>' + rPr.join('') + '</w:rPr>' : '';
-    return '<w:r>' + rPrXml + '<w:t xml:space="preserve">' + escapeXml(decodeHtmlEntities(run.text)) + '</w:t></w:r>';
+    const decoded = escapeXmlText(decodeHtmlEntities(run.text));
+    const needsPreserve = decoded.length > 0 && (decoded[0] === ' ' || decoded[decoded.length - 1] === ' ');
+    const wt = needsPreserve ? '<w:t xml:space="preserve">' + decoded + '</w:t>' : '<w:t>' + decoded + '</w:t>';
+    return '<w:r>' + rPrXml + wt + '</w:r>';
   }).join('');
 }
 

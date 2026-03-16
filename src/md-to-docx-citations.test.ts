@@ -478,15 +478,16 @@ describe('escapeXml', () => {
 describe('htmlToOoxmlRuns', () => {
   it('passes through plain text', () => {
     const result = htmlToOoxmlRuns('hello world');
-    expect(result).toBe('<w:r><w:t xml:space="preserve">hello world</w:t></w:r>');
+    // No leading/trailing space → no xml:space="preserve"
+    expect(result).toBe('<w:r><w:t>hello world</w:t></w:r>');
   });
 
   it('applies italic and bold formatting', () => {
     const result = htmlToOoxmlRuns('<i>italic</i> and <b>bold</b>');
     expect(result).toContain('<w:rPr><w:i/></w:rPr>');
-    expect(result).toContain('<w:t xml:space="preserve">italic</w:t>');
+    expect(result).toContain('<w:t>italic</w:t>');
     expect(result).toContain('<w:rPr><w:b/></w:rPr>');
-    expect(result).toContain('<w:t xml:space="preserve">bold</w:t>');
+    expect(result).toContain('<w:t>bold</w:t>');
   });
 
   it('decodes HTML entities without double-encoding', () => {
@@ -516,7 +517,7 @@ describe('htmlToOoxmlRuns', () => {
     // All three text segments should have smallCaps
     expect(result).toContain('<w:smallCaps/>');
     // "AFTER" must still have smallCaps
-    const afterMatch = result.match(/<w:r>(<w:rPr>.*?<\/w:rPr>)?<w:t xml:space="preserve">AFTER<\/w:t><\/w:r>/);
+    const afterMatch = result.match(/<w:r>(<w:rPr>.*?<\/w:rPr>)?<w:t>AFTER<\/w:t><\/w:r>/);
     expect(afterMatch).not.toBeNull();
     expect(afterMatch![0]).toContain('<w:smallCaps/>');
   });
@@ -525,7 +526,7 @@ describe('htmlToOoxmlRuns', () => {
     const html = '<span style="font-variant:small-caps;">caps</span>normal';
     const result = htmlToOoxmlRuns(html);
     // "normal" should NOT have smallCaps
-    const normalMatch = result.match(/<w:r>(<w:rPr>.*?<\/w:rPr>)?<w:t xml:space="preserve">normal<\/w:t><\/w:r>/);
+    const normalMatch = result.match(/<w:r>(<w:rPr>.*?<\/w:rPr>)?<w:t>normal<\/w:t><\/w:r>/);
     expect(normalMatch).not.toBeNull();
     expect(normalMatch![0]).not.toContain('<w:smallCaps/>');
   });
@@ -534,7 +535,7 @@ describe('htmlToOoxmlRuns', () => {
     const result = htmlToOoxmlRuns('<sup><i>text</i></sup>');
     expect(result).toContain('<w:i/>');
     expect(result).toContain('<w:vertAlign w:val="superscript"/>');
-    expect(result).toContain('<w:t xml:space="preserve">text</w:t>');
+    expect(result).toContain('<w:t>text</w:t>');
   });
 });
 
