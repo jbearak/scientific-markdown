@@ -2642,6 +2642,10 @@ export interface DocxGenState {
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
   activeCustomStyle?: string; // currently active <!-- style: X --> block name
   activeListStartOverrides: Map<number, number>; // ilvl → override numId for restarted ordered lists
+  inNoteBody: boolean; // true while generating footnote/endnote body XML
+  noteRelationships: Map<string, string>; // URL -> rId for hyperlinks inside footnote/endnote bodies
+  noteImageRelationships: Map<string, { rId: string; mediaPath: string }>; // dedup key -> { rId, media path } for images inside footnote/endnote bodies
+  noteNextRId: number; // next rId for footnotes.xml.rels (independent of document rIds)
 }
 
 interface CommentEntry {
@@ -4103,6 +4107,22 @@ function documentRelsXml(opts: DocumentRelsOptions): string {
   return xml;
 }
 
+function noteRelsXml(
+  relationships: Map<string, string>,
+  imageRelationships: Map<string, { rId: string; mediaPath: string }>,
+): string {
+  let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  xml += '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n';
+  for (const [url, relId] of relationships) {
+    xml += '<Relationship Id="' + relId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="' + escapeXml(url) + '" TargetMode="External"/>\n';
+  }
+  for (const [, entry] of imageRelationships) {
+    xml += '<Relationship Id="' + entry.rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="' + entry.mediaPath + '"/>\n';
+  }
+  xml += '</Relationships>';
+  return xml;
+}
+
 export function generateRPr(run: MdRun, extraRPr?: string): string {
   const parts: string[] = [];
 
@@ -4284,11 +4304,21 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
     if (run.type === 'text') {
       const rPr = generateRPr(run, state.tableRunRPrExtra || undefined);
       if (run.href) {
-        let rId = state.relationships.get(run.href);
-        if (!rId) {
-          rId = 'rId' + (state.nextRId + state.rIdOffset);
-          state.relationships.set(run.href, rId);
-          state.nextRId++;
+        let rId: string | undefined;
+        if (state.inNoteBody) {
+          rId = state.noteRelationships.get(run.href);
+          if (!rId) {
+            rId = 'rId' + state.noteNextRId;
+            state.noteRelationships.set(run.href, rId);
+            state.noteNextRId++;
+          }
+        } else {
+          rId = state.relationships.get(run.href);
+          if (!rId) {
+            rId = 'rId' + (state.nextRId + state.rIdOffset);
+            state.relationships.set(run.href, rId);
+            state.nextRId++;
+          }
         }
         xml += '<w:hyperlink r:id="' + rId + '">' + generateRun(run.text, rPr) + '</w:hyperlink>';
       } else {
@@ -4574,7 +4604,8 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
       const absPath = options?.sourceDir ? resolve(options.sourceDir, src) : resolve(src);
       // Check deduplication: same file + same syntax reuses the same rId
       const dedupeKey = absPath + '\0' + syntax;
-      let imgEntry = state.imageRelationships.get(dedupeKey);
+      const imgRelMap = state.inNoteBody ? state.noteImageRelationships : state.imageRelationships;
+      let imgEntry = imgRelMap.get(dedupeKey);
       if (!imgEntry) {
         // Check if media binary already loaded (different syntax, same file)
         let mediaPath = state.imageMediaPaths.get(absPath);
@@ -4597,10 +4628,16 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
           state.imageBinaries.set(mediaPath, fileData);
           state.imageExtensions.add(ext);
         }
-        const rId = 'rId' + (state.nextRId + state.rIdOffset);
-        state.nextRId++;
+        let rId: string;
+        if (state.inNoteBody) {
+          rId = 'rId' + state.noteNextRId;
+          state.noteNextRId++;
+        } else {
+          rId = 'rId' + (state.nextRId + state.rIdOffset);
+          state.nextRId++;
+        }
         imgEntry = { rId, mediaPath };
-        state.imageRelationships.set(dedupeKey, imgEntry);
+        imgRelMap.set(dedupeKey, imgEntry);
         state.imageFormats.set(rId, syntax);
       }
       // Determine dimensions
@@ -5767,6 +5804,10 @@ export async function convertMdToDocx(
     templateSectPr,
     sentinelGaps: {},
     activeListStartOverrides: new Map(),
+    inNoteBody: false,
+    noteRelationships: new Map(),
+    noteImageRelationships: new Map(),
+    noteNextRId: 1,
   };
 
   // Pre-scan all tokens (main document + footnotes) for citation keys so
@@ -5824,7 +5865,10 @@ export async function convertMdToDocx(
 
   const documentXml = generateDocumentXml(tokens, state, resolvedOptions, bibEntries, citeprocEngine, frontmatter);
 
-  // Build footnote/endnote body OOXML from definitions
+  // Build footnote/endnote body OOXML from definitions.
+  // Set inNoteBody so hyperlinks/images route to note-scoped relationship maps
+  // (footnotes.xml has its own .rels file, separate from document.xml.rels).
+  state.inNoteBody = true;
   for (const [label, bodyText] of footnoteDefs) {
     const noteId = state.footnoteLabelToId.get(label);
     if (noteId === undefined) {
@@ -5898,6 +5942,7 @@ export async function convertMdToDocx(
     }
     state.footnoteEntries.push({ id: noteId, bodyXml });
   }
+  state.inNoteBody = false;
 
   // Warn for orphaned references (use footnoteLabelToId, not the pre-body-processing
   // snapshot, so cross-references allocated during footnote body generation are covered)
@@ -5912,6 +5957,8 @@ export async function convertMdToDocx(
   const hasCommentsIds = hasThreadedComments;
   const hasCommentsExtensible = hasThreadedComments;
   const hasPeople = hasThreadedComments;
+  // Word requires both footnotes.xml and endnotes.xml whenever either is present.
+  const hasNotes = state.hasFootnotes || state.hasEndnotes;
 
   // Dirty-flag invariant #6: rIds must be sequential with no gaps.
   // rIdOffset reserved max slots for optional rels; now that all hasX flags are known,
@@ -5919,8 +5966,7 @@ export async function convertMdToDocx(
   const actualFixedCount = 1 /* styles */ +
     (state.hasList ? 1 : 0) +
     (state.hasComments ? 1 : 0) +
-    (state.hasFootnotes ? 1 : 0) +
-    (state.hasEndnotes ? 1 : 0) +
+    (hasNotes ? 2 : 0) /* both footnotes + endnotes always included together */ +
     (hasCommentsExtended ? 1 : 0) +
     (hasCommentsIds ? 1 : 0) +
     (hasCommentsExtensible ? 1 : 0) +
@@ -5938,10 +5984,8 @@ export async function convertMdToDocx(
       return n > state.rIdOffset ? 'rId' + (n - shift) : match;
     };
     finalDocumentXml = finalDocumentXml.replace(rIdAttrRe, remapRId);
-    // Remap rId references in footnote/endnote body XML
-    for (const entry of state.footnoteEntries) {
-      entry.bodyXml = entry.bodyXml.replace(rIdAttrRe, remapRId);
-    }
+    // Note: footnote/endnote body rIds are in a separate namespace (footnotes.xml.rels)
+    // and do not need remapping here.
     // Remap relationship maps
     for (const [url, relId] of state.relationships) {
       const m = relId.match(/^rId(\d+)$/);
@@ -5994,7 +6038,7 @@ export async function convertMdToDocx(
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15
   // (template settings.xml may have compatibilityMode < 15, causing "unreadable content" errors)
-  zip.file('word/settings.xml', settingsXml(state.rsid, state.hasFootnotes, state.hasEndnotes, hasThreadedComments));
+  zip.file('word/settings.xml', settingsXml(state.rsid, hasNotes, hasNotes, hasThreadedComments));
   zip.file('word/webSettings.xml', webSettingsXml());
 
   // Always include fontTable.xml
@@ -6035,11 +6079,21 @@ export async function convertMdToDocx(
     }
   }
 
-  if (state.hasFootnotes) {
-    zip.file('word/footnotes.xml', injectParaIds(footnotesXml(state.footnoteEntries), state));
+  // Sort footnote entries by ID — definitions may appear in a different order than
+  // references in the document body, but Word requires ascending ID order.
+  state.footnoteEntries.sort((a, b) => a.id - b.id);
+
+  if (hasNotes) {
+    zip.file('word/footnotes.xml', injectParaIds(footnotesXml(
+      state.hasFootnotes ? state.footnoteEntries : []), state));
+    zip.file('word/endnotes.xml', injectParaIds(endnotesXml(
+      state.hasEndnotes ? state.footnoteEntries : []), state));
   }
-  if (state.hasEndnotes) {
-    zip.file('word/endnotes.xml', injectParaIds(endnotesXml(state.footnoteEntries), state));
+
+  // Generate footnotes/endnotes .rels file for hyperlinks/images scoped to the notes part
+  if (hasNotes && (state.noteRelationships.size > 0 || state.noteImageRelationships.size > 0)) {
+    const noteRelsTarget = state.hasEndnotes ? 'word/_rels/endnotes.xml.rels' : 'word/_rels/footnotes.xml.rels';
+    zip.file(noteRelsTarget, noteRelsXml(state.noteRelationships, state.noteImageRelationships));
   }
 
   // Document properties
@@ -6110,8 +6164,8 @@ export async function convertMdToDocx(
     hasComments: state.hasComments,
     hasTheme,
     hasCustomProps,
-    hasFootnotes: state.hasFootnotes,
-    hasEndnotes: state.hasEndnotes,
+    hasFootnotes: hasNotes,
+    hasEndnotes: hasNotes,
     hasCommentsExtended,
     hasCommentsIds,
     hasCommentsExtensible,
@@ -6124,8 +6178,8 @@ export async function convertMdToDocx(
     hasList: state.hasList,
     hasComments: state.hasComments,
     hasTheme,
-    hasFootnotes: state.hasFootnotes,
-    hasEndnotes: state.hasEndnotes,
+    hasFootnotes: hasNotes,
+    hasEndnotes: hasNotes,
     hasCommentsExtended,
     hasCommentsIds,
     hasCommentsExtensible,
