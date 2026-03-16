@@ -4745,9 +4745,11 @@ export function buildMarkdown(
       if (!isNaN(na) && !isNaN(nb)) return na - nb;
       return a.label.localeCompare(b.label);
     });
-    // Use note-specific image format mapping when rendering note bodies
+    // Use note-specific image format mapping when rendering note bodies,
+    // merging with the document-body mapping so note overrides fall back
+    // to the original imageFormatMapping where keys are missing.
     const noteRenderOpts = renderOpts.noteImageFormatMapping
-      ? { ...renderOpts, imageFormatMapping: renderOpts.noteImageFormatMapping }
+      ? { ...renderOpts, imageFormatMapping: { ...renderOpts.imageFormatMapping, ...renderOpts.noteImageFormatMapping } }
       : renderOpts;
     for (const entry of entries) {
       output.push('\n\n');
