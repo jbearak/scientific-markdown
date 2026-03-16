@@ -1681,7 +1681,7 @@ describe('CriticMarkup OOXML generation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del w:id="0" w:author="Jane" w:date="2024-01-02T00:00:00Z">');
-    expect(result).toContain('<w:delText xml:space="preserve">deleted text</w:delText>');
+    expect(result).toContain('<w:delText>deleted text</w:delText>');
     expect(result).toContain('</w:del>');
   });
 
@@ -1693,7 +1693,7 @@ describe('CriticMarkup OOXML generation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del w:id="0" w:author="Bob" w:date="2024-01-03T00:00:00Z">');
-    expect(result).toContain('<w:delText xml:space="preserve">old text</w:delText>');
+    expect(result).toContain('<w:delText>old text</w:delText>');
     expect(result).toContain('<w:ins w:id="1" w:author="Bob" w:date="2024-01-03T00:00:00Z">');
     expect(result).toContain('new text');
   });
@@ -2006,7 +2006,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del');
     expect(result).toContain('<w:delText xml:space="preserve">text </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">added</w:delText>');
+    expect(result).toContain('<w:delText>added</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> more</w:delText>');
     // Must NOT contain <w:ins> inside the deletion
     const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
@@ -2029,7 +2029,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:delText xml:space="preserve">outer </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">inner</w:delText>');
+    expect(result).toContain('<w:delText>inner</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> text</w:delText>');
   });
 
@@ -2048,8 +2048,8 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:delText xml:space="preserve">before </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">old</w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">new</w:delText>');
+    expect(result).toContain('<w:delText>old</w:delText>');
+    expect(result).toContain('<w:delText>new</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> after</w:delText>');
   });
 
@@ -2068,7 +2068,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const result = generateParagraph(token, state, { authorName: 'Default' });
     // The nested deletion should have bold formatting propagated to its inner text
     expect(result).toContain('<w:del');
-    expect(result).toContain('<w:delText xml:space="preserve">deleted</w:delText>');
+    expect(result).toContain('<w:delText>deleted</w:delText>');
     // The deleted run should include bold rPr
     const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
     expect(delMatch).toBeTruthy();

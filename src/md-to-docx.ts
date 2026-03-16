@@ -4174,6 +4174,14 @@ function wt(text: string): string {
   return '<w:t>' + escaped + '</w:t>';
 }
 
+function delText(text: string): string {
+  const escaped = escapeXmlText(text);
+  if (escaped.length > 0 && (escaped[0] === ' ' || escaped[escaped.length - 1] === ' ')) {
+    return '<w:delText xml:space="preserve">' + escaped + '</w:delText>';
+  }
+  return '<w:delText>' + escaped + '</w:delText>';
+}
+
 export function generateRun(text: string, rPr: string): string {
   return '<w:r>' + rPr + wt(text) + '</w:r>';
 }
@@ -4276,7 +4284,7 @@ function generateDeletedCriticContent(
   if (!formattedRuns || formattedRuns.length === 0) {
     const fallbackRun = mergeRunFormatting({ type: 'text', text: fallbackText }, outer, forced);
     const rPr = generateRPr(fallbackRun, extraRPr);
-    return '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(fallbackText) + '</w:delText></w:r>';
+    return '<w:r>' + (rPr ? rPr : '') + delText(fallbackText) + '</w:r>';
   }
 
   let xml = '';
@@ -4284,7 +4292,7 @@ function generateDeletedCriticContent(
     if (run.type === 'softbreak') {
       const merged = mergeRunFormatting(run, outer, forced);
       const rPr = generateRPr(merged, extraRPr);
-      xml += '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve"> </w:delText></w:r>';
+      xml += '<w:r>' + (rPr ? rPr : '') + delText(' ') + '</w:r>';
       continue;
     }
     if (run.type === 'hardbreak') {
@@ -4312,7 +4320,7 @@ function generateDeletedCriticContent(
     }
     if (run.type !== 'text' || !run.text) continue;
     const rPr = generateRPr(run, extraRPr);
-    xml += '<w:r>' + (rPr ? rPr : '') + '<w:delText xml:space="preserve">' + escapeXml(run.text) + '</w:delText></w:r>';
+    xml += '<w:r>' + (rPr ? rPr : '') + delText(run.text) + '</w:r>';
   }
   return xml;
 }

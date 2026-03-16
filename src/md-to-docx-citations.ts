@@ -114,9 +114,9 @@ export function htmlToOoxmlRuns(html: string, extraRPr?: string): string {
     if (extraRPr) rPr.push(extraRPr);
 
     const rPrXml = rPr.length > 0 ? '<w:rPr>' + rPr.join('') + '</w:rPr>' : '';
-    const decoded = escapeXmlText(decodeHtmlEntities(run.text));
-    const needsPreserve = decoded.length > 0 && (decoded[0] === ' ' || decoded[decoded.length - 1] === ' ');
-    const wt = needsPreserve ? '<w:t xml:space="preserve">' + decoded + '</w:t>' : '<w:t>' + decoded + '</w:t>';
+    const escaped = escapeXmlText(decodeHtmlEntities(run.text));
+    const needsPreserve = escaped.length > 0 && (escaped[0] === ' ' || escaped[escaped.length - 1] === ' ');
+    const wt = needsPreserve ? '<w:t xml:space="preserve">' + escaped + '</w:t>' : '<w:t>' + escaped + '</w:t>';
     return '<w:r>' + rPrXml + wt + '</w:r>';
   }).join('');
 }

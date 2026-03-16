@@ -9,8 +9,6 @@
  * Usage:
  *   bun scripts/dirty-flag-diagnose.ts [path-to-md] [--bisect] [--keep]
  *
- * Defaults to /Users/jmb/repos/ai-tools/ai-tools-internal-ai.md
- *
  * Options:
  *   --bisect   After diffing, test each changed part individually to isolate
  *              which replacement(s) make the file clean
@@ -26,7 +24,12 @@ import { convertMdToDocx } from '../src/md-to-docx';
 const args = process.argv.slice(2);
 const bisect = args.includes('--bisect');
 const keep = args.includes('--keep');
-const mdPath = args.find(a => !a.startsWith('--')) || '/Users/jmb/repos/ai-tools/ai-tools-internal-ai.md';
+const mdPathArg = args.find(a => !a.startsWith('--'));
+if (!mdPathArg) {
+  console.error('Usage: bun scripts/dirty-flag-diagnose.ts <path-to-md> [--bisect] [--keep]');
+  process.exit(1);
+}
+const mdPath: string = mdPathArg;
 
 const wordDocsDir = join(homedir(), 'Library/Containers/com.microsoft.Word/Data/Documents');
 const diagDocx = join(wordDocsDir, 'dirty-diag.docx');
@@ -140,7 +143,7 @@ async function replacePartInZip(
   for (const path of Object.keys(zip.files)) {
     if (zip.files[path]?.dir) delete (zip.files as Record<string, unknown>)[path];
   }
-  return zip.generateAsync({ type: 'uint8array' });
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +261,7 @@ async function main() {
     if (changedParts.length > 1) {
       let allFixed: Uint8Array = originalDocx;
       for (const partPath of changedParts) {
-        allFixed = await replacePartInZip(allFixed, partPath, wordParts.get(partPath)!) as Uint8Array<ArrayBuffer>;
+        allFixed = await replacePartInZip(allFixed, partPath, wordParts.get(partPath)!);
       }
       const allFixedPath = join(wordDocsDir, 'dirty-diag-bisect-all.docx');
       writeFileSync(allFixedPath, allFixed);
