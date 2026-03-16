@@ -1215,7 +1215,7 @@ describe('generateTable', () => {
     // tblW stays auto so Word Desktop continues to auto-size (no forced full-page-width)
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
     // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
-    expect(result).toContain('<w:tcW w:w="0" w:type="auto"/>');
+    expect((result.match(/<w:tcW w:w="0" w:type="auto"\/>/g) || []).length).toBe(2);
     // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each) for Word Online
     expect(result).toContain('<w:gridCol w:w="4680"/>');
   });
@@ -1251,7 +1251,7 @@ describe('generateTable', () => {
     const result = generateTable(token, state);
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
     // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
-    expect(result).toContain('<w:tcW w:w="0" w:type="auto"/>');
+    expect((result.match(/<w:tcW w:w="0" w:type="auto"\/>/g) || []).length).toBe(2);
   });
 
   it('frontmatter table-col-widths: auto round-trips through DOCX', async () => {
@@ -1301,7 +1301,7 @@ describe('generateTable', () => {
       const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
       const result = generateTable(token, state);
       // val="none" borders are omitted entirely (Word strips them and marks dirty)
-      expect(result).not.toContain('<w:tblBorders>');
+      expect(result).not.toMatch(/<w:tblBorders\b/);
       expect(result).not.toContain('<w:tcBorders>');
     });
 

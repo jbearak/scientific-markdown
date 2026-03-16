@@ -3839,7 +3839,7 @@ function corePropsXml(author?: string): string {
   let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
     '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n';
   if (author && author.trim()) {
-    xml += '<dc:creator>' + escapeXml(author) + '</dc:creator>\n';
+    xml += '<dc:creator>' + escapeXmlText(author) + '</dc:creator>\n';
   }
   xml += '<dcterms:created xsi:type="dcterms:W3CDTF">' + now + '</dcterms:created>\n' +
     '<dcterms:modified xsi:type="dcterms:W3CDTF">' + now + '</dcterms:modified>\n' +

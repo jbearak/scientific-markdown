@@ -6,8 +6,10 @@
  * dirty, and if so, saves Word's version and diffs every XML part to identify
  * what Word normalizes.
  *
+ * Note: Requires macOS with Microsoft Word installed.
+ *
  * Usage:
- *   bun scripts/dirty-flag-diagnose.ts [path-to-md] [--bisect] [--keep]
+ *   bun scripts/dirty-flag-diagnose.ts <path-to-md> [--bisect] [--keep]
  *
  * Options:
  *   --bisect   After diffing, test each changed part individually to isolate
@@ -39,6 +41,10 @@ const savedDocx = join(wordDocsDir, 'dirty-diag-saved.docx');
 // AppleScript helpers
 // ---------------------------------------------------------------------------
 
+function escapeAppleScriptString(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function runAppleScript(lines: string[]): string {
   const cmdArgs = lines.flatMap(line => ['-e', line]);
   const result = spawnSync('osascript', cmdArgs, {
@@ -56,7 +62,7 @@ function checkDirtyFlag(filePath: string): 'DIRTY' | 'CLEAN' {
     'tell application "Microsoft Word"',
     '  activate',
     '  delay 5',
-    '  open POSIX file "' + filePath + '"',
+    '  open POSIX file "' + escapeAppleScriptString(filePath) + '"',
     '  delay 5',
     '  set maxChecks to 10',
     '  set allClean to true',
@@ -83,7 +89,7 @@ function saveAndClose(filePath: string): void {
     'tell application "Microsoft Word"',
     '  activate',
     '  delay 3',
-    '  open POSIX file "' + filePath + '"',
+    '  open POSIX file "' + escapeAppleScriptString(filePath) + '"',
     '  delay 5',
     '  save active document',
     '  delay 3',
