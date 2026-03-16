@@ -475,7 +475,9 @@ describe('generateRun', () => {
 
   it('escapes XML characters', () => {
     const result = generateRun('<test> & "quotes"', '');
-    expect(result).toBe('<w:r><w:t>&lt;test&gt; &amp; &quot;quotes&quot;</w:t></w:r>');
+    // Quotes don't need escaping in element text (only in attributes).
+    // Using &quot; triggers Word's dirty flag.
+    expect(result).toBe('<w:r><w:t>&lt;test&gt; &amp; "quotes"</w:t></w:r>');
   });
 });
 
@@ -863,7 +865,7 @@ describe('generateTable', () => {
     ];
     const token: MdToken = { type: 'table', runs: [], rows };
     const result = generateTable(token, makeState());
-    expect(result).toContain('<w:tblLook w:firstRow="1"/>');
+    expect(result).toContain('<w:tblLook w:val="0020" w:firstRow="1"/>');
   });
 
   it('does not emit tblLook firstRow when no header rows', () => {
@@ -1212,8 +1214,8 @@ describe('generateTable', () => {
     const result = generateTable(token, makeState());
     // tblW stays auto so Word Desktop continues to auto-size (no forced full-page-width)
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
-    // No tcW — Word Desktop auto-sizes cells; Word Online uses gridCol for sizing
-    expect(result).not.toContain('<w:tcW');
+    // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
+    expect((result.match(/<w:tcW w:w="0" w:type="auto"\/>/g) || []).length).toBe(2);
     // gridCol elements have explicit dxa widths (equal: 9360/2 = 4680 each) for Word Online
     expect(result).toContain('<w:gridCol w:w="4680"/>');
   });
@@ -1248,7 +1250,8 @@ describe('generateTable', () => {
     state.fontOverrides = { tableColWidths: [2, 1] };
     const result = generateTable(token, state);
     expect(result).toContain('<w:tblW w:w="0" w:type="auto"/>');
-    expect(result).not.toContain('<w:tcW');
+    // Every cell gets tcW auto so Word doesn't add it on open (dirty-flag prevention)
+    expect((result.match(/<w:tcW w:w="0" w:type="auto"\/>/g) || []).length).toBe(2);
   });
 
   it('frontmatter table-col-widths: auto round-trips through DOCX', async () => {
@@ -1269,9 +1272,10 @@ describe('generateTable', () => {
       const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
       const result = generateTable(token, makeState());
       expect(result).toContain('w:color="BFBFBF"');
-      expect(result).toContain('<w:insideV w:val="none"');
-      expect(result).toContain('<w:left w:val="none"');
-      expect(result).toContain('<w:right w:val="none"');
+      // val="none" borders are omitted (Word strips them on open and marks dirty)
+      expect(result).not.toContain('<w:insideV');
+      expect(result).not.toContain('<w:left w:val="none"');
+      expect(result).not.toContain('<w:right w:val="none"');
     });
 
     it('horizontal style adds black bottom border on last header row cells', () => {
@@ -1296,9 +1300,8 @@ describe('generateTable', () => {
       state.fontOverrides = { tableBorders: 'none' };
       const token: MdToken = { type: 'table', runs: [], rows: simpleRows };
       const result = generateTable(token, state);
-      expect(result).toContain('<w:top w:val="none"');
-      expect(result).toContain('<w:insideH w:val="none"');
-      expect(result).toContain('<w:insideV w:val="none"');
+      // val="none" borders are omitted entirely (Word strips them and marks dirty)
+      expect(result).not.toMatch(/<w:tblBorders\b/);
       expect(result).not.toContain('<w:tcBorders>');
     });
 
@@ -1678,7 +1681,7 @@ describe('CriticMarkup OOXML generation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del w:id="0" w:author="Jane" w:date="2024-01-02T00:00:00Z">');
-    expect(result).toContain('<w:delText xml:space="preserve">deleted text</w:delText>');
+    expect(result).toContain('<w:delText>deleted text</w:delText>');
     expect(result).toContain('</w:del>');
   });
 
@@ -1690,7 +1693,7 @@ describe('CriticMarkup OOXML generation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del w:id="0" w:author="Bob" w:date="2024-01-03T00:00:00Z">');
-    expect(result).toContain('<w:delText xml:space="preserve">old text</w:delText>');
+    expect(result).toContain('<w:delText>old text</w:delText>');
     expect(result).toContain('<w:ins w:id="1" w:author="Bob" w:date="2024-01-03T00:00:00Z">');
     expect(result).toContain('new text');
   });
@@ -2003,7 +2006,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:del');
     expect(result).toContain('<w:delText xml:space="preserve">text </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">added</w:delText>');
+    expect(result).toContain('<w:delText>added</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> more</w:delText>');
     // Must NOT contain <w:ins> inside the deletion
     const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
@@ -2026,7 +2029,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:delText xml:space="preserve">outer </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">inner</w:delText>');
+    expect(result).toContain('<w:delText>inner</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> text</w:delText>');
   });
 
@@ -2045,8 +2048,8 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const state = createState();
     const result = generateParagraph(token, state, { authorName: 'Default' });
     expect(result).toContain('<w:delText xml:space="preserve">before </w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">old</w:delText>');
-    expect(result).toContain('<w:delText xml:space="preserve">new</w:delText>');
+    expect(result).toContain('<w:delText>old</w:delText>');
+    expect(result).toContain('<w:delText>new</w:delText>');
     expect(result).toContain('<w:delText xml:space="preserve"> after</w:delText>');
   });
 
@@ -2065,7 +2068,7 @@ describe('Nested critic runs in deletions and formatting propagation', () => {
     const result = generateParagraph(token, state, { authorName: 'Default' });
     // The nested deletion should have bold formatting propagated to its inner text
     expect(result).toContain('<w:del');
-    expect(result).toContain('<w:delText xml:space="preserve">deleted</w:delText>');
+    expect(result).toContain('<w:delText>deleted</w:delText>');
     // The deleted run should include bold rPr
     const delMatch = result.match(/<w:del[^>]*>([\s\S]*?)<\/w:del>/);
     expect(delMatch).toBeTruthy();
