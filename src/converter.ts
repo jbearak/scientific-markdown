@@ -369,6 +369,10 @@ export async function extractImageFormatMapping(data: Uint8Array | JSZip): Promi
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_IMAGE_FORMATS');
 }
 
+export async function extractNoteImageFormatMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_NOTE_IMAGE_FORMATS');
+}
+
 export type NumberingDefs = Map<string, Map<string, 'bullet' | 'ordered'>>;
 export type NumberingStartOverrides = Map<string, Map<string, number>>; // numId → ilvl → start
 
@@ -3427,7 +3431,7 @@ function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comm
   return lines.join('\n');
 }
 
-type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; pipeTableAlignedMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; tableColWidthsMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number> };
+type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; noteImageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; pipeTableAlignedMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; tableColWidthsMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number> };
 
 // East Asian Wide / Fullwidth code-point ranges (UAX #11).  Characters in
 // these ranges occupy two terminal columns; everything else is treated as
@@ -3871,7 +3875,7 @@ function renderTableOrFallback(
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; noteImageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -3986,6 +3990,7 @@ export function buildMarkdown(
     emittedIdCommentBodies,
     noteLabels,
     imageFormatMapping: options?.imageFormatMapping ?? undefined,
+    noteImageFormatMapping: options?.noteImageFormatMapping ?? undefined,
     tableFormatMapping: options?.tableFormatMapping ?? undefined,
     pipeTableAlignedMapping: options?.pipeTableAlignedMapping ?? undefined,
     tableFontSizeMapping: options?.tableFontSizeMapping ?? undefined,
@@ -4740,6 +4745,12 @@ export function buildMarkdown(
       if (!isNaN(na) && !isNaN(nb)) return na - nb;
       return a.label.localeCompare(b.label);
     });
+    // Use note-specific image format mapping when rendering note bodies,
+    // merging with the document-body mapping so note overrides fall back
+    // to the original imageFormatMapping where keys are missing.
+    const noteRenderOpts = renderOpts.noteImageFormatMapping
+      ? { ...renderOpts, imageFormatMapping: { ...renderOpts.imageFormatMapping, ...renderOpts.noteImageFormatMapping } }
+      : renderOpts;
     for (const entry of entries) {
       output.push('\n\n');
       const bodyMerged = mergeConsecutiveRuns(entry.body);
@@ -4751,7 +4762,7 @@ export function buildMarkdown(
         const item = bodyMerged[bi];
         if (item.type === 'para') {
           if (bi > partStart) {
-            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, renderOpts);
+            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, noteRenderOpts);
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
@@ -4759,7 +4770,7 @@ export function buildMarkdown(
         } else if (item.type === 'math' && item.display) {
           // Flush preceding inline content and keep display math as its own block part.
           if (bi > partStart) {
-            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, renderOpts);
+            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, noteRenderOpts);
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
@@ -4769,12 +4780,12 @@ export function buildMarkdown(
         } else if (item.type === 'table') {
           // Flush preceding inline content
           if (bi > partStart) {
-            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, renderOpts);
+            const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, noteRenderOpts);
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
-          const noteStoredFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
-          const noteTableResult = renderTableOrFallback(item, comments, options, renderOpts, noteStoredFormat, tableIndex);
+          const noteStoredFormat = noteRenderOpts?.tableFormatMapping?.get(String(tableIndex));
+          const noteTableResult = renderTableOrFallback(item, comments, options, noteRenderOpts, noteStoredFormat, tableIndex);
           if (noteTableResult.directivePrefix) {
             bodyParts.push(noteTableResult.directivePrefix.replace(/\n+$/, '') + '\n' + noteTableResult.body);
           } else {
@@ -4785,7 +4796,7 @@ export function buildMarkdown(
         }
       }
       if (partStart < bodyMerged.length) {
-        const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, renderOpts);
+        const part = renderInlineRange(bodyMerged, partStart, comments, { stopBeforeDisplayMath: true }, noteRenderOpts);
         bodyParts.push(part.text);
         deferredAll.push(...part.deferredComments);
       }
@@ -5274,7 +5285,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5289,6 +5300,7 @@ export async function convertDocx(
     extractBlockquotePostContentBlankLineMapping(zip),
     extractBlockquoteAlertStyleMapping(zip),
     extractImageFormatMapping(zip),
+    extractNoteImageFormatMapping(zip),
     extractTableFormatMapping(zip),
     extractPipeTableAlignedMapping(zip),
     extractTableFontSizeMapping(zip),
@@ -5478,6 +5490,7 @@ export async function convertDocx(
     blockquotePostContentBlankLines: blockquotePostContentBlankLineMapping,
     blockquoteAlertInlineByGroup: blockquoteAlertStyleMapping,
     imageFormatMapping,
+    noteImageFormatMapping,
     tableFormatMapping,
     pipeTableAlignedMapping,
     tableFontSizeMapping,

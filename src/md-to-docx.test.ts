@@ -61,6 +61,7 @@ function makeState(): DocxGenState {
     imageMediaPaths: new Map(),
     imageBinaries: new Map(),
     imageFormats: new Map(),
+    noteImageFormats: new Map(),
     imageExtensions: new Set(),
     rsid: '00000001',
     nextImageDocPrId: 1,
@@ -84,6 +85,10 @@ function makeState(): DocxGenState {
     pipeTableAligned: new Map(),
     sentinelGaps: {},
     activeListStartOverrides: new Map(),
+    inNoteBody: false,
+    noteRelationships: new Map(),
+    noteImageRelationships: new Map(),
+    noteNextRId: 1,
   };
 }
 
@@ -2187,7 +2192,12 @@ describe('Full MD→DOCX footnote generation', () => {
     const zip = await JSZip.loadAsync(docx);
     const endnotesFile = zip.file('word/endnotes.xml');
     expect(endnotesFile).not.toBeNull();
-    expect(zip.file('word/footnotes.xml')).toBeNull();
+    // Word requires both footnotes.xml and endnotes.xml whenever either is present
+    const footnotesFile = zip.file('word/footnotes.xml');
+    expect(footnotesFile).not.toBeNull();
+    // Footnotes.xml should have only separators (no actual footnote content)
+    const footnotesXml = await footnotesFile!.async('string');
+    expect(footnotesXml).not.toContain('An endnote.');
     const endnotesXml = await endnotesFile!.async('string');
     expect(endnotesXml).toContain('xmlns:w14=');
     expect(endnotesXml).toContain('w:endnoteRef');
@@ -2237,6 +2247,79 @@ describe('Full MD→DOCX footnote generation', () => {
       const customXml = await customFile.async('string');
       expect(customXml).not.toContain('MANUSCRIPT_FOOTNOTE_IDS');
     }
+  });
+});
+
+describe('Footnote OOXML structure', () => {
+  it('hyperlinks in footnotes go into footnotes.xml.rels, not document.xml.rels', async () => {
+    const md = 'Text[^1] here.\n\n[^1]: See [example](https://example.com) for details.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+
+    // footnotes.xml should have a hyperlink with r:id
+    const footnotesXml = await zip.file('word/footnotes.xml')!.async('string');
+    expect(footnotesXml).toContain('r:id="rId1"');
+    expect(footnotesXml).toContain('example');
+
+    // footnotes.xml.rels should exist and contain the hyperlink relationship
+    const noteRels = zip.file('word/_rels/footnotes.xml.rels');
+    expect(noteRels).not.toBeNull();
+    const noteRelsXml = await noteRels!.async('string');
+    expect(noteRelsXml).toContain('https://example.com');
+    expect(noteRelsXml).toContain('rId1');
+
+    // document.xml.rels should NOT contain the footnote hyperlink
+    const docRels = await zip.file('word/_rels/document.xml.rels')!.async('string');
+    expect(docRels).not.toContain('https://example.com');
+  });
+
+  it('footnote entries are sorted by ID regardless of definition order', async () => {
+    // Definitions appear in reverse order (3, 2, 1) but references appear in order (1, 2, 3)
+    const md = 'First[^a] second[^b] third[^c].\n\n[^c]: Third.\n\n[^b]: Second.\n\n[^a]: First.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const footnotesXml = await zip.file('word/footnotes.xml')!.async('string');
+
+    // Extract footnote IDs in order of appearance
+    const ids = [...footnotesXml.matchAll(/w:footnote w:id="(\d+)"/g)].map(m => parseInt(m[1]));
+    // Should be in ascending order
+    for (let i = 1; i < ids.length; i++) {
+      expect(ids[i]).toBeGreaterThan(ids[i - 1]);
+    }
+  });
+
+  it('endnotes.xml is always present when footnotes.xml exists', async () => {
+    const md = 'Text[^1] here.\n\n[^1]: A footnote.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    expect(zip.file('word/footnotes.xml')).not.toBeNull();
+    expect(zip.file('word/endnotes.xml')).not.toBeNull();
+
+    // endnotes.xml should have separators but no actual endnote content
+    const endnotesXml = await zip.file('word/endnotes.xml')!.async('string');
+    expect(endnotesXml).toContain('w:endnote w:type="separator"');
+    expect(endnotesXml).not.toContain('A footnote.');
+
+    // settings.xml should have both footnotePr and endnotePr
+    const settingsXml = await zip.file('word/settings.xml')!.async('string');
+    expect(settingsXml).toContain('w:footnotePr');
+    expect(settingsXml).toContain('w:endnotePr');
+
+    // document.xml.rels should have both footnotes and endnotes relationships
+    const docRels = await zip.file('word/_rels/document.xml.rels')!.async('string');
+    expect(docRels).toContain('footnotes');
+    expect(docRels).toContain('endnotes');
+
+    // [Content_Types].xml should have both overrides
+    const contentTypes = await zip.file('[Content_Types].xml')!.async('string');
+    expect(contentTypes).toContain('footnotes.xml');
+    expect(contentTypes).toContain('endnotes.xml');
   });
 });
 
