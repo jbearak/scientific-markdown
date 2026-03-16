@@ -1102,6 +1102,15 @@ export function blockquotePostContentBlankLineProps(gaps: Map<number, number>): 
   return chunkCustomProps('MANUSCRIPT_BLOCKQUOTE_POST_CONTENT_BLANK_LINES_', JSON.stringify(mapping));
 }
 
+export function noteImageFormatProps(imageFormats: Map<string, string>): CustomPropEntry[] {
+  if (imageFormats.size === 0) return [];
+  const mapping: Record<string, string> = {};
+  for (const [rId, syntax] of imageFormats) {
+    mapping[rId] = syntax;
+  }
+  return chunkCustomProps('MANUSCRIPT_NOTE_IMAGE_FORMATS_', JSON.stringify(mapping));
+}
+
 export function imageFormatProps(imageFormats: Map<string, string>): CustomPropEntry[] {
   if (imageFormats.size === 0) return [];
   const mapping: Record<string, string> = {};
@@ -2616,7 +2625,8 @@ export interface DocxGenState {
   imageRelationships: Map<string, { rId: string; mediaPath: string }>; // dedup key (absPath + '\0' + syntax) -> { rId, media path }
   imageMediaPaths: Map<string, string>; // absPath -> mediaPath (for binary dedup across syntaxes)
   imageBinaries: Map<string, Uint8Array>; // media path -> binary data
-  imageFormats: Map<string, string>; // rId -> syntax ("md" | "html")
+  imageFormats: Map<string, string>; // rId -> syntax ("md" | "html") — document-body only
+  noteImageFormats: Map<string, string>; // rId -> syntax ("md" | "html") — note-body only
   imageExtensions: Set<string>; // collected extensions for content types
   rsid: string; // Revision Save ID for paragraph-level w:rsidR attributes
   nextImageDocPrId: number;
@@ -4638,7 +4648,7 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
         }
         imgEntry = { rId, mediaPath };
         imgRelMap.set(dedupeKey, imgEntry);
-        state.imageFormats.set(rId, syntax);
+        (state.inNoteBody ? state.noteImageFormats : state.imageFormats).set(rId, syntax);
       }
       // Determine dimensions
       let width = run.imageWidth;
@@ -5780,6 +5790,7 @@ export async function convertMdToDocx(
     imageMediaPaths: new Map(),
     imageBinaries: new Map(),
     imageFormats: new Map(),
+    noteImageFormats: new Map(),
     imageExtensions: new Set(),
     rsid: Math.floor(Math.random() * 0xFFFFFFFF).toString(16).toUpperCase().padStart(8, '0'),
     nextImageDocPrId: 1,
@@ -6092,7 +6103,7 @@ export async function convertMdToDocx(
 
   // Generate footnotes/endnotes .rels file for hyperlinks/images scoped to the notes part
   if (hasNotes && (state.noteRelationships.size > 0 || state.noteImageRelationships.size > 0)) {
-    const noteRelsTarget = state.hasEndnotes ? 'word/_rels/endnotes.xml.rels' : 'word/_rels/footnotes.xml.rels';
+    const noteRelsTarget = state.notesMode === 'endnotes' ? 'word/_rels/endnotes.xml.rels' : 'word/_rels/footnotes.xml.rels';
     zip.file(noteRelsTarget, noteRelsXml(state.noteRelationships, state.noteImageRelationships));
   }
 
@@ -6115,6 +6126,7 @@ export async function convertMdToDocx(
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
   customProps.push(...imageFormatProps(state.imageFormats));
+  customProps.push(...noteImageFormatProps(state.noteImageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
   customProps.push(...pipeTableAlignedProps(state.pipeTableAligned));
   customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));

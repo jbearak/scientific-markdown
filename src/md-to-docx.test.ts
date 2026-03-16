@@ -61,6 +61,7 @@ function makeState(): DocxGenState {
     imageMediaPaths: new Map(),
     imageBinaries: new Map(),
     imageFormats: new Map(),
+    noteImageFormats: new Map(),
     imageExtensions: new Set(),
     rsid: '00000001',
     nextImageDocPrId: 1,

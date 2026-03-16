@@ -339,4 +339,64 @@ describe('image-roundtrip properties', () => {
       cleanup();
     }
   });
+
+  // Feature: image-roundtrip, Property 12: Footnote HTML image format stored in separate custom property
+  it('P12: <img> in footnote body writes MANUSCRIPT_NOTE_IMAGE_FORMATS_ custom property', async () => {
+    const { convertMdToDocx } = await import('./md-to-docx');
+    const { extractNoteImageFormatMapping } = await import('./converter');
+    const JSZip = (await import('jszip')).default;
+
+    const { dir, cleanup } = setupTempImage();
+    try {
+      const md = 'Some text[^1]\n\n[^1]: <img src="test.png" alt="note pic" width="100" height="100">';
+      const { docx } = await convertMdToDocx(md, { sourceDir: dir });
+
+      // Verify MANUSCRIPT_NOTE_IMAGE_FORMATS_ custom property exists
+      const zip = await JSZip.loadAsync(docx);
+      const noteMapping = await extractNoteImageFormatMapping(zip);
+      expect(noteMapping).not.toBeNull();
+      expect(noteMapping!.size).toBeGreaterThan(0);
+      // All entries should be 'html' since we used <img> syntax
+      for (const [, syntax] of noteMapping!) {
+        expect(syntax).toBe('html');
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  // Feature: image-roundtrip, Property 13: Mixed document + footnote image formats stay separate
+  it('P13: document-body md image + footnote html image use separate format maps', async () => {
+    const { convertMdToDocx } = await import('./md-to-docx');
+    const { extractImageFormatMapping, extractNoteImageFormatMapping } = await import('./converter');
+    const JSZip = (await import('jszip')).default;
+
+    const { dir, cleanup } = setupTempImage();
+    try {
+      const md = '![body pic](test.png){width=100 height=100}\n\nText[^1]\n\n[^1]: <img src="test.png" alt="note pic" width="100" height="100">';
+      const { docx } = await convertMdToDocx(md, { sourceDir: dir });
+
+      const zip = await JSZip.loadAsync(docx);
+      const docMapping = await extractImageFormatMapping(zip);
+      const noteMapping = await extractNoteImageFormatMapping(zip);
+
+      // Document body should have 'md' entry, not 'html'
+      expect(docMapping).not.toBeNull();
+      expect([...docMapping!.values()]).toContain('md');
+      expect([...docMapping!.values()]).not.toContain('html');
+
+      // Note body should have 'html' entry, not 'md'
+      expect(noteMapping).not.toBeNull();
+      expect([...noteMapping!.values()]).toContain('html');
+      expect([...noteMapping!.values()]).not.toContain('md');
+
+      // rId keys should not overlap between the two maps
+      const docRIds = new Set(docMapping!.keys());
+      for (const noteRId of noteMapping!.keys()) {
+        expect(docRIds.has(noteRId)).toBe(false);
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });
