@@ -48,6 +48,13 @@ export { extractHtmlTables } from './html-table-parser';
 //    (referenced by theme minorFont/majorFont).
 // 10. Heading styles: include w:outlineLvl in pPr for all heading levels.
 // 11. sectPr completeness: include w:cols w:space="720" and w:rsidR.
+// 12. DEFLATE compression: use DEFLATE (not STORE) when generating the zip.
+//     Word re-compresses uncompressed entries on open and marks the file dirty.
+//
+// Known limitation: documents with Zotero/citation field codes (w:fldChar +
+// w:instrText "ADDIN ZOTERO_ITEM CSL_CITATION ...") are always marked as
+// modified by Word on open, regardless of these invariants. This is a Word
+// behavior — it processes/recalculates citation fields during open.
 
 // Placeholder for deferred bibliography insertion (NUL bytes cannot appear in valid XML)
 const BIBL_PLACEHOLDER = '\x00MANUSCRIPT_BIBL_MARKER\x00';
@@ -6211,6 +6218,8 @@ export async function convertMdToDocx(
   for (const path of Object.keys(zip.files)) {
     if (zip.files[path]?.dir) delete (zip.files as Record<string, unknown>)[path];
   }
-  const docx = await zip.generateAsync({ type: 'uint8array' });
+  // DEFLATE compression prevents Word from marking the file as modified on open.
+  // Word re-compresses STORE-d (uncompressed) entries and sets the dirty flag.
+  const docx = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   return { docx, warnings: state.warnings };
 }
