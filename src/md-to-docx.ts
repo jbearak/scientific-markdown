@@ -64,10 +64,16 @@ const BIBL_PLACEHOLDER = '\x00MANUSCRIPT_BIBL_MARKER\x00';
 // Types for the parsed token stream
 export type TableFormat = 'pipe' | 'html' | 'grid';
 
+export interface ListContinuation {
+  type: 'bullet' | 'ordered';
+  level: number; // 1-based parent list nesting level
+}
+
 export interface MdToken {
   type: 'paragraph' | 'heading' | 'list_item' | 'blockquote' | 'code_block' | 'table' | 'hr';
   level?: number;           // heading level 1-6, blockquote nesting, list nesting
   ordered?: boolean;        // for list items
+  listContinuation?: ListContinuation; // parent list context for blockquote continuation blocks
   startNumber?: number;     // for ordered lists: first item's start number (when ≠ 1)
   taskChecked?: boolean;    // for GFM task list items
   alertType?: GfmAlertType; // for GFM alerts in blockquotes
@@ -1762,7 +1768,7 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
         const listStart = token.attrGet?.('start') ? parseInt(token.attrGet('start'), 10) : undefined;
-        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings, listStart);
+        const listItems = extractListItems(tokens.slice(i + 1, listClose), token.type === 'ordered_list_open', currentLevel, warnings, listStart, sourceLines);
         result.push(...listItems);
         i = listClose + 1;
         break;
@@ -2330,7 +2336,7 @@ const DROPPED_LIST_BLOCK_TYPES = new Set([
   'fence', 'code_block', 'html_block', 'blockquote_open', 'table_open',
 ]);
 
-function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[], startNumber?: number): MdToken[] {
+function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[], startNumber?: number, sourceLines?: string[]): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
 
@@ -2339,6 +2345,8 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
       const closePos = findClosingToken(tokens, i, 'list_item_close');
       const itemTokens = tokens.slice(i + 1, closePos);
       let runs: MdRun[] = [];
+      const continuationTokens: MdToken[] = [];
+      const continuationType: 'bullet' | 'ordered' = ordered ? 'ordered' : 'bullet';
       let foundFirstParagraph = false;
       // Track nested list depth so we only capture the parent item's own
       // paragraph — not paragraphs belonging to child list items.
@@ -2362,6 +2370,16 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
             warnings.push('Continuation paragraph inside list item dropped during conversion (not supported). Move the content outside the list for round-trip fidelity.');
           }
           j = paragraphClose;
+        } else if (itemTokens[j].type === 'blockquote_open') {
+          const blockquoteClose = findClosingToken(itemTokens, j, 'blockquote_close');
+          const blockquoteTokens = convertTokens(itemTokens.slice(j, blockquoteClose + 1), 0, 0, warnings, sourceLines);
+          continuationTokens.push(
+            ...blockquoteTokens.map(t => ({
+              ...t,
+              listContinuation: { type: continuationType, level },
+            }))
+          );
+          j = blockquoteClose;
         } else if (itemTokens[j].type === 'inline' && !foundFirstParagraph) {
           runs = processInlineChildren([itemTokens[j]]);
           foundFirstParagraph = true;
@@ -2389,6 +2407,7 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
         listItem.startNumber = startNumber;
       }
       items.push(listItem);
+      items.push(...continuationTokens);
 
       // Extract nested sublists
       for (let j = 0; j < itemTokens.length; j++) {
@@ -2396,7 +2415,7 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
           const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
           const subOrdered = itemTokens[j].type === 'ordered_list_open';
           const subStart = itemTokens[j].attrGet?.('start') ? parseInt(itemTokens[j].attrGet('start'), 10) : undefined;
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart));
+          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart, sourceLines));
           j = subClose;
         }
       }
@@ -4792,11 +4811,12 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
       const bqStyle = token.alertType ? ALERT_STYLE_BY_TYPE[token.alertType] : (BLOCKQUOTE_STYLE_ID[bqStyleOpt] ?? bqStyleOpt);
       const bqIndentUnit = bqStyle.startsWith('GitHub') ? GITHUB_BLOCKQUOTE_INDENT : 720;
       const bqLevel = token.level || 1;
-      const bqLeftIndent = bqIndentUnit * bqLevel;
+      const continuationIndent = token.listContinuation ? 720 * token.listContinuation.level : 0;
+      const bqLeftIndent = bqIndentUnit * bqLevel + continuationIndent;
       // Only add inline overrides when they differ from the style defaults (level > 1).
       // Level 1 inherits spacing and indent from the style; redundant overrides
       // cause Word to strip them on open, setting the dirty flag.
-      if (bqLevel > 1) {
+      if (bqLevel > 1 || token.listContinuation) {
         pPr = '<w:pPr><w:pStyle w:val="' + bqStyle + '"/><w:spacing w:after="0"/><w:ind w:left="' + bqLeftIndent + '"/></w:pPr>';
       } else {
         pPr = '<w:pPr><w:pStyle w:val="' + bqStyle + '"/></w:pPr>';
@@ -4860,12 +4880,18 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 
   let xml = '<w:p>' + pPr + alertPrefix + taskPrefix + runs + '</w:p>';
 
-  // Encode blockquoteGroupIndex as a hidden (vanish) run so the docx→md
-  // converter can reconstruct group boundaries and correlate with the gap map.
-  if (token.type === 'blockquote' && token.blockquoteGroupIndex !== undefined) {
-    const groupTag = '<w:r><w:rPr><w:vanish/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
-    // Insert the hidden run right after pPr inside the <w:p>
-    xml = '<w:p>' + pPr + groupTag + alertPrefix + taskPrefix + runs + '</w:p>';
+  // Encode hidden metadata runs right after pPr so the docx→md converter can
+  // reconstruct blockquote group boundaries and list continuation context.
+  if (token.type === 'blockquote' && (token.blockquoteGroupIndex !== undefined || token.listContinuation)) {
+    let hiddenTags = '';
+    if (token.blockquoteGroupIndex !== undefined) {
+      hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
+    }
+    if (token.listContinuation) {
+      const listTagPayload = '\u200B_lic:' + token.listContinuation.type + ':' + token.listContinuation.level + ':' + (token.level || 1);
+      hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt(listTagPayload) + '</w:r>';
+    }
+    xml = '<w:p>' + pPr + hiddenTags + alertPrefix + taskPrefix + runs + '</w:p>';
   }
 
   // Blockquote spacer paragraphs: exact-height empty paragraphs with an
@@ -4876,7 +4902,8 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
     const spacerBqStyleOpt = options?.blockquoteStyle ?? 'GitHub';
     const spacerBqStyle = token.alertType ? ALERT_STYLE_BY_TYPE[token.alertType] : (BLOCKQUOTE_STYLE_ID[spacerBqStyleOpt] ?? spacerBqStyleOpt);
     const spacerIndentUnit = spacerBqStyle.startsWith('GitHub') ? GITHUB_BLOCKQUOTE_INDENT : 720;
-    const spacerLeftIndent = spacerIndentUnit * (token.level || 1);
+    const spacerContinuationIndent = token.listContinuation ? 720 * token.listContinuation.level : 0;
+    const spacerLeftIndent = spacerIndentUnit * (token.level || 1) + spacerContinuationIndent;
     const borderPPr = '<w:pBdr><w:left w:val="single" w:sz="' + GITHUB_BLOCKQUOTE_BORDER_SIZE + '" w:space="' + GITHUB_BLOCKQUOTE_BORDER_SPACE + '" w:color="' + borderColor + '"/></w:pBdr>';
     const indPPr = '<w:ind w:left="' + spacerLeftIndent + '"/>';
     if (token.alertFirst) {

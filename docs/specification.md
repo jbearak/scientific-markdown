@@ -335,7 +335,7 @@ Manuscript Markdown supports CommonMark plus the implemented [GitHub Flavored Ma
 
 - **Formatting**: bold (`**text**`), italic (`_text_`), strikethrough (`~~text~~`), underline (`<u>text</u>`), superscript (`<sup>text</sup>`), subscript (`<sub>text</sub>`), inline code (`` `code` ``)
 - **Headings**: `# H1` through `###### H6`
-- **Lists**: bulleted (`- item`), numbered (`1. item`), task lists (`- [ ] item`, `- [x] item`). See [List item limitations](#list-item-block-content) for block content inside list items.
+- **Lists**: bulleted (`- item`), numbered (`1. item`), task lists (`- [ ] item`, `- [x] item`). Blockquote continuation blocks inside list items are preserved; see [List item limitations](#list-item-block-content) for the remaining unsupported block content.
 - **Links**: `[text](url)` plus autolink literals (bare URLs/emails)
 - **Code blocks**: fenced with triple backticks. Optional language annotation (e.g., `` ```stata ``) is preserved on round-trip via the `MANUSCRIPT_CODE_BLOCK_LANGS` custom property in the DOCX. In Word, code blocks use the "Code Block" paragraph style (Consolas, shaded background). Consecutive code blocks are separated by an empty paragraph to prevent merging.
 - **Blockquotes**: `> quoted text`
@@ -693,7 +693,7 @@ CLI flag: `--always-use-comment-ids`
 
 ### List Item Block Content
 
-The Markdown-to-DOCX converter only preserves the first paragraph and nested sublists within a list item. Block-level content in list continuation — such as fenced code blocks, indented code blocks, HTML blocks, blockquotes, and tables — is dropped during conversion and will not survive a round-trip.
+The Markdown-to-DOCX converter preserves the first paragraph, nested sublists, and blockquote continuation blocks within a list item. Other block-level content in list continuation — such as fenced code blocks, indented code blocks, HTML blocks, and tables — is still dropped during conversion and will not survive a round-trip.
 
 The converter emits a warning when block content inside a list item is dropped.
 
