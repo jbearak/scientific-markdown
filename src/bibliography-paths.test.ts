@@ -7,6 +7,7 @@ import {
   resolveExistingBibliographyPath,
   defaultBibliographyWritePath,
   resolveBibliographyWritePath,
+  resolveBibliographyWritePathForOutput,
 } from './bibliography-paths';
 
 describe('bibliography path helpers', () => {
@@ -56,5 +57,25 @@ describe('bibliography path helpers', () => {
       '/repo/docs/paper',
       '/repo/refs/library.bib',
     )).toBe('/repo/refs/library.bib');
+  });
+
+  test('resolveBibliographyWritePathForOutput uses the current markdown directory after rename', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mm-bib-write-'));
+    try {
+      const originalMdDir = join(root, 'original');
+      const renamedMdDir = join(root, 'renamed');
+      mkdirSync(join(originalMdDir, 'refs'), { recursive: true });
+      mkdirSync(renamedMdDir, { recursive: true });
+      writeFileSync(join(originalMdDir, 'refs', 'library.bib'), '@article{old,}\n');
+
+      const resolved = await resolveBibliographyWritePathForOutput(
+        'refs/library',
+        renamedMdDir,
+        async (p) => Bun.file(p).exists(),
+      );
+      expect(resolved).toBe(join(renamedMdDir, 'refs', 'library.bib'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

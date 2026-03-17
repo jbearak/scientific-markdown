@@ -46,3 +46,18 @@ export function resolveBibliographyWritePath(
 ): string {
   return resolvedExistingPath ?? defaultBibliographyWritePath(bibliography, mdDir);
 }
+
+export async function resolveBibliographyWritePathForOutput(
+  bibliography: string,
+  mdDir: string,
+  fileExists: (path: string) => Promise<boolean>,
+  workspaceRoot?: string,
+): Promise<string> {
+  const resolvedExistingPath = await resolveExistingBibliographyPath(
+    bibliography,
+    mdDir,
+    fileExists,
+    workspaceRoot,
+  );
+  return resolveBibliographyWritePath(bibliography, mdDir, resolvedExistingPath);
+}

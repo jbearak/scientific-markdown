@@ -38,7 +38,7 @@ import { setDefaultColorScheme } from './alert-colors';
 import { computeCodeRegions, overlapsCodeRegion } from './code-regions';
 import {
 	bibliographyCandidatePaths,
-	resolveBibliographyWritePath,
+	resolveBibliographyWritePathForOutput,
 } from './bibliography-paths';
 
 // --- Implementation notes ---
@@ -469,11 +469,8 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 				let mdUri = vscode.Uri.file(basePath + '.md');
 				const { metadata: resultMetadata } = parseFrontmatter(result.markdown);
-				const resolvedResultBibUri = resultMetadata.bibliography
-					? (resolvedBibliographyUri ?? (await readBibliographyFromFrontmatterPath(resultMetadata.bibliography, path.dirname(mdUri.fsPath)))?.uri)
-					: undefined;
 				let bibUri = resultMetadata.bibliography
-					? resolveBibliographyWriteUri(resultMetadata.bibliography, path.dirname(mdUri.fsPath), resolvedResultBibUri)
+					? await resolveBibliographyWriteUriForOutput(resultMetadata.bibliography, path.dirname(mdUri.fsPath))
 					: vscode.Uri.file(basePath + '.bib');
 				const hasBibtex = Boolean(result.bibtex);
 				const mdExists = await fileExists(mdUri);
@@ -527,7 +524,7 @@ export function activate(context: vscode.ExtensionContext) {
 						const selectedBasePath = getOutputBasePath(selectedUri.fsPath);
 						mdUri = vscode.Uri.file(selectedBasePath + '.md');
 						bibUri = resultMetadata.bibliography
-							? resolveBibliographyWriteUri(resultMetadata.bibliography, path.dirname(mdUri.fsPath), resolvedResultBibUri)
+							? await resolveBibliographyWriteUriForOutput(resultMetadata.bibliography, path.dirname(mdUri.fsPath))
 							: vscode.Uri.file(selectedBasePath + '.bib');
 					} else if (choice === 'Replace Symlink') {
 						unlinkBeforeWrite = true;
@@ -1159,11 +1156,12 @@ async function readBibliographyFromFrontmatterPath(bibliography: string, mdDir: 
 	return undefined;
 }
 
-function resolveBibliographyWriteUri(bibliography: string, mdDir: string, resolvedExistingUri?: vscode.Uri): vscode.Uri {
-	return vscode.Uri.file(resolveBibliographyWritePath(
+async function resolveBibliographyWriteUriForOutput(bibliography: string, mdDir: string): Promise<vscode.Uri> {
+	return vscode.Uri.file(await resolveBibliographyWritePathForOutput(
 		bibliography,
 		mdDir,
-		resolvedExistingUri?.fsPath,
+		async (candidatePath) => fileExists(vscode.Uri.file(candidatePath)),
+		workspaceRootPath(),
 	));
 }
 
