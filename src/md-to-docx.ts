@@ -4893,14 +4893,14 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
   if (token.type === 'blockquote' && (token.blockquoteGroupIndex !== undefined || token.listContinuation)) {
     let hiddenTags = '';
     if (token.blockquoteGroupIndex !== undefined) {
-      hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
+      hiddenTags += '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
     }
     if (token.listContinuation) {
       let listTagPayload = '\u200B_lic:' + token.listContinuation.type + ':' + token.listContinuation.level + ':' + (token.level || 1);
       if (token.listContinuation.markerWidth !== undefined) {
         listTagPayload += ':' + token.listContinuation.markerWidth;
       }
-      hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt(listTagPayload) + '</w:r>';
+      hiddenTags += '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt(listTagPayload) + '</w:r>';
     }
     xml = '<w:p>' + pPr + hiddenTags + alertPrefix + taskPrefix + runs + '</w:p>';
   }
