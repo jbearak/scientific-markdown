@@ -67,6 +67,7 @@ export type TableFormat = 'pipe' | 'html' | 'grid';
 export interface ListContinuation {
   type: 'bullet' | 'ordered';
   level: number; // 1-based parent list nesting level
+  markerWidth?: number; // ordered-list marker width (e.g. "10. " => 4)
 }
 
 export interface MdToken {
@@ -2339,28 +2340,22 @@ const DROPPED_LIST_BLOCK_TYPES = new Set([
 function extractListItems(tokens: any[], ordered: boolean, level: number, warnings?: string[], startNumber?: number, sourceLines?: string[]): MdToken[] {
   const items: MdToken[] = [];
   let i = 0;
+  let itemOrdinal = 0;
 
   while (i < tokens.length) {
     if (tokens[i].type === 'list_item_open') {
       const closePos = findClosingToken(tokens, i, 'list_item_close');
       const itemTokens = tokens.slice(i + 1, closePos);
       let runs: MdRun[] = [];
-      const continuationTokens: MdToken[] = [];
       const continuationType: 'bullet' | 'ordered' = ordered ? 'ordered' : 'bullet';
+      const currentOrderedNumber = ordered ? ((startNumber ?? 1) + itemOrdinal) : undefined;
+      const continuationMarkerWidth = currentOrderedNumber !== undefined
+        ? (String(currentOrderedNumber).length + 2)
+        : undefined;
+      const childSegments: Array<{ startIndex: number; order: number; items: MdToken[] }> = [];
+      let childSegmentOrder = 0;
       let foundFirstParagraph = false;
-      // Track nested list depth so we only capture the parent item's own
-      // paragraph — not paragraphs belonging to child list items.
-      let nestedListDepth = 0;
       for (let j = 0; j < itemTokens.length; j++) {
-        if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
-          nestedListDepth++;
-          continue;
-        }
-        if (itemTokens[j].type === 'bullet_list_close' || itemTokens[j].type === 'ordered_list_close') {
-          nestedListDepth--;
-          continue;
-        }
-        if (nestedListDepth > 0) continue;
         if (itemTokens[j].type === 'paragraph_open') {
           const paragraphClose = findClosingToken(itemTokens, j, 'paragraph_close');
           if (!foundFirstParagraph) {
@@ -2373,13 +2368,29 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
         } else if (itemTokens[j].type === 'blockquote_open') {
           const blockquoteClose = findClosingToken(itemTokens, j, 'blockquote_close');
           const blockquoteTokens = convertTokens(itemTokens.slice(j, blockquoteClose + 1), 0, 0, warnings, sourceLines);
-          continuationTokens.push(
-            ...blockquoteTokens.map(t => ({
+          childSegments.push({
+            startIndex: itemTokens[j].map?.[0] ?? j,
+            order: childSegmentOrder++,
+            items: blockquoteTokens.map(t => ({
               ...t,
-              listContinuation: { type: continuationType, level },
-            }))
-          );
+              listContinuation: {
+                type: continuationType,
+                level,
+                ...(continuationMarkerWidth !== undefined ? { markerWidth: continuationMarkerWidth } : {}),
+              },
+            })),
+          });
           j = blockquoteClose;
+        } else if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
+          const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
+          const subOrdered = itemTokens[j].type === 'ordered_list_open';
+          const subStart = itemTokens[j].attrGet?.('start') ? parseInt(itemTokens[j].attrGet('start'), 10) : undefined;
+          childSegments.push({
+            startIndex: itemTokens[j].map?.[0] ?? j,
+            order: childSegmentOrder++,
+            items: extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart, sourceLines),
+          });
+          j = subClose;
         } else if (itemTokens[j].type === 'inline' && !foundFirstParagraph) {
           runs = processInlineChildren([itemTokens[j]]);
           foundFirstParagraph = true;
@@ -2407,19 +2418,12 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
         listItem.startNumber = startNumber;
       }
       items.push(listItem);
-      items.push(...continuationTokens);
-
-      // Extract nested sublists
-      for (let j = 0; j < itemTokens.length; j++) {
-        if (itemTokens[j].type === 'bullet_list_open' || itemTokens[j].type === 'ordered_list_open') {
-          const subClose = findClosingToken(itemTokens, j, itemTokens[j].type.replace('_open', '_close'));
-          const subOrdered = itemTokens[j].type === 'ordered_list_open';
-          const subStart = itemTokens[j].attrGet?.('start') ? parseInt(itemTokens[j].attrGet('start'), 10) : undefined;
-          items.push(...extractListItems(itemTokens.slice(j + 1, subClose), subOrdered, level + 1, warnings, subStart, sourceLines));
-          j = subClose;
-        }
+      childSegments.sort((a, b) => (a.startIndex - b.startIndex) || (a.order - b.order));
+      for (const segment of childSegments) {
+        items.push(...segment.items);
       }
 
+      itemOrdinal++;
       i = closePos + 1;
     } else {
       i++;
@@ -4888,7 +4892,10 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
       hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
     }
     if (token.listContinuation) {
-      const listTagPayload = '\u200B_lic:' + token.listContinuation.type + ':' + token.listContinuation.level + ':' + (token.level || 1);
+      let listTagPayload = '\u200B_lic:' + token.listContinuation.type + ':' + token.listContinuation.level + ':' + (token.level || 1);
+      if (token.listContinuation.markerWidth !== undefined) {
+        listTagPayload += ':' + token.listContinuation.markerWidth;
+      }
       hiddenTags += '<w:r><w:rPr><w:vanish/></w:rPr>' + wt(listTagPayload) + '</w:r>';
     }
     xml = '<w:p>' + pPr + hiddenTags + alertPrefix + taskPrefix + runs + '</w:p>';

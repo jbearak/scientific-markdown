@@ -245,6 +245,24 @@ describe('GFM support in Markdown→DOCX parser', () => {
     expect(tokens[1].runs.map(r => r.text).join('').trim()).toBe('quoted line');
   });
 
+  it('preserves source order when a nested sublist comes before a continuation blockquote', () => {
+    const tokens = parseMd('- parent\n  - child\n  > quoted line\n');
+    expect(tokens.map(t => t.type + ':' + (t.level || 0))).toEqual([
+      'list_item:1',
+      'list_item:2',
+      'blockquote:1',
+    ]);
+  });
+
+  it('preserves source order when a continuation blockquote comes before a nested sublist', () => {
+    const tokens = parseMd('- parent\n  > quoted line\n  - child\n');
+    expect(tokens.map(t => t.type + ':' + (t.level || 0))).toEqual([
+      'list_item:1',
+      'blockquote:1',
+      'list_item:2',
+    ]);
+  });
+
   it('escapes GFM-disallowed raw HTML tags into literal text runs', () => {
     const tokens = parseMd('<script>alert(1)</script>');
     expect(tokens).toHaveLength(1);
@@ -2463,6 +2481,23 @@ describe('List blockquote round-trip', () => {
       level: 1,
       alertType: 'warning',
       listContinuation: { type: 'ordered', level: 1 },
+    });
+  });
+
+  it('MD→DOCX→MD preserves multi-digit ordered indentation for continuation blockquotes', async () => {
+    const md = '10. Clinical phrasing:\n    > quoted line\n';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('10. Clinical phrasing:\n    > quoted line');
+
+    const tokens = parseMd(result.markdown);
+    const blockquote = tokens.find(t => t.type === 'blockquote');
+    expect(blockquote).toMatchObject({
+      type: 'blockquote',
+      listContinuation: { type: 'ordered', level: 1, markerWidth: 4 },
     });
   });
 

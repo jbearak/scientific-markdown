@@ -231,6 +231,7 @@ export type RevisionInfo = { type: 'addition' | 'deletion'; author: string; date
 export interface ListContinuation {
   type: 'bullet' | 'ordered';
   level: number; // 0-based parent list nesting level for Markdown rendering
+  markerWidth?: number; // ordered-list marker width (e.g. "10. " => 4)
 }
 
 export type ContentItem =
@@ -2377,13 +2378,18 @@ export async function extractDocumentContent(
               continue;
             }
             if (hiddenPayload.startsWith('_lic:')) {
-              const [, listType, rawLevel, rawBlockquoteLevel] = hiddenPayload.split(':');
+              const [, listType, rawLevel, rawBlockquoteLevel, rawMarkerWidth] = hiddenPayload.split(':');
               const listLevel = parseInt(rawLevel, 10);
               const blockquoteLevel = parseInt(rawBlockquoteLevel, 10);
+              const markerWidth = rawMarkerWidth !== undefined ? parseInt(rawMarkerWidth, 10) : undefined;
               if ((listType === 'bullet' || listType === 'ordered') && !isNaN(listLevel)) {
                 for (let ti = target.length - 1; ti >= 0; ti--) {
                   if (target[ti].type === 'para') {
-                    (target[ti] as any).listContinuation = { type: listType, level: Math.max(0, listLevel - 1) };
+                    (target[ti] as any).listContinuation = {
+                      type: listType,
+                      level: Math.max(0, listLevel - 1),
+                      ...(!isNaN(markerWidth ?? NaN) ? { markerWidth } : {}),
+                    };
                     if (!isNaN(blockquoteLevel) && blockquoteLevel > 0) {
                       (target[ti] as any).blockquoteLevel = blockquoteLevel;
                     }
@@ -4069,8 +4075,11 @@ export function buildMarkdown(
     if (useTab) {
       return '\t'.repeat(list.level + 1);
     }
-    const unit = list.type === 'bullet' ? 2 : 3;
-    return ' '.repeat(unit * (list.level + 1));
+    if (list.type === 'bullet') {
+      return ' '.repeat(2 * (list.level + 1));
+    }
+    const markerWidth = list.markerWidth ?? 3;
+    return ' '.repeat(3 * list.level + markerWidth);
   }
 
   function blockquotePrefix(item: Extract<ContentItem, { type: 'para' }>): string {
@@ -4476,7 +4485,7 @@ export function buildMarkdown(
             const isInlineMarker = options?.blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex ?? -1) === true;
             if (isInlineMarker) {
               output.push(' ');
-              pendingAlertInlinePrefixForHardBreak = undefined;
+              pendingAlertInlinePrefixForHardBreak = item.listContinuation ? itemPrefix : undefined;
             } else {
               output.push('\n' + itemPrefix);
               pendingAlertInlinePrefixForHardBreak = undefined;
