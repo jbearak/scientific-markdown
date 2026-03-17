@@ -2381,14 +2381,19 @@ export async function extractDocumentContent(
               const [, listType, rawLevel, rawBlockquoteLevel, rawMarkerWidth] = hiddenPayload.split(':');
               const listLevel = parseInt(rawLevel, 10);
               const blockquoteLevel = parseInt(rawBlockquoteLevel, 10);
-              const markerWidth = rawMarkerWidth !== undefined ? parseInt(rawMarkerWidth, 10) : undefined;
+              let markerWidth = rawMarkerWidth !== undefined ? parseInt(rawMarkerWidth, 10) : undefined;
+              if (markerWidth !== undefined && !isNaN(markerWidth)) {
+                markerWidth = Math.max(0, markerWidth);
+              } else {
+                markerWidth = undefined;
+              }
               if ((listType === 'bullet' || listType === 'ordered') && !isNaN(listLevel)) {
                 for (let ti = target.length - 1; ti >= 0; ti--) {
                   if (target[ti].type === 'para') {
                     (target[ti] as any).listContinuation = {
                       type: listType,
                       level: Math.max(0, listLevel - 1),
-                      ...(!isNaN(markerWidth ?? NaN) ? { markerWidth } : {}),
+                      ...(markerWidth !== undefined ? { markerWidth } : {}),
                     };
                     if (!isNaN(blockquoteLevel) && blockquoteLevel > 0) {
                       (target[ti] as any).blockquoteLevel = blockquoteLevel;

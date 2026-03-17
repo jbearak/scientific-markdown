@@ -1745,7 +1745,7 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
     const token = tokens[i];
     
     switch (token.type) {
-      case 'heading_open':
+      case 'heading_open': {
         const headingClose = findClosingToken(tokens, i, 'heading_close');
         result.push({
           type: 'heading',
@@ -1754,8 +1754,9 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         });
         i = headingClose + 1;
         break;
-        
-      case 'paragraph_open':
+      }
+
+      case 'paragraph_open': {
         const paragraphClose = findClosingToken(tokens, i, 'paragraph_close');
         result.push({
           type: 'paragraph',
@@ -1763,9 +1764,10 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         });
         i = paragraphClose + 1;
         break;
-        
+      }
+
       case 'bullet_list_open':
-      case 'ordered_list_open':
+      case 'ordered_list_open': {
         const listClose = findClosingToken(tokens, i, token.type.replace('_open', '_close'));
         const currentLevel = listLevel + 1;
         const listStart = token.attrGet?.('start') ? parseInt(token.attrGet('start'), 10) : undefined;
@@ -1773,8 +1775,9 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         result.push(...listItems);
         i = listClose + 1;
         break;
+      }
 
-      case 'blockquote_open':
+      case 'blockquote_open': {
         const blockquoteClose = findClosingToken(tokens, i, 'blockquote_close');
         const bqLevel = blockquoteLevel + 1;
         // Intentionally reset listLevel inside blockquotes.
@@ -1784,7 +1787,8 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         result.push(...annotateBlockquoteAlert(blockquoteTokens, bqLevel));
         i = blockquoteClose + 1;
         break;
-        
+      }
+
       case 'fence': {
         // Detect trailing blank line by checking if the next token starts
         // more than one line after this fence ends.  Both map values must
