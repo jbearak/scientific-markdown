@@ -2177,9 +2177,11 @@ export async function extractDocumentContent(
                   const resolved = crossRefMap.get(bkmkName);
                   if (resolved) {
                     const colonIdx = resolved.indexOf(':');
-                    const noteKind = resolved.slice(0, colonIdx) as 'footnote' | 'endnote';
+                    const noteKind = resolved.slice(0, colonIdx);
                     const noteId = resolved.slice(colonIdx + 1);
-                    noterefInfo = { noteId, noteKind };
+                    if (colonIdx !== -1 && noteId && (noteKind === 'footnote' || noteKind === 'endnote')) {
+                      noterefInfo = { noteId, noteKind };
+                    }
                   }
                 }
               }
