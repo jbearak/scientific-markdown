@@ -3251,6 +3251,115 @@ describe('DOCX footnote extraction', () => {
     expect(md.indexOf('fn comment')).toBeGreaterThan(md.indexOf('[^1]:'));
   });
 });
+
+describe('DOCX footnote cross-reference import', () => {
+  function wrapCustomPropsXml(props: Record<string, string>): string {
+    let xml = '<?xml version="1.0"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">';
+    let pid = 2;
+    for (const [name, value] of Object.entries(props)) {
+      xml += '<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="' + pid + '" name="' + name + '"><vt:lpwstr>' + value + '</vt:lpwstr></property>';
+      pid++;
+    }
+    xml += '</Properties>';
+    return xml;
+  }
+
+  test('NOTEREF field with cross-ref custom property resolves to footnote_ref', async () => {
+    // Build a synthetic docx with:
+    // 1. First ref: normal w:footnoteReference
+    // 2. Second ref: NOTEREF field pointing to bookmark _Ref100000001
+    // 3. Footnote body with bookmark around footnoteRef
+    // 4. Custom property mapping the bookmark
+    const docXml = wrapDocumentXml(
+      '<w:p>'
+      + '<w:r><w:t>First</w:t></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>'
+      + '<w:r><w:t> and second</w:t></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:instrText xml:space="preserve"> NOTEREF _Ref100000001 \\f \\h </w:instrText></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:t>1</w:t></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>'
+      + '</w:p>'
+    );
+    const footnotesXml = wrapNotesXml('footnotes',
+      '<w:footnote w:id="1">'
+      + '<w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>'
+      + '<w:bookmarkStart w:id="0" w:name="_Ref100000001"/>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>'
+      + '<w:bookmarkEnd w:id="0"/>'
+      + '<w:r><w:t> Shared footnote content.</w:t></w:r></w:p>'
+      + '</w:footnote>'
+    );
+    const crossRefMapping = JSON.stringify({ '_Ref100000001': 'footnote:1' });
+    const customPropsXml = wrapCustomPropsXml({ 'MANUSCRIPT_FOOTNOTE_CROSSREFS_1': crossRefMapping });
+
+    const buf = await buildSyntheticDocx(docXml, {
+      'word/footnotes.xml': footnotesXml,
+      'docProps/custom.xml': customPropsXml,
+    });
+    const result = await convertDocx(buf);
+
+    // Both the normal ref and the cross-ref should appear as [^1]
+    const refs = result.markdown.match(/\[\^1\]/g);
+    expect(refs).not.toBeNull();
+    expect(refs!.length).toBe(3); // 2 inline refs + 1 definition
+    expect(result.markdown).toContain('[^1]: Shared footnote content.');
+  });
+
+  test('NOTEREF display text is not emitted as regular text', async () => {
+    const docXml = wrapDocumentXml(
+      '<w:p>'
+      + '<w:r><w:t>Before</w:t></w:r>'
+      + '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>'
+      + '<w:r><w:t> middle</w:t></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+      + '<w:r><w:instrText xml:space="preserve"> NOTEREF _Ref100000001 \\f \\h </w:instrText></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+      + '<w:r><w:t>1</w:t></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+      + '<w:r><w:t> after</w:t></w:r>'
+      + '</w:p>'
+    );
+    const footnotesXml = wrapNotesXml('footnotes',
+      '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t> Note.</w:t></w:r></w:p></w:footnote>'
+    );
+    const crossRefMapping = JSON.stringify({ '_Ref100000001': 'footnote:1' });
+    const customPropsXml = wrapCustomPropsXml({ 'MANUSCRIPT_FOOTNOTE_CROSSREFS_1': crossRefMapping });
+
+    const buf = await buildSyntheticDocx(docXml, {
+      'word/footnotes.xml': footnotesXml,
+      'docProps/custom.xml': customPropsXml,
+    });
+    const result = await convertDocx(buf);
+
+    // The display text "1" from the NOTEREF field should NOT appear as literal text
+    // It should be replaced by the [^1] reference
+    expect(result.markdown).toContain('Before[^1] middle[^1] after');
+    expect(result.markdown).toContain('[^1]: Note.');
+  });
+
+  test('unresolved NOTEREF field suppresses display text (no custom property)', async () => {
+    // NOTEREF field without MANUSCRIPT_FOOTNOTE_CROSSREFS — display text should be suppressed
+    const docXml = wrapDocumentXml(
+      '<w:p>'
+      + '<w:r><w:t>Before</w:t></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+      + '<w:r><w:instrText xml:space="preserve"> NOTEREF _Ref999 \\f \\h </w:instrText></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+      + '<w:r><w:t>1</w:t></w:r>'
+      + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+      + '<w:r><w:t> after</w:t></w:r>'
+      + '</w:p>'
+    );
+    const buf = await buildSyntheticDocx(docXml);
+    const result = await convertDocx(buf);
+
+    // The display text "1" should NOT appear — it's from the unresolved NOTEREF field
+    expect(result.markdown.trim()).toBe('Before after');
+  });
+});
+
 describe('parseBlockquoteLevel', () => {
   test('returns 1 for Quote style without explicit indent', () => {
     const children = [{ 'w:pStyle': [], ':@': { '@_w:val': 'Quote' } }];

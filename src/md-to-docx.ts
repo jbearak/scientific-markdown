@@ -730,6 +730,13 @@ function parseCriticInnerRuns(content: string): MdRun[] {
   return normalizeCriticInnerRuns(convertInlineTokens(tokens));
 }
 
+/** Deterministic bookmark name for a footnote/endnote cross-reference target.
+ * Uses _Ref + (100000000 + noteId) to follow Word's _Ref + digits convention
+ * while remaining deterministic for reproducible output. */
+function footnoteBookmarkName(noteId: number): string {
+  return '_Ref' + String(100000000 + noteId);
+}
+
 /** Extract footnote definitions from the markdown source and return cleaned markdown. */
 export function extractFootnoteDefinitions(markdown: string): { cleaned: string; definitions: Map<string, string> } {
   const definitions = new Map<string, string>();
@@ -2665,6 +2672,8 @@ export interface DocxGenState {
   noteRelationships: Map<string, string>; // URL -> rId for hyperlinks inside footnote/endnote bodies
   noteImageRelationships: Map<string, { rId: string; mediaPath: string }>; // dedup key -> { rId, media path } for images inside footnote/endnote bodies
   noteNextRId: number; // next rId for footnotes.xml.rels (independent of document rIds)
+  footnoteCrossRefLabels: Set<string>; // footnote labels that have 2+ references (need bookmarks + cross-ref fields)
+  nextBookmarkId: number; // counter for unique bookmark IDs within footnotes/endnotes XML
 }
 
 interface CommentEntry {
@@ -3943,6 +3952,22 @@ function footnoteIdMappingProps(footnoteLabelToId: Map<string, number>): CustomP
   return chunkCustomProps('MANUSCRIPT_FOOTNOTE_IDS_', JSON.stringify(mapping));
 }
 
+function footnoteCrossRefProps(
+  crossRefLabels: Set<string>,
+  footnoteLabelToId: Map<string, number>,
+  notesMode: 'footnotes' | 'endnotes',
+): CustomPropEntry[] {
+  if (crossRefLabels.size === 0) return [];
+  const mapping: Record<string, string> = {};
+  const noteKind = notesMode === 'endnotes' ? 'endnote' : 'footnote';
+  for (const label of crossRefLabels) {
+    const noteId = footnoteLabelToId.get(label);
+    if (noteId === undefined) continue;
+    mapping[footnoteBookmarkName(noteId)] = noteKind + ':' + noteId;
+  }
+  return chunkCustomProps('MANUSCRIPT_FOOTNOTE_CROSSREFS_', JSON.stringify(mapping));
+}
+
 function codeBlockLanguageProps(codeBlockLanguages: Map<number, string>): CustomPropEntry[] {
   if (codeBlockLanguages.size === 0) return [];
   const mapping: Record<string, string> = {};
@@ -4525,17 +4550,35 @@ export function generateRuns(inputRuns: MdRun[], state: DocxGenState, options?: 
     } else if (run.type === 'footnote_ref') {
       const label = run.footnoteLabel || '';
       let noteId = state.footnoteLabelToId.get(label);
-      if (noteId === undefined) {
+      const isRepeat = noteId !== undefined;
+      if (!isRepeat) {
         noteId = state.footnoteId++;
         state.footnoteLabelToId.set(label, noteId);
       }
       const noteExtraRPr = state.tableRunRPrExtra || '';
-      if (state.notesMode === 'endnotes') {
-        xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/>' + noteExtraRPr + '</w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
-        state.hasEndnotes = true;
+      const refStyleName = state.notesMode === 'endnotes' ? 'EndnoteReference' : 'FootnoteReference';
+      if (isRepeat) {
+        // Subsequent reference: emit NOTEREF cross-reference field pointing to
+        // the bookmark around the original footnote's self-ref mark.
+        state.footnoteCrossRefLabels.add(label);
+        const bkmkName = footnoteBookmarkName(noteId!);
+        const rPr = '<w:rPr><w:rStyle w:val="' + refStyleName + '"/>' + noteExtraRPr + '</w:rPr>';
+        xml += '<w:r>' + rPr + '<w:fldChar w:fldCharType="begin"/></w:r>';
+        xml += '<w:r>' + rPr + '<w:instrText xml:space="preserve"> NOTEREF ' + bkmkName + ' \\f \\h </w:instrText></w:r>';
+        xml += '<w:r>' + rPr + '<w:fldChar w:fldCharType="separate"/></w:r>';
+        xml += '<w:r>' + rPr + '<w:t>' + noteId + '</w:t></w:r>';
+        xml += '<w:r>' + rPr + '<w:fldChar w:fldCharType="end"/></w:r>';
+        if (state.notesMode === 'endnotes') { state.hasEndnotes = true; }
+        else { state.hasFootnotes = true; }
       } else {
-        xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>' + noteExtraRPr + '</w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
-        state.hasFootnotes = true;
+        // First reference: emit normal footnoteReference / endnoteReference
+        if (state.notesMode === 'endnotes') {
+          xml += '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/>' + noteExtraRPr + '</w:rPr><w:endnoteReference w:id="' + noteId + '"/></w:r>';
+          state.hasEndnotes = true;
+        } else {
+          xml += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>' + noteExtraRPr + '</w:rPr><w:footnoteReference w:id="' + noteId + '"/></w:r>';
+          state.hasFootnotes = true;
+        }
       }
     } else if (run.type === 'citation') {
       const result = generateCitation(run, bibEntries || new Map(), citeprocEngine, state.citationIds, state.citationItemIds, state.tableRunRPrExtra || undefined);
@@ -5835,6 +5878,8 @@ export async function convertMdToDocx(
     noteRelationships: new Map(),
     noteImageRelationships: new Map(),
     noteNextRId: 1,
+    footnoteCrossRefLabels: new Set(),
+    nextBookmarkId: 0,
   };
 
   // Pre-scan all tokens (main document + footnotes) for citation keys so
@@ -5911,7 +5956,14 @@ export async function convertMdToDocx(
     const refStyle = state.notesMode === 'endnotes' ? 'EndnoteReference' : 'FootnoteReference';
     let bodyXml = '';
     const paragraphPPr = '<w:pPr><w:pStyle w:val="' + pStyle + '"/></w:pPr>';
-    const selfRefRun = '<w:r><w:rPr><w:rStyle w:val="' + refStyle + '"/></w:rPr><' + selfRefTag + '/></w:r>';
+    // If this footnote is cross-referenced, wrap the self-ref run in a bookmark
+    // so NOTEREF fields in the document body can point to it.
+    let selfRefRun = '<w:r><w:rPr><w:rStyle w:val="' + refStyle + '"/></w:rPr><' + selfRefTag + '/></w:r>';
+    if (state.footnoteCrossRefLabels.has(label)) {
+      const bkmkId = state.nextBookmarkId++;
+      const bkmkName = footnoteBookmarkName(noteId);
+      selfRefRun = '<w:bookmarkStart w:id="' + bkmkId + '" w:name="' + bkmkName + '"/>' + selfRefRun + '<w:bookmarkEnd w:id="' + bkmkId + '"/>';
+    }
     const savedCustomStyle = state.activeCustomStyle;
     let isFirstContent = true;
     for (let ti = 0; ti < bodyTokens.length; ti++) {
@@ -6133,6 +6185,7 @@ export async function convertMdToDocx(
   }
   customProps.push(...commentIdMappingProps(state.commentIdMap));
   customProps.push(...footnoteIdMappingProps(state.footnoteLabelToId));
+  customProps.push(...footnoteCrossRefProps(state.footnoteCrossRefLabels, state.footnoteLabelToId, state.notesMode));
   customProps.push(...codeBlockLanguageProps(state.codeBlockLanguages));
   customProps.push(...codeBlockStylingProps(frontmatter));
   customProps.push(...pipeTableMaxLineWidthProps(frontmatter));

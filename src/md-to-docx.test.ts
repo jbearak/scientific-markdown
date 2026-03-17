@@ -89,6 +89,8 @@ function makeState(): DocxGenState {
     noteRelationships: new Map(),
     noteImageRelationships: new Map(),
     noteNextRId: 1,
+    footnoteCrossRefLabels: new Set(),
+    nextBookmarkId: 0,
   };
 }
 
@@ -2347,6 +2349,132 @@ describe('Footnote round-trip', () => {
 
     expect(result.markdown).toContain('[^my-note]');
     expect(result.markdown).toContain('[^my-note]: Named note content.');
+  });
+
+  it('MD→DOCX→MD preserves repeated footnote references', async () => {
+    const md = 'First reference.[^shared]\n\nSecond reference to the same note.[^shared]\n\n[^shared]: This footnote is referenced twice.';
+    const { docx } = await convertMdToDocx(md);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+
+    // Both references should round-trip as [^shared]
+    const refs = result.markdown.match(/\[\^shared\]/g);
+    expect(refs).not.toBeNull();
+    expect(refs!.length).toBe(3); // 2 inline refs + 1 definition
+    expect(result.markdown).toContain('[^shared]: This footnote is referenced twice.');
+  });
+
+  it('MD→DOCX→MD preserves repeated numeric footnote references', async () => {
+    const md = 'First.[^1]\n\nSecond.[^1]\n\n[^1]: Shared footnote.';
+    const { docx } = await convertMdToDocx(md);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+
+    const refs = result.markdown.match(/\[\^1\]/g);
+    expect(refs).not.toBeNull();
+    expect(refs!.length).toBe(3); // 2 inline refs + 1 definition
+    expect(result.markdown).toContain('[^1]: Shared footnote.');
+  });
+});
+
+describe('Repeated footnote references (cross-references)', () => {
+  it('first occurrence emits w:footnoteReference, subsequent emits NOTEREF field', async () => {
+    const md = 'First[^1] and second[^1] reference.\n\n[^1]: Shared note.';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+
+    // document.xml should have both a footnoteReference and a NOTEREF field
+    const docXml = await zip.file('word/document.xml')!.async('string');
+    expect(docXml).toContain('w:footnoteReference');
+    expect(docXml).toContain('NOTEREF');
+    expect(docXml).toContain('_Ref100000001');
+    expect(docXml).toContain('w:fldChar');
+
+    // footnotes.xml should have a bookmark wrapping the self-ref
+    const footnotesXml = await zip.file('word/footnotes.xml')!.async('string');
+    expect(footnotesXml).toContain('w:bookmarkStart');
+    expect(footnotesXml).toContain('_Ref100000001');
+    expect(footnotesXml).toContain('w:bookmarkEnd');
+    expect(footnotesXml).toContain('Shared note.');
+  });
+
+  it('only one footnote entry exists for repeated references', async () => {
+    const md = 'First[^1] and second[^1] and third[^1].\n\n[^1]: Only one entry.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const footnotesXml = await zip.file('word/footnotes.xml')!.async('string');
+
+    // Should only have one actual footnote (plus the 2 separator stubs)
+    const footnoteMatches = footnotesXml.match(/<w:footnote w:id="\d+"/g);
+    expect(footnoteMatches).toHaveLength(1);
+  });
+
+  it('stores MANUSCRIPT_FOOTNOTE_CROSSREFS custom property', async () => {
+    const md = 'First[^1] and second[^1].\n\n[^1]: Note.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const customXml = await zip.file('docProps/custom.xml')!.async('string');
+    expect(customXml).toContain('MANUSCRIPT_FOOTNOTE_CROSSREFS');
+    expect(customXml).toContain('_Ref100000001');
+    expect(customXml).toContain('footnote:1');
+  });
+
+  it('works with endnote mode', async () => {
+    const md = '---\nnotes: endnotes\n---\n\nFirst[^1] and second[^1].\n\n[^1]: Shared endnote.';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+
+    const docXml = await zip.file('word/document.xml')!.async('string');
+    expect(docXml).toContain('w:endnoteReference');
+    expect(docXml).toContain('NOTEREF');
+    expect(docXml).toContain('EndnoteReference');
+
+    const endnotesXml = await zip.file('word/endnotes.xml')!.async('string');
+    expect(endnotesXml).toContain('w:bookmarkStart');
+    expect(endnotesXml).toContain('_Ref100000001');
+
+    const customXml = await zip.file('docProps/custom.xml')!.async('string');
+    expect(customXml).toContain('endnote:1');
+  });
+
+  it('NOTEREF field has \\f \\h switches and FootnoteReference style', async () => {
+    const md = 'First[^1] second[^1].\n\n[^1]: Note.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const docXml = await zip.file('word/document.xml')!.async('string');
+
+    // instrText should contain both switches
+    expect(docXml).toMatch(/NOTEREF\s+_Ref\d+\s+\\f\s+\\h/);
+    // All field runs should have FootnoteReference style
+    const fieldSection = docXml.slice(docXml.indexOf('NOTEREF'));
+    expect(fieldSection).toContain('FootnoteReference');
+  });
+
+  it('non-repeated footnotes have no bookmarks', async () => {
+    const md = 'First[^1] second[^2].\n\n[^1]: Note one.\n\n[^2]: Note two.';
+    const { docx } = await convertMdToDocx(md);
+
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const footnotesXml = await zip.file('word/footnotes.xml')!.async('string');
+
+    // No bookmarks since no cross-references needed
+    expect(footnotesXml).not.toContain('w:bookmarkStart');
+    expect(footnotesXml).not.toContain('w:bookmarkEnd');
   });
 });
 describe('parseMd list levels with blockquotes', () => {
