@@ -228,6 +228,12 @@ function escapeMarkdownChars(text: string): string {
 
 export type RevisionInfo = { type: 'addition' | 'deletion'; author: string; date: string };
 
+export interface ListContinuation {
+  type: 'bullet' | 'ordered';
+  level: number; // 0-based parent list nesting level for Markdown rendering
+  markerWidth?: number; // ordered-list marker width (e.g. "10. " => 4)
+}
+
 export type ContentItem =
   | {
       type: 'text';
@@ -245,6 +251,7 @@ export type ContentItem =
       listMeta?: ListMeta;     // present if list item
       isTitle?: boolean;       // true if Word "Title" paragraph style
       blockquoteLevel?: number; // 1+ if Quote/IntenseQuote paragraph style
+      listContinuation?: ListContinuation; // parent list context for blockquote continuation blocks
       alertType?: GfmAlertType; // present for GitHub alert styles
       isCodeBlock?: boolean;   // true if Word "Code Block" paragraph style
       blockquoteGroupIndex?: number; // sequential group index from md→docx gap metadata
@@ -2370,6 +2377,33 @@ export async function extractDocumentContent(
               }
               continue;
             }
+            if (hiddenPayload.startsWith('_lic:')) {
+              const [, listType, rawLevel, rawBlockquoteLevel, rawMarkerWidth] = hiddenPayload.split(':');
+              const listLevel = parseInt(rawLevel, 10);
+              const blockquoteLevel = parseInt(rawBlockquoteLevel, 10);
+              let markerWidth = rawMarkerWidth !== undefined ? parseInt(rawMarkerWidth, 10) : undefined;
+              if (markerWidth !== undefined && !isNaN(markerWidth)) {
+                markerWidth = Math.max(0, markerWidth);
+              } else {
+                markerWidth = undefined;
+              }
+              if ((listType === 'bullet' || listType === 'ordered') && !isNaN(listLevel)) {
+                for (let ti = target.length - 1; ti >= 0; ti--) {
+                  if (target[ti].type === 'para') {
+                    (target[ti] as any).listContinuation = {
+                      type: listType,
+                      level: Math.max(0, listLevel - 1),
+                      ...(markerWidth !== undefined ? { markerWidth } : {}),
+                    };
+                    if (!isNaN(blockquoteLevel) && blockquoteLevel > 0) {
+                      (target[ti] as any).blockquoteLevel = blockquoteLevel;
+                    }
+                    break;
+                  }
+                }
+              }
+              continue;
+            }
             // Hidden metadata markers are not user-visible content. This avoids
             // leaking internal sentinels when Word splits \u200B-prefixed runs.
             continue;
@@ -4041,6 +4075,23 @@ export function buildMarkdown(
     portraitTableIndices: options?.portraitTableIndices ?? undefined,
   };
 
+  function listContinuationIndent(list: ListContinuation): string {
+    const useTab = options?.listIndent === 'tab';
+    if (useTab) {
+      return '\t'.repeat(list.level + 1);
+    }
+    if (list.type === 'bullet') {
+      return ' '.repeat(2 * (list.level + 1));
+    }
+    const markerWidth = list.markerWidth ?? 3;
+    return ' '.repeat(3 * list.level + markerWidth);
+  }
+
+  function blockquotePrefix(item: Extract<ContentItem, { type: 'para' }>): string {
+    const quotePrefix = '> '.repeat(item.blockquoteLevel || 1);
+    return (item.listContinuation ? listContinuationIndent(item.listContinuation) : '') + quotePrefix;
+  }
+
   const output: string[] = [];
   let i = 0;
   let tableIndex = 0;
@@ -4056,7 +4107,7 @@ export function buildMarkdown(
   // If we've already emitted an inline marker (`> [!TYPE] `), rewrite it to the
   // marker-only form (`> [!TYPE]\n> ...`) so callout/paragraph boundaries stay
   // stable on DOCX -> MD conversion.
-  let pendingAlertInlineLevelForHardBreak: number | undefined;
+  let pendingAlertInlinePrefixForHardBreak: string | undefined;
   let lastBlockquoteGroupIndex: number | undefined;
   let pendingPostContentGroupIndex: number | undefined;
   // Track previous blockquote type to detect group boundaries when gap
@@ -4149,7 +4200,7 @@ export function buildMarkdown(
         listTypeByLevel.clear();
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
-        pendingAlertInlineLevelForHardBreak = undefined;
+        pendingAlertInlinePrefixForHardBreak = undefined;
         lastBlockquoteAlertType = undefined;
         lastBlockquoteLevel = undefined;
 
@@ -4225,6 +4276,13 @@ export function buildMarkdown(
 
       if (output.length > 0) {
         if (lastListType && isCurrentList && item.listMeta!.type === lastListType) {
+          output.push('\n');
+        } else if (
+          item.blockquoteLevel &&
+          item.listContinuation &&
+          lastListType === item.listContinuation.type &&
+          lastListLevel === item.listContinuation.level
+        ) {
           output.push('\n');
         } else if (incomingSep !== null) {
           output.push(incomingSep);
@@ -4376,12 +4434,12 @@ export function buildMarkdown(
       if (item.headingLevel) {
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
-        pendingAlertInlineLevelForHardBreak = undefined;
+        pendingAlertInlinePrefixForHardBreak = undefined;
         output.push('#'.repeat(item.headingLevel) + ' ');
       } else if (item.listMeta) {
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
-        pendingAlertInlineLevelForHardBreak = undefined;
+        pendingAlertInlinePrefixForHardBreak = undefined;
         const useTab = options?.listIndent === 'tab';
         const indent = useTab
           ? '\t'.repeat(item.listMeta.level)
@@ -4416,7 +4474,8 @@ export function buildMarkdown(
         if (item.listMeta.type === 'ordered') orderedListCounters.set(item.listMeta.level, orderedNum + 1);
         output.push(indent + marker);
       } else if (item.blockquoteLevel) {
-        output.push('> '.repeat(item.blockquoteLevel));
+        const itemPrefix = blockquotePrefix(item);
+        output.push(itemPrefix);
         if (item.alertType) {
           const alertKey = item.blockquoteLevel + ':' + item.alertType;
           // A new alert group starts when the key differs OR when the
@@ -4431,29 +4490,30 @@ export function buildMarkdown(
             const isInlineMarker = options?.blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex ?? -1) === true;
             if (isInlineMarker) {
               output.push(' ');
+              pendingAlertInlinePrefixForHardBreak = item.listContinuation ? itemPrefix : undefined;
             } else {
-              output.push('\n' + '> '.repeat(item.blockquoteLevel));
+              output.push('\n' + itemPrefix);
+              pendingAlertInlinePrefixForHardBreak = undefined;
             }
-            pendingAlertInlineLevelForHardBreak = undefined;
             const next = i + 1 < mergedContent.length ? mergedContent[i + 1] : undefined;
             pendingAlertPrefixStrip = (next && next.type !== 'para') ? item.alertType : undefined;
             if (!pendingAlertPrefixStrip) {
-              pendingAlertInlineLevelForHardBreak = undefined;
+              pendingAlertInlinePrefixForHardBreak = undefined;
             }
           } else {
             pendingAlertPrefixStrip = undefined;
-            pendingAlertInlineLevelForHardBreak = undefined;
+            pendingAlertInlinePrefixForHardBreak = undefined;
           }
           lastAlertParagraphKey = alertKey;
         } else {
           lastAlertParagraphKey = undefined;
           pendingAlertPrefixStrip = undefined;
-          pendingAlertInlineLevelForHardBreak = undefined;
+          pendingAlertInlinePrefixForHardBreak = undefined;
         }
       } else {
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
-        pendingAlertInlineLevelForHardBreak = undefined;
+        pendingAlertInlinePrefixForHardBreak = undefined;
       }
 
       lastListType = isCurrentList ? item.listMeta!.type : undefined;
@@ -4574,7 +4634,7 @@ export function buildMarkdown(
       listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
-      pendingAlertInlineLevelForHardBreak = undefined;
+      pendingAlertInlinePrefixForHardBreak = undefined;
       lastBlockquoteAlertType = undefined;
       lastBlockquoteLevel = undefined;
       i++;
@@ -4627,7 +4687,7 @@ export function buildMarkdown(
       listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
-      pendingAlertInlineLevelForHardBreak = undefined;
+      pendingAlertInlinePrefixForHardBreak = undefined;
       lastBlockquoteAlertType = undefined;
       lastBlockquoteLevel = undefined;
       i++;
@@ -4678,7 +4738,7 @@ export function buildMarkdown(
       listTypeByLevel.clear();
       lastAlertParagraphKey = undefined;
       pendingAlertPrefixStrip = undefined;
-      pendingAlertInlineLevelForHardBreak = undefined;
+      pendingAlertInlinePrefixForHardBreak = undefined;
       lastBlockquoteAlertType = undefined;
       lastBlockquoteLevel = undefined;
       i++;
@@ -4749,9 +4809,9 @@ export function buildMarkdown(
         strippedAlertLeadHadHardBreak = true;
       }
     }
-    if (pendingAlertInlineLevelForHardBreak !== undefined && (textOut.startsWith('\n') || textOut.startsWith('\\\n') || strippedAlertLeadHadHardBreak)) {
+    if (pendingAlertInlinePrefixForHardBreak !== undefined && (textOut.startsWith('\n') || textOut.startsWith('\\\n') || strippedAlertLeadHadHardBreak)) {
       const markerIdx = output.length - 1;
-      const continuationPrefix = '\n' + '> '.repeat(pendingAlertInlineLevelForHardBreak);
+      const continuationPrefix = '\n' + pendingAlertInlinePrefixForHardBreak;
       if (markerIdx >= 0 && output[markerIdx].endsWith(' ')) {
         output[markerIdx] = output[markerIdx].slice(0, -1) + continuationPrefix;
       } else {
@@ -4764,7 +4824,7 @@ export function buildMarkdown(
       }
     }
     pendingAlertPrefixStrip = undefined;
-    pendingAlertInlineLevelForHardBreak = undefined;
+    pendingAlertInlinePrefixForHardBreak = undefined;
     if (rendered.deferredComments.length > 0) {
       // Strip trailing newlines (from <w:br/> between comment references in round-tripped DOCX)
       output.push(textOut.replace(/(\\?\n)+$/, ''));

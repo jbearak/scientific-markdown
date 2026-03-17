@@ -3519,6 +3519,28 @@ describe('Blockquote round-trip', () => {
     expect(result.markdown).toContain('> [!NOTE]\n> This is a note.\n\nThis is a paragraph.');
     expect(result.markdown).not.toContain('> [!NOTE] This is a note.');
   });
+
+  test('list-contained inline alert with hard break rewrites to marker-only form', () => {
+    const markdown = buildMarkdown(
+      [
+        { type: 'para', listMeta: { type: 'ordered', level: 0, startNumber: 10 } },
+        { type: 'text', text: 'Clinical phrasing:', commentIds: new Set(), formatting: DEFAULT_FORMATTING },
+        {
+          type: 'para',
+          blockquoteLevel: 1,
+          alertType: 'note',
+          blockquoteGroupIndex: 0,
+          listContinuation: { type: 'ordered', level: 0, markerWidth: 4 },
+        },
+        { type: 'text', text: '※ Note \\\nThis is a note.', commentIds: new Set(), formatting: DEFAULT_FORMATTING },
+      ],
+      new Map(),
+      { blockquoteAlertInlineByGroup: new Map([[0, true]]) },
+    );
+
+    expect(markdown).toContain('10. Clinical phrasing:\n    > [!NOTE]\n    > This is a note.');
+    expect(markdown).not.toContain('10. Clinical phrasing:\n    > [!NOTE] This is a note.');
+  });
 });
 
 describe('parseCodeBlockStyle', () => {
@@ -4580,4 +4602,3 @@ describe('round-trip regression: pipe table alignment', () => {
     expect(segments.every(s => s.replace(/[^-]/g, '').length === 3)).toBe(true);
   });
 });
-

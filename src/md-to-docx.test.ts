@@ -212,6 +212,57 @@ describe('GFM support in Markdown→DOCX parser', () => {
     expect(childItem!.runs.map(r => r.text).join('')).toBe('child only');
   });
 
+  it('preserves blockquote continuation blocks inside list items', () => {
+    const warnings: string[] = [];
+    const tokens = parseMd('* **Clinical phrasing:**\n  > quoted line\n', warnings);
+    expect(warnings).toEqual([]);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toMatchObject({
+      type: 'list_item',
+      level: 1,
+      ordered: false,
+    });
+    expect(tokens[1]).toMatchObject({
+      type: 'blockquote',
+      level: 1,
+      listContinuation: { type: 'bullet', level: 1 },
+    });
+    expect(tokens[1].runs.map(r => r.text).join('')).toBe('quoted line');
+  });
+
+  it('preserves alert blockquote continuation blocks inside list items', () => {
+    const warnings: string[] = [];
+    const tokens = parseMd('* Clinical phrasing:\n  > [!WARNING]\n  > quoted line\n', warnings);
+    expect(warnings).toEqual([]);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[1]).toMatchObject({
+      type: 'blockquote',
+      level: 1,
+      alertType: 'warning',
+      alertLead: true,
+      listContinuation: { type: 'bullet', level: 1 },
+    });
+    expect(tokens[1].runs.map(r => r.text).join('').trim()).toBe('quoted line');
+  });
+
+  it('preserves source order when a nested sublist comes before a continuation blockquote', () => {
+    const tokens = parseMd('- parent\n  - child\n  > quoted line\n');
+    expect(tokens.map(t => t.type + ':' + (t.level || 0))).toEqual([
+      'list_item:1',
+      'list_item:2',
+      'blockquote:1',
+    ]);
+  });
+
+  it('preserves source order when a continuation blockquote comes before a nested sublist', () => {
+    const tokens = parseMd('- parent\n  > quoted line\n  - child\n');
+    expect(tokens.map(t => t.type + ':' + (t.level || 0))).toEqual([
+      'list_item:1',
+      'blockquote:1',
+      'list_item:2',
+    ]);
+  });
+
   it('escapes GFM-disallowed raw HTML tags into literal text runs', () => {
     const tokens = parseMd('<script>alert(1)</script>');
     expect(tokens).toHaveLength(1);
@@ -698,6 +749,21 @@ describe('generateParagraph', () => {
     };
     const result = generateParagraph(token, createState());
     expect(result).toContain('w:color="D0D7DE"');
+  });
+
+  it('generates list continuation blockquote with adjusted indent and hidden marker', () => {
+    const token: MdToken = {
+      type: 'blockquote',
+      level: 1,
+      blockquoteGroupIndex: 7,
+      listContinuation: { type: 'bullet', level: 1 },
+      runs: [{ type: 'text', text: 'Quoted in list' }]
+    };
+    const result = generateParagraph(token, createState());
+    expect(result).toContain('<w:pPr><w:pStyle w:val="GitHubBlockquote"/><w:spacing w:after="0"/><w:ind w:left="960"/></w:pPr>');
+    expect(result).toContain('_bqg7');
+    expect(result).toContain('_lic:bullet:1:1');
+    expect(result).not.toContain('<w:numPr>');
   });
 
   it('generates code block with multiple lines', () => {
@@ -2376,6 +2442,72 @@ describe('Footnote round-trip', () => {
     expect(refs).not.toBeNull();
     expect(refs!.length).toBe(3); // 2 inline refs + 1 definition
     expect(result.markdown).toContain('[^1]: Shared footnote.');
+  });
+});
+
+describe('List blockquote round-trip', () => {
+  it('MD→DOCX→MD preserves blockquote continuation under a bullet list item', async () => {
+    const md = '* **Clinical phrasing:**\n  > quoted line\n';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('\n  > quoted line');
+
+    const tokens = parseMd(result.markdown);
+    const blockquote = tokens.find(t => t.type === 'blockquote');
+    expect(blockquote).toMatchObject({
+      type: 'blockquote',
+      level: 1,
+      listContinuation: { type: 'bullet', level: 1 },
+    });
+  });
+
+  it('MD→DOCX→MD preserves alert blockquote continuation under an ordered list item', async () => {
+    const md = '1. Clinical phrasing:\n   > [!WARNING]\n   > quoted line\n';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('\n   > [!WARNING]');
+    expect(result.markdown).toContain('\n   > quoted line');
+
+    const tokens = parseMd(result.markdown);
+    const blockquote = tokens.find(t => t.type === 'blockquote');
+    expect(blockquote).toMatchObject({
+      type: 'blockquote',
+      level: 1,
+      alertType: 'warning',
+      listContinuation: { type: 'ordered', level: 1 },
+    });
+  });
+
+  it('MD→DOCX→MD preserves multi-digit ordered indentation for continuation blockquotes', async () => {
+    const md = '10. Clinical phrasing:\n    > quoted line\n';
+    const { docx, warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
+
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('10. Clinical phrasing:\n    > quoted line');
+
+    const tokens = parseMd(result.markdown);
+    const blockquote = tokens.find(t => t.type === 'blockquote');
+    expect(blockquote).toMatchObject({
+      type: 'blockquote',
+      listContinuation: { type: 'ordered', level: 1, markerWidth: 4 },
+    });
+  });
+
+  it('does not warn on the rejoinder outline list-plus-blockquote pattern', async () => {
+    const md = [
+      '* **Clinical phrasing:**',
+      '  > "In their reply, the authors devote considerable space to the difficulty of measuring abortion."',
+    ].join('\n');
+    const { warnings } = await convertMdToDocx(md);
+    expect(warnings).toEqual([]);
   });
 });
 
