@@ -17,9 +17,9 @@
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
-import { homedir } from 'os';
 import { convertMdToDocx } from '../src/md-to-docx';
 import { convertDocx } from '../src/converter';
+import { ensureWordDocsDir, openAndSaveInWord, wordDocsDir } from '../src/word-automation';
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -36,10 +36,9 @@ const onlyName = onlyIdx !== -1 ? args[onlyIdx + 1] : null;
 // ---------------------------------------------------------------------------
 
 const outDir = join(__dirname, 'word-roundtrip-output');
-const wordDocsDir = join(homedir(), 'Library/Containers/com.microsoft.Word/Data/Documents');
 
 mkdirSync(outDir, { recursive: true });
-mkdirSync(wordDocsDir, { recursive: true });
+ensureWordDocsDir();
 
 // ---------------------------------------------------------------------------
 // Test cases
@@ -366,34 +365,6 @@ function normalizeWhitespace(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// AppleScript helper
-// ---------------------------------------------------------------------------
-
-function wordOpenSaveClose(filePath: string, isFirst: boolean): void {
-  const activateDelay = isFirst ? 5 : 3;
-  const lines = [
-    'tell application "Microsoft Word"',
-    '  activate',
-    '  delay ' + activateDelay,
-    '  open POSIX file "' + filePath + '"',
-    '  delay 3',
-    '  save active document',
-    '  delay 2',
-    '  close active document saving no',
-    'end tell',
-  ];
-  // Pass each line as a separate -e argument to avoid shell escaping issues
-  const args = lines.flatMap(line => ['-e', line]);
-  const result = spawnSync('osascript', args, {
-    timeout: 60_000,
-    encoding: 'utf-8',
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || 'osascript failed with status ' + result.status);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -441,7 +412,11 @@ async function main() {
       writeFileSync(wordDocxPath, docx);
       docxPaths.push(wordDocxPath);
 
-      wordOpenSaveClose(wordDocxPath, isFirst);
+      openAndSaveInWord(wordDocxPath, {
+        activateDelaySeconds: isFirst ? 5 : 3,
+        openDelaySeconds: 3,
+        saveDelaySeconds: 2,
+      });
       isFirst = false;
 
       const savedDocx = readFileSync(wordDocxPath) as unknown as Uint8Array;
