@@ -1062,6 +1062,11 @@ export async function extractFootnoteIdMapping(data: Uint8Array | JSZip): Promis
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_FOOTNOTE_IDS');
 }
 
+/** Extract bookmark-name → "noteKind:noteId" mapping for footnote cross-references. */
+export async function extractFootnoteCrossRefMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_FOOTNOTE_CROSSREFS');
+}
+
 export async function extractCodeBlockLanguageMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_CODE_BLOCK_LANGS');
 }
@@ -2077,6 +2082,8 @@ export async function extractDocumentContent(
     imageFolder?: string;
     portraitBreakOrdinals?: Set<number>;
     customStyles?: Record<string, CustomStyleDef>;
+    /** Bookmark name → "noteKind:noteId" for resolving NOTEREF cross-reference fields. */
+    footnoteCrossRefMap?: Map<string, string>;
   }
 ): Promise<DocumentContentResult> {
   const zip = data instanceof JSZip ? data : await loadZip(data);
@@ -2103,11 +2110,14 @@ export async function extractDocumentContent(
   let inField = false;
   let inCitationField = false;
   let inBibliographyField = false;
+  let inNoterefField = false;
+  let noterefInfo: { noteId: string; noteKind: 'footnote' | 'endnote' } | undefined;
   let fieldInstrParts: string[] = [];
   let currentCitation: ZoteroCitation | undefined;
   let citationTextParts: string[] = [];
   let currentHref: string | undefined;
   let zoteroBiblData: ZoteroBiblData | undefined;
+  const crossRefMap = options?.footnoteCrossRefMap;
 
   // Section detection state
   let sectionStartIndex = 0; // index into `content` where the current section started
@@ -2132,6 +2142,8 @@ export async function extractDocumentContent(
             fieldInstrParts = [];
             inCitationField = false;
             inBibliographyField = false;
+            inNoterefField = false;
+            noterefInfo = undefined;
           } else if (fldType === 'separate') {
             if (inField) {
               const instrText = fieldInstrParts.join('');
@@ -2154,9 +2166,36 @@ export async function extractDocumentContent(
                     };
                   } catch { /* ignore parse errors */ }
                 }
+              } else if (instrText.includes('NOTEREF')) {
+                // Cross-reference to a footnote/endnote bookmark.
+                // Always suppress display text for NOTEREF fields (even when
+                // the mapping is unavailable) to prevent stray "1" literals.
+                inNoterefField = true;
+                const noterefMatch = instrText.match(/NOTEREF\s+(\S+)/);
+                if (noterefMatch && crossRefMap) {
+                  const bkmkName = noterefMatch[1];
+                  const resolved = crossRefMap.get(bkmkName);
+                  if (resolved) {
+                    const colonIdx = resolved.indexOf(':');
+                    const noteKind = resolved.slice(0, colonIdx);
+                    const noteId = resolved.slice(colonIdx + 1);
+                    if (colonIdx !== -1 && noteId && (noteKind === 'footnote' || noteKind === 'endnote')) {
+                      noterefInfo = { noteId, noteKind };
+                    }
+                  }
+                }
               }
             }
           } else if (fldType === 'end') {
+            if (inNoterefField && noterefInfo) {
+              target.push({
+                type: 'footnote_ref',
+                noteId: noterefInfo.noteId,
+                noteKind: noterefInfo.noteKind,
+                commentIds: new Set(activeComments),
+                ...(currentRevision ? { revision: currentRevision } : {}),
+              });
+            }
             if (inCitationField && currentCitation) {
               const pandocKeys = citationPandocKeys(currentCitation, keyMap);
               target.push({
@@ -2173,6 +2212,8 @@ export async function extractDocumentContent(
             inField = false;
             inCitationField = false;
             inBibliographyField = false;
+            inNoterefField = false;
+            noterefInfo = undefined;
             currentCitation = undefined;
           }
         } else if (key === 'w:instrText' && inField) {
@@ -2353,8 +2394,8 @@ export async function extractDocumentContent(
         } else if (key === 'w:t' || key === 'w:delText') {
           const text = nodeText(node[key] || []);
           if (text) {
-            if (inBibliographyField) {
-              // Skip text inside ZOTERO_BIBL field
+            if (inBibliographyField || inNoterefField) {
+              // Skip display text inside ZOTERO_BIBL / NOTEREF fields
             } else if (inCitationField) {
               citationTextParts.push(text);
             } else {
@@ -5285,13 +5326,14 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
     extractAuthor(zip),
     extractCommentIdMapping(zip),
     extractFootnoteIdMapping(zip),
+    extractFootnoteCrossRefMapping(zip),
     extractCodeBlockLanguageMapping(zip),
     extractCommentThreads(zip),
     extractCodeBlockStyling(zip),
@@ -5373,7 +5415,7 @@ export async function convertDocx(
   const enContext: NoteBodyContext = { relationshipMap: enRelsMerged, zoteroCitations, keyMap, numberingDefs, numberingStartOverrides, format };
 
   const [{ content: docContent, zoteroBiblData, imageEntries }, footnotes, endnotes] = await Promise.all([
-    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, numberingStartOverrides, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined }),
+    extractDocumentContent(zip, zoteroCitations, keyMap, { numberingDefs, numberingStartOverrides, relationshipMap: docRels, replyIds, imageRelationships: imageRels, imageFolder: options?.imageFolder, portraitBreakOrdinals: portraitBreaks ?? undefined, customStyles: storedCustomStyles ?? undefined, footnoteCrossRefMap: footnoteCrossRefMapping ?? undefined }),
     extractFootnotes(zip, fnContext),
     extractEndnotes(zip, enContext),
   ]);
