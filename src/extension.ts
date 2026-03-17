@@ -14,7 +14,7 @@ import { convertDocx, CitationKeyFormat } from './converter';
 import { convertMdToDocx } from './md-to-docx';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseFrontmatter, hasCitations, normalizeBibPath, normalizeColorScheme, type ColorScheme } from './frontmatter';
+import { parseFrontmatter, hasCitations, normalizeColorScheme, type ColorScheme } from './frontmatter';
 import { BUNDLED_STYLE_LABELS } from './csl-loader';
 import { getCompletionContextAtOffset } from './lsp/citekey-language';
 import { getCslCompletionContext, shouldAutoTriggerSuggestFromChanges } from './lsp/csl-language';
@@ -36,6 +36,10 @@ import {
 } from './highlight-colors';
 import { setDefaultColorScheme } from './alert-colors';
 import { computeCodeRegions, overlapsCodeRegion } from './code-regions';
+import {
+	bibliographyCandidatePaths,
+	resolveBibliographyWritePath,
+} from './bibliography-paths';
 
 // --- Implementation notes ---
 // - Editor decorations: use light/dark sub-properties for theme-aware backgrounds
@@ -429,23 +433,48 @@ export function activate(context: vscode.ExtensionContext) {
 				const pipeTableMaxLineWidth = config.get<number>('pipeTableMaxLineWidth', 120);
 				const gridTableMaxLineWidth = config.get<number>('gridTableMaxLineWidth', 120);
 				const basePath = uri.fsPath.replace(/\.docx$/i, '');
-				// Read existing .bib before conversion so Layer 3 can preserve
-				// uncited entries and original ordering. This happens before the
-				// conflict dialog, but the cost is a single file read and the
-				// .bib content is needed to produce the best conversion result.
-				const existingBibUri = vscode.Uri.file(basePath + '.bib');
-				const existingBibtex = await fileExists(existingBibUri)
-					? new TextDecoder().decode(await vscode.workspace.fs.readFile(existingBibUri))
-					: undefined;
+				const existingMdUri = vscode.Uri.file(basePath + '.md');
+				let preferredBibliographyPath: string | undefined;
+				let resolvedBibliographyUri: vscode.Uri | undefined;
+				let existingBibtex: string | undefined;
+				if (await fileExists(existingMdUri)) {
+					const existingMarkdown = new TextDecoder().decode(await vscode.workspace.fs.readFile(existingMdUri));
+					const { metadata } = parseFrontmatter(existingMarkdown);
+					if (metadata.bibliography) {
+						const resolved = await readBibliographyFromFrontmatterPath(metadata.bibliography, path.dirname(existingMdUri.fsPath));
+						if (resolved) {
+							preferredBibliographyPath = metadata.bibliography;
+							resolvedBibliographyUri = resolved.uri;
+							existingBibtex = resolved.bibtex;
+						}
+					}
+				}
+				if (!existingBibtex) {
+					// Read existing .bib before conversion so Layer 3 can preserve
+					// uncited entries and original ordering. This happens before the
+					// conflict dialog, but the cost is a single file read and the
+					// .bib content is needed to produce the best conversion result.
+					const existingBibUri = vscode.Uri.file(basePath + '.bib');
+					existingBibtex = await fileExists(existingBibUri)
+						? new TextDecoder().decode(await vscode.workspace.fs.readFile(existingBibUri))
+						: undefined;
+				}
 				const result = await convertDocx(data, format, {
 					tableIndent: ' '.repeat(tableIndentSpaces),
 					alwaysUseCommentIds,
 					existingBibtex,
+					preferredBibliographyPath,
 					pipeTableMaxLineWidthDefault: pipeTableMaxLineWidth,
 					gridTableMaxLineWidthDefault: gridTableMaxLineWidth,
 				});
 				let mdUri = vscode.Uri.file(basePath + '.md');
-				let bibUri = vscode.Uri.file(basePath + '.bib');
+				const { metadata: resultMetadata } = parseFrontmatter(result.markdown);
+				const resolvedResultBibUri = resultMetadata.bibliography
+					? (resolvedBibliographyUri ?? (await readBibliographyFromFrontmatterPath(resultMetadata.bibliography, path.dirname(mdUri.fsPath)))?.uri)
+					: undefined;
+				let bibUri = resultMetadata.bibliography
+					? resolveBibliographyWriteUri(resultMetadata.bibliography, path.dirname(mdUri.fsPath), resolvedResultBibUri)
+					: vscode.Uri.file(basePath + '.bib');
 				const hasBibtex = Boolean(result.bibtex);
 				const mdExists = await fileExists(mdUri);
 				const bibExists = hasBibtex ? await fileExists(bibUri) : false;
@@ -497,7 +526,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 						const selectedBasePath = getOutputBasePath(selectedUri.fsPath);
 						mdUri = vscode.Uri.file(selectedBasePath + '.md');
-						bibUri = vscode.Uri.file(selectedBasePath + '.bib');
+						bibUri = resultMetadata.bibliography
+							? resolveBibliographyWriteUri(resultMetadata.bibliography, path.dirname(mdUri.fsPath), resolvedResultBibUri)
+							: vscode.Uri.file(selectedBasePath + '.bib');
 					} else if (choice === 'Replace Symlink') {
 						unlinkBeforeWrite = true;
 					} else if (choice === 'Replace Target') {
@@ -1110,6 +1141,32 @@ interface MdExportInput {
 	bibtex?: string;
 }
 
+function workspaceRootPath(): string | undefined {
+	return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+async function readBibliographyFromFrontmatterPath(bibliography: string, mdDir: string): Promise<{ uri: vscode.Uri; bibtex: string } | undefined> {
+	for (const candidatePath of bibliographyCandidatePaths(bibliography, mdDir, workspaceRootPath())) {
+		const candidate = vscode.Uri.file(candidatePath);
+		if (await fileExists(candidate)) {
+			const data = await vscode.workspace.fs.readFile(candidate);
+			return {
+				uri: candidate,
+				bibtex: new TextDecoder().decode(data),
+			};
+		}
+	}
+	return undefined;
+}
+
+function resolveBibliographyWriteUri(bibliography: string, mdDir: string, resolvedExistingUri?: vscode.Uri): vscode.Uri {
+	return vscode.Uri.file(resolveBibliographyWritePath(
+		bibliography,
+		mdDir,
+		resolvedExistingUri?.fsPath,
+	));
+}
+
 async function getMdExportInput(uri?: vscode.Uri): Promise<MdExportInput | undefined> {
 	let markdown: string;
 	let basePath: string;
@@ -1151,28 +1208,8 @@ async function getMdExportInput(uri?: vscode.Uri): Promise<MdExportInput | undef
 
 	let bibtex: string | undefined;
 	if (metadata.bibliography) {
-		const bibFile = normalizeBibPath(metadata.bibliography);
-		const candidates: vscode.Uri[] = [];
-		if (path.isAbsolute(bibFile)) {
-			const wsFolder = vscode.workspace.workspaceFolders?.[0];
-			if (wsFolder) {
-				candidates.push(vscode.Uri.file(path.join(wsFolder.uri.fsPath, bibFile)));
-			}
-			candidates.push(vscode.Uri.file(bibFile));
-		} else {
-			candidates.push(vscode.Uri.file(path.join(mdDir, bibFile)));
-			const wsFolder = vscode.workspace.workspaceFolders?.[0];
-			if (wsFolder) {
-				candidates.push(vscode.Uri.file(path.join(wsFolder.uri.fsPath, bibFile)));
-			}
-		}
-		for (const c of candidates) {
-			if (await fileExists(c)) {
-				const data = await vscode.workspace.fs.readFile(c);
-				bibtex = new TextDecoder().decode(data);
-				break;
-			}
-		}
+		const resolved = await readBibliographyFromFrontmatterPath(metadata.bibliography, mdDir);
+		bibtex = resolved?.bibtex;
 		if (!bibtex) {
 			// Fallback to default {basePath}.bib
 			const defaultBib = vscode.Uri.file(basePath + '.bib');

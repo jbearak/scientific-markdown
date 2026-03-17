@@ -173,6 +173,7 @@ export interface ListMeta {
   type: 'bullet' | 'ordered';
   level: number; // 0-based indentation level
   startNumber?: number; // ordered list start number (when ≠ 1)
+  bulletMarker?: '-' | '*' | '+'; // authored unordered-list marker for round-trip
 }
 
 export const DEFAULT_FORMATTING: Readonly<RunFormatting> = Object.freeze({
@@ -380,8 +381,21 @@ export async function extractNoteImageFormatMapping(data: Uint8Array | JSZip): P
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_NOTE_IMAGE_FORMATS');
 }
 
-export type NumberingDefs = Map<string, Map<string, 'bullet' | 'ordered'>>;
+export interface NumberingLevelDef {
+  type: 'bullet' | 'ordered';
+  bulletMarker?: '-' | '*' | '+';
+}
+
+export type NumberingDefs = Map<string, Map<string, NumberingLevelDef>>;
 export type NumberingStartOverrides = Map<string, Map<string, number>>; // numId → ilvl → start
+
+function mapBulletGlyphToMarker(glyph: string): '-' | '*' | '+' | undefined {
+  const normalized = glyph.trim();
+  if (normalized === '•' || normalized === '◦' || normalized === '▪' || normalized === '●') return '*';
+  if (normalized === '-' || normalized === '–' || normalized === '—') return '-';
+  if (normalized === '+') return '+';
+  return undefined;
+}
 
 export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: NumberingDefs; startOverrides: NumberingStartOverrides }> {
   const numberingDefs: NumberingDefs = new Map();
@@ -390,13 +404,13 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: Num
   if (!parsed) { return { defs: numberingDefs, startOverrides }; }
 
   // Build abstractNumId → levels map
-  const abstractNums = new Map<string, Map<string, 'bullet' | 'ordered'>>();
+  const abstractNums = new Map<string, Map<string, NumberingLevelDef>>();
   for (const node of findAllDeep(parsed, 'w:abstractNum')) {
     const abstractNum = node['w:abstractNum'];
     if (!abstractNum) continue;
 
     const abstractNumId = getAttr(node, 'abstractNumId');
-    const levels = new Map<string, 'bullet' | 'ordered'>();
+    const levels = new Map<string, NumberingLevelDef>();
 
     for (const lvlNode of findAllDeep(abstractNum, 'w:lvl')) {
       const lvl = lvlNode['w:lvl'];
@@ -406,7 +420,16 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: Num
       const numFmtNodes = findAllDeep(lvl, 'w:numFmt');
       if (numFmtNodes.length > 0) {
         const val = getAttr(numFmtNodes[0], 'val');
-        levels.set(ilvl, val === 'bullet' ? 'bullet' : 'ordered');
+        if (val === 'bullet') {
+          const lvlTextNodes = findAllDeep(lvl, 'w:lvlText');
+          const bulletGlyph = lvlTextNodes.length > 0 ? getAttr(lvlTextNodes[0], 'val') : '';
+          levels.set(ilvl, {
+            type: 'bullet',
+            ...(mapBulletGlyphToMarker(bulletGlyph) ? { bulletMarker: mapBulletGlyphToMarker(bulletGlyph) } : {}),
+          });
+        } else {
+          levels.set(ilvl, { type: 'ordered' });
+        }
       }
     }
 
@@ -540,17 +563,18 @@ export function parseListMeta(pPrChildren: any[], numberingDefs: NumberingDefs, 
   const levels = numberingDefs.get(numId);
   if (!levels) return undefined;
 
-  const type = levels.get(ilvl);
-  if (!type) return undefined;
+  const def = levels.get(ilvl);
+  if (!def) return undefined;
 
   const level = parseInt(ilvl, 10);
   if (isNaN(level) || level < 0) return undefined;
 
   const startNumber = numberingStartOverrides?.get(numId)?.get(ilvl);
   return {
-    type,
+    type: def.type,
     level,
-    ...(startNumber !== undefined ? { startNumber } : {})
+    ...(startNumber !== undefined ? { startNumber } : {}),
+    ...(def.bulletMarker ? { bulletMarker: def.bulletMarker } : {}),
   };
 }
 
@@ -1350,6 +1374,27 @@ export async function extractBibData(data: Uint8Array | JSZip): Promise<string |
   const text = await extractChunkedCustomProp(data, 'MANUSCRIPT_BIB_DATA_');
   if (!text) return null;
   return text.trim().length > 0 ? text : null;
+}
+
+export async function extractBibliographyPath(data: Uint8Array | JSZip): Promise<string | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== 'MANUSCRIPT_BIBLIOGRAPHY_PATH') continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
+      if (child['vt:lpwstr'] !== undefined) {
+        const raw = nodeText(child['vt:lpwstr'] || []);
+        return raw.trim().length > 0 ? raw : null;
+      }
+    }
+  }
+  return null;
 }
 
 export async function extractPipeTableMaxLineWidth(data: Uint8Array | JSZip): Promise<number | null> {
@@ -2398,6 +2443,19 @@ export async function extractDocumentContent(
                     if (!isNaN(blockquoteLevel) && blockquoteLevel > 0) {
                       (target[ti] as any).blockquoteLevel = blockquoteLevel;
                     }
+                    break;
+                  }
+                }
+              }
+              continue;
+            }
+            if (hiddenPayload.startsWith('_lim:')) {
+              const marker = hiddenPayload.slice('_lim:'.length);
+              if (marker === '-' || marker === '*' || marker === '+') {
+                for (let ti = target.length - 1; ti >= 0; ti--) {
+                  const candidate = target[ti];
+                  if (candidate.type === 'para' && candidate.listMeta?.type === 'bullet') {
+                    candidate.listMeta.bulletMarker = marker;
                     break;
                   }
                 }
@@ -4469,7 +4527,7 @@ export function buildMarkdown(
         listTypeByLevel.set(item.listMeta.level, item.listMeta.type);
         const orderedNum = orderedListCounters.get(item.listMeta.level) ?? 1;
         const marker = item.listMeta.type === 'bullet'
-          ? (useTab ? '-\t' : '- ')
+          ? (useTab ? (item.listMeta.bulletMarker ?? '-') + '\t' : (item.listMeta.bulletMarker ?? '-') + ' ')
           : (useTab ? orderedNum + '.\t' : orderedNum + '. ');
         if (item.listMeta.type === 'ordered') orderedListCounters.set(item.listMeta.level, orderedNum + 1);
         output.push(indent + marker);
@@ -5383,10 +5441,10 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
 export async function convertDocx(
   data: Uint8Array,
   format: CitationKeyFormat = 'authorYearTitle',
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5416,6 +5474,7 @@ export async function convertDocx(
     extractHtmlCommentGapMapping(zip),
     extractBibKeyOrder(zip),
     extractBibData(zip),
+    extractBibliographyPath(zip),
     extractLandscapeTableMapping(zip),
     extractPortraitTableMapping(zip),
     extractPortraitBreakOrdinals(zip),
@@ -5637,6 +5696,11 @@ export async function convertDocx(
   }
   if (detectedNotesMode === 'endnotes') {
     fm.notes = 'endnotes';
+  }
+  if (storedBibliographyPath) {
+    fm.bibliography = storedBibliographyPath;
+  } else if (options?.preferredBibliographyPath) {
+    fm.bibliography = options.preferredBibliographyPath;
   }
   // Note: timezone is intentionally omitted from frontmatter to avoid injecting
   // fields that weren't in the original. Dates without explicit offsets are

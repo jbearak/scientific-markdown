@@ -27,6 +27,7 @@ import {
   ZoteroCitation,
   extractBibKeyOrder,
   extractBibData,
+  extractBibliographyPath,
 } from './converter';
 import { convertMdToDocx } from './md-to-docx';
 
@@ -1036,6 +1037,14 @@ describe('List indent round-trip', () => {
     const result = await convertDocx(docx);
     expect(result.markdown).toContain('  - nested');
     expect(result.markdown).not.toContain('\t');
+  });
+
+  test('asterisk bullets round-trip with list-contained blockquotes intact', async () => {
+    const md = '* **Clinical phrasing:**\n  > quoted text';
+    const { docx } = await convertMdToDocx(md);
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('* **Clinical phrasing:**');
+    expect(result.markdown).toContain('  > quoted text');
   });
 });
 
@@ -4284,6 +4293,25 @@ describe('extractBibData', () => {
     const { docx } = await convertMdToDocx('Text [@special1].', { bibtex: bib });
     const result = await extractBibData(docx);
     expect(result).toBe(bib);
+  });
+});
+
+describe('extractBibliographyPath', () => {
+  test('reads bibliography path from DOCX custom properties', async () => {
+    const md = '---\nbibliography: ../correspondence.bib\ncsl: bmj\n---\n\nText [@key1].';
+    const bib = '@article{key1,\n  author = {A},\n  year = {2020},\n}';
+    const { docx } = await convertMdToDocx(md, { bibtex: bib });
+    expect(await extractBibliographyPath(docx)).toBe('../correspondence.bib');
+  });
+
+  test('convertDocx falls back to preferred bibliography path when DOCX has none stored', async () => {
+    const md = 'Text [@key1].';
+    const bib = '@article{key1,\n  author = {A},\n  year = {2020},\n}';
+    const { docx } = await convertMdToDocx(md, { bibtex: bib });
+    const result = await convertDocx(docx, 'authorYearTitle', {
+      preferredBibliographyPath: '../correspondence.bib',
+    });
+    expect(result.markdown).toContain('bibliography: ../correspondence.bib');
   });
 });
 

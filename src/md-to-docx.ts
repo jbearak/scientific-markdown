@@ -74,6 +74,7 @@ export interface MdToken {
   type: 'paragraph' | 'heading' | 'list_item' | 'blockquote' | 'code_block' | 'table' | 'hr';
   level?: number;           // heading level 1-6, blockquote nesting, list nesting
   ordered?: boolean;        // for list items
+  bulletMarker?: '-' | '*' | '+'; // authored unordered-list marker for round-trip
   listContinuation?: ListContinuation; // parent list context for blockquote continuation blocks
   startNumber?: number;     // for ordered lists: first item's start number (when ≠ 1)
   taskChecked?: boolean;    // for GFM task list items
@@ -872,6 +873,15 @@ function parseBlockquoteLevel(line: string): number {
     break;
   }
   return level;
+}
+
+function extractBulletMarkerFromSourceLine(line: string | undefined): '-' | '*' | '+' | undefined {
+  if (!line) return undefined;
+  const withoutBlockquote = line.replace(/^ {0,3}(?:>\s*)*/, '');
+  const match = withoutBlockquote.match(/^[ \t]*([-*+])(?:[ \t]|$)/);
+  if (!match) return undefined;
+  const marker = match[1];
+  return marker === '-' || marker === '*' || marker === '+' ? marker : undefined;
 }
 
 export function computeBlockquoteGaps(markdown: string): Map<number, number> {
@@ -2410,12 +2420,17 @@ function extractListItems(tokens: any[], ordered: boolean, level: number, warnin
       }
 
       const taskInfo = extractTaskListItem(runs);
+      const sourceLineIndex = tokens[i].map?.[0];
+      const authoredBulletMarker = !ordered && sourceLineIndex !== undefined
+        ? extractBulletMarkerFromSourceLine(sourceLines?.[sourceLineIndex])
+        : undefined;
       const listItem: MdToken = {
         type: 'list_item',
         ordered,
         level,
         runs: taskInfo?.runs ?? runs,
         taskChecked: taskInfo?.checked,
+        ...(authoredBulletMarker ? { bulletMarker: authoredBulletMarker } : {}),
       };
       // Attach startNumber only to the first item of an ordered list with start ≠ 1
       if (items.length === 0 && startNumber !== undefined && startNumber !== 1) {
@@ -4056,6 +4071,11 @@ function bibDataProps(bibtex: string | undefined): CustomPropEntry[] {
   return chunkCustomProps('MANUSCRIPT_BIB_DATA_', bibtex, 4000);
 }
 
+function bibliographyPathProps(fm: Frontmatter): CustomPropEntry[] {
+  if (!fm.bibliography) return [];
+  return [{ name: 'MANUSCRIPT_BIBLIOGRAPHY_PATH', value: fm.bibliography }];
+}
+
 /** Assign sequential htmlCommentIndex to each HTML comment token and return
  *  maps from index → blankLinesBefore/After count (only for non-default values). */
 export function annotateHtmlCommentIndices(tokens: MdToken[]): { beforeGaps: Map<number, number>; afterGaps: Map<number, number> } {
@@ -4887,6 +4907,11 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
     : '';
 
   let xml = '<w:p>' + pPr + alertPrefix + taskPrefix + runs + '</w:p>';
+
+  if (token.type === 'list_item' && !token.ordered && token.bulletMarker) {
+    const hiddenTag = '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt('\u200B_lim:' + token.bulletMarker) + '</w:r>';
+    xml = '<w:p>' + pPr + hiddenTag + alertPrefix + taskPrefix + runs + '</w:p>';
+  }
 
   // Encode hidden metadata runs right after pPr so the docx→md converter can
   // reconstruct blockquote group boundaries and list continuation context.
@@ -6268,6 +6293,7 @@ export async function convertMdToDocx(
   customProps.push(...frontmatterFieldOrderProps(fieldOrder));
   customProps.push(...bibKeyOrderProps(bibEntries));
   customProps.push(...bibDataProps(options?.bibtex));
+  customProps.push(...bibliographyPathProps(frontmatter));
   const hasCustomProps = customProps.length > 0;
   if (hasCustomProps) {
     zip.file('docProps/custom.xml', customPropsXml(customProps));
