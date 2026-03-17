@@ -34,6 +34,29 @@ bunx vsce package
 - **Testing**: Bun test runner with fast-check for property-based testing
 - **Build tool**: VSCE (VS Code Extension compiler)
 
+## Word Dirty-Flag Investigation
+
+The Word dirty-flag workflow is opt-in and macOS-only.
+
+```bash
+# Discover the current simplest fixture that Word marks dirty
+bun run word:dirty
+
+# Verify the committed dirty-frontier baseline
+bun run word:dirty --verify
+
+# Run one built-in fixture only
+bun run word:dirty --fixture single-paragraph
+
+# Diagnose an arbitrary Markdown file and save XML diffs
+bun run word:dirty test/fixtures/draft.md --bisect
+
+# Run the Bun verification test when Word is available locally
+bun run test:word-dirty
+```
+
+Artifacts are written to `scripts/word-roundtrip-output/dirty-flag/`. The harness stops at the first dirty fixture and defers more complex fixtures until simpler ones are clean.
+
 ## Project Structure
 
 - `src/` - TypeScript source code
