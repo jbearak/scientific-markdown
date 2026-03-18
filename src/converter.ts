@@ -266,6 +266,7 @@ export type ContentItem =
       paragraphLeftIndentTwips?: number; // raw OOXML left indent for structural inference
       blockquoteIndentUnitTwips?: 240 | 720; // base indent unit for blockquote styles
       emptyParagraphCount?: number; // count of collapsed consecutive empty paragraphs
+      indentOverride?: 'indent' | 'no-indent'; // per-paragraph indent override for round-trip
     }
   | { type: 'math'; latex: string; display: boolean; commentIds: Set<string>; revision?: RevisionInfo }
   | { type: 'footnote_ref'; noteId: string; noteKind: 'footnote' | 'endnote'; commentIds: Set<string>; revision?: RevisionInfo }
@@ -1479,6 +1480,20 @@ export async function extractParagraphIndent(data: Uint8Array | JSZip): Promise<
 
 export async function extractBibliographyHangingIndent(data: Uint8Array | JSZip): Promise<string | null> {
   return extractStringCustomProp(data, 'MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT');
+}
+
+export async function extractIndentOverrides(data: Uint8Array | JSZip): Promise<Map<number, string> | null> {
+  const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_INDENT_OVERRIDES');
+  if (!mappingJson) return null;
+  try {
+    const obj = JSON.parse(mappingJson) as Record<string, string>;
+    const map = new Map<number, string>();
+    for (const [k, v] of Object.entries(obj)) {
+      const idx = parseInt(k, 10);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v);
+    }
+    return map.size > 0 ? map : null;
+  } catch { return null; }
 }
 
 // Extract blockquote gap metadata from custom XML properties.
@@ -4920,6 +4935,11 @@ export function buildMarkdown(
         lastBlockquoteLevel = undefined;
       }
 
+      // Emit per-paragraph indent sentinel before body paragraphs
+      if (item.indentOverride && !item.headingLevel && !item.listMeta && !item.blockquoteLevel && !item.isCodeBlock) {
+        output.push('<!-- ' + item.indentOverride + ' -->\n');
+      }
+
       if (item.headingLevel) {
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
@@ -5875,7 +5895,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5919,6 +5939,7 @@ export async function convertDocx(
     extractLineSpacing(zip),
     extractParagraphIndent(zip),
     extractBibliographyHangingIndent(zip),
+    extractIndentOverrides(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -5978,6 +5999,31 @@ export async function convertDocx(
     derivedBlockquotePreContentBlankLines,
     derivedBlockquotePostContentBlankLines,
   } = annotateStructuralParagraphMetadata(docContent);
+
+  // Post-process: apply per-paragraph indent overrides from custom properties.
+  // Uses the same body-paragraph counting as md-to-docx generation: count
+  // non-heading, non-title, non-code, non-list, non-blockquote para items that
+  // have inline content following them (i.e. not empty separator paragraphs).
+  if (storedIndentOverrides) {
+    let bodyIdx = 0;
+    for (let ci = 0; ci < docContent.length; ci++) {
+      const item = docContent[ci];
+      if (item.type !== 'para' || item.headingLevel || item.isTitle || item.isCodeBlock
+          || item.listMeta || item.blockquoteLevel) continue;
+      // Skip empty separator paragraphs (no inline content follows before next structural item)
+      if (isPlainEmptyParagraph(item)) continue;
+      // Check if this para has any non-html_comment inline content after it
+      let hasNonCommentContent = false;
+      for (let j = ci + 1; j < docContent.length; j++) {
+        if (isStructuralBoundaryItem(docContent[j])) break;
+        if (docContent[j].type !== 'html_comment') { hasNonCommentContent = true; break; }
+      }
+      if (!hasNonCommentContent) { continue; }
+      const override = storedIndentOverrides.get(bodyIdx);
+      if (override) item.indentOverride = override as 'indent' | 'no-indent';
+      bodyIdx++;
+    }
+  }
 
   // Post-process: inject custom_style_open/custom_style_close sentinels around
   // runs of paragraphs that share a customStyleName.

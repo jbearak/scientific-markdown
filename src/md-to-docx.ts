@@ -104,6 +104,7 @@ export interface MdToken {
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
   customStyleOpen?: string;   // sentinel: start of custom style block (style name)
   customStyleClose?: true;    // sentinel: end of custom style block
+  indentOverride?: 'indent' | 'no-indent'; // per-paragraph indent override from <!-- indent --> / <!-- no-indent -->
 }
 
 export interface MdTableCell {
@@ -1514,6 +1515,27 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     }
   }
 
+  // Post-process: transfer <!-- indent --> / <!-- no-indent --> directives to the next paragraph token
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
+    const run = result[i].runs[0];
+    if (run.type !== 'html_comment') continue;
+    const text = run.text.trim();
+    const indentMatch = text.match(/^<!--\s*(no-indent|indent)\s*-->$/i);
+    if (!indentMatch) continue;
+    const override = indentMatch[1].toLowerCase() as 'indent' | 'no-indent';
+    // Forward scan: skip HTML comment paragraphs to find the next content paragraph
+    let target = i + 1;
+    while (target < result.length && result[target].type === 'paragraph'
+        && result[target].runs.length === 1 && result[target].runs[0].type === 'html_comment') {
+      target++;
+    }
+    if (target < result.length && result[target].type === 'paragraph' && result[target].runs.length > 0) {
+      result[target].indentOverride = override;
+      result.splice(i, 1);
+    }
+  }
+
   applyCustomStyleSentinels(result, warnings);
 
   return result;
@@ -2718,6 +2740,8 @@ export interface DocxGenState {
   nextBookmarkId: number; // counter for unique bookmark IDs within footnotes/endnotes XML
   firstLineIndentTwips?: number;   // undefined = no indent mode
   afterHeading: boolean;           // suppress indent on first para after heading
+  indentOverrides: Map<number, 'indent' | 'no-indent'>; // body paragraph index → override
+  bodyParagraphIndex: number;      // counter for body paragraphs (for indent override tracking)
 }
 
 interface CommentEntry {
@@ -4122,6 +4146,14 @@ function bibliographyHangingIndentProps(fm: Frontmatter): CustomPropEntry[] {
   if (fm.bibliographyHangingIndent === undefined) return [];
   return [{ name: 'MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT', value: String(fm.bibliographyHangingIndent) }];
 }
+function indentOverrideProps(overrides: Map<number, 'indent' | 'no-indent'>): CustomPropEntry[] {
+  if (overrides.size === 0) return [];
+  const mapping: Record<string, string> = {};
+  for (const [index, override] of overrides) {
+    mapping[String(index)] = override;
+  }
+  return chunkCustomProps('MANUSCRIPT_INDENT_OVERRIDES_', JSON.stringify(mapping));
+}
 
 function gridTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
   if (fm.gridTableMaxLineWidth === undefined) return [];
@@ -4953,10 +4985,19 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
       break;
   }
 
-  // First-line indent for body paragraphs in indent mode (non-single spacing).
-  // Suppress after headings and when a custom style is active.
-  if (state.firstLineIndentTwips && token.type === 'paragraph' && !state.afterHeading && !state.activeCustomStyle && !pPr) {
-    pPr = '<w:pPr><w:ind w:firstLine="' + state.firstLineIndentTwips + '"/></w:pPr>';
+  // First-line indent for body paragraphs.
+  // Per-paragraph overrides (<!-- indent --> / <!-- no-indent -->) take precedence,
+  // then document-level indent mode (non-single spacing) applies to undecorated paragraphs.
+  if (token.type === 'paragraph' && !state.activeCustomStyle && !pPr) {
+    if (token.indentOverride === 'indent') {
+      // Force indent even after headings or without document-level indent mode
+      const twips = state.firstLineIndentTwips || 720; // default 0.5 inch
+      pPr = '<w:pPr><w:ind w:firstLine="' + twips + '"/></w:pPr>';
+    } else if (token.indentOverride === 'no-indent') {
+      // Suppress indent — leave pPr unset (no firstLine)
+    } else if (state.firstLineIndentTwips && !state.afterHeading) {
+      pPr = '<w:pPr><w:ind w:firstLine="' + state.firstLineIndentTwips + '"/></w:pPr>';
+    }
   }
 
   // Pure HTML-comment paragraphs are hidden (vanish) — collapse their spacing
@@ -5733,6 +5774,13 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       state.tableIndex++;
     } else {
       state.afterHeading = !!(prevToken?.type === 'heading');
+      // Track body paragraph index for indent override round-trip
+      if (token.type === 'paragraph' && token.runs.length > 0 && !token.runs.every(r => r.type === 'html_comment')) {
+        if (token.indentOverride) {
+          state.indentOverrides.set(state.bodyParagraphIndex, token.indentOverride);
+        }
+        state.bodyParagraphIndex++;
+      }
       body += generateParagraph(token, state, options, bibEntries, citeprocEngine);
     }
     if (token.type === 'blockquote' && token.alertLast && token.blockquoteGroupIndex !== undefined) {
@@ -6021,6 +6069,8 @@ export async function convertMdToDocx(
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
     afterHeading: false,
+    indentOverrides: new Map(),
+    bodyParagraphIndex: 0,
   };
 
   // Compute indent mode: when line-spacing is non-single, auto-enable first-line indent
@@ -6350,6 +6400,7 @@ export async function convertMdToDocx(
   customProps.push(...lineSpacingProps(frontmatter));
   customProps.push(...paragraphIndentProps(frontmatter));
   customProps.push(...bibliographyHangingIndentProps(frontmatter));
+  customProps.push(...indentOverrideProps(state.indentOverrides));
   customProps.push(...blockquoteGapProps(state.blockquoteGaps));
   customProps.push(...blockquotePreContentBlankLineProps(state.blockquotePreContentBlankLines));
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));

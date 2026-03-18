@@ -27,7 +27,7 @@ The converter supports DOCX → Markdown → DOCX round-tripping. The following 
 - **HTML comments**: `<!-- ... -->` comments (both inline and block-level) are preserved as invisible runs in the DOCX and restored on re-import. See [HTML Comments](#html-comments) below.
 - **Images**: `![alt](path){width=W height=H}` and `<img>` syntax ↔ Word `<w:drawing>` inline images. Dimensions preserved via EMU↔pixel conversion. Alt text preserved via `<wp:docPr descr="...">`. Syntax format (Markdown vs HTML) preserved via `MANUSCRIPT_IMAGE_FORMATS` custom property. Image binaries extracted to/from `word/media/`.
 - **Line breaks**: Word line breaks (`<w:br/>`, Shift+Enter) are imported as `\` + newline. On export, a trailing `\` at the end of a line produces `<w:br/>`. Bare newlines are soft breaks (spaces) unless `breaks: true` is set in frontmatter. See [Specification](specification.md#line-breaks).
-- **Line spacing and indent**: `line-spacing`, `paragraph-indent`, and `bibliography-hanging-indent` frontmatter settings round-trip via `MANUSCRIPT_LINE_SPACING`, `MANUSCRIPT_PARAGRAPH_INDENT`, and `MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT` custom properties in `docProps/custom.xml`
+- **Line spacing and indent**: `line-spacing`, `paragraph-indent`, and `bibliography-hanging-indent` frontmatter settings round-trip via `MANUSCRIPT_LINE_SPACING`, `MANUSCRIPT_PARAGRAPH_INDENT`, and `MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT` custom properties in `docProps/custom.xml`. Per-paragraph `<!-- indent -->` / `<!-- no-indent -->` overrides round-trip via `MANUSCRIPT_INDENT_OVERRIDES` custom properties
 
 ## LaTeX Equations
 

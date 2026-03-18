@@ -92,6 +92,8 @@ function makeState(): DocxGenState {
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
     afterHeading: false,
+    indentOverrides: new Map(),
+    bodyParagraphIndex: 0,
   };
 }
 
@@ -3676,5 +3678,69 @@ describe('line spacing round-trip', () => {
     const { convertDocx } = await import('./converter');
     const result = await convertDocx(docx);
     expect(result.markdown).toContain('paragraph-indent: 0.3');
+  });
+});
+
+describe('per-paragraph indent overrides', () => {
+  it('parseMd transfers <!-- no-indent --> to next paragraph', () => {
+    const tokens = parseMd('<!-- no-indent -->\nFirst paragraph.\n\nSecond paragraph.');
+    const para = tokens.find(t => t.type === 'paragraph' && t.runs.some(r => r.text === 'First paragraph.'));
+    expect(para).toBeDefined();
+    expect(para!.indentOverride).toBe('no-indent');
+    // Second paragraph should have no override
+    const para2 = tokens.find(t => t.type === 'paragraph' && t.runs.some(r => r.text === 'Second paragraph.'));
+    expect(para2).toBeDefined();
+    expect(para2!.indentOverride).toBeUndefined();
+  });
+
+  it('parseMd transfers <!-- indent --> to next paragraph', () => {
+    const tokens = parseMd('<!-- indent -->\nForced indent.');
+    const para = tokens.find(t => t.type === 'paragraph' && t.runs.some(r => r.text === 'Forced indent.'));
+    expect(para).toBeDefined();
+    expect(para!.indentOverride).toBe('indent');
+  });
+
+  it('<!-- no-indent --> suppresses first-line indent in DOCX', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }], indentOverride: 'no-indent' };
+    const state = makeState();
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = false;
+    const xml = generateParagraph(token, state);
+    expect(xml).not.toContain('w:firstLine');
+  });
+
+  it('<!-- indent --> forces first-line indent even after heading', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }], indentOverride: 'indent' };
+    const state = makeState();
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = true;
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:firstLine="720"');
+  });
+
+  it('<!-- indent --> forces first-line indent without document-level indent mode', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }], indentOverride: 'indent' };
+    const state = makeState();
+    // No firstLineIndentTwips set (no document-level indent mode)
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:firstLine="720"'); // default 0.5 inch
+  });
+
+  it('MD→DOCX→MD round-trips <!-- no-indent --> sentinel', async () => {
+    const md = '---\nline-spacing: double\n---\n\n# Heading\n\nFirst paragraph.\n\n<!-- no-indent -->\nSecond paragraph.\n\nThird paragraph.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- no-indent -->\nSecond paragraph.');
+    // Third paragraph should not have a sentinel
+    expect(result.markdown).not.toContain('<!-- no-indent -->\nThird paragraph.');
+  });
+
+  it('MD→DOCX→MD round-trips <!-- indent --> sentinel', async () => {
+    const md = '---\nline-spacing: double\n---\n\n# Heading\n\n<!-- indent -->\nFirst paragraph after heading.\n\nSecond paragraph.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- indent -->\nFirst paragraph after heading.');
   });
 });

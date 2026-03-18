@@ -377,6 +377,33 @@ paragraph-indent: 0.5
 ---
 ```
 
+#### Per-Paragraph Indent Overrides
+
+Use `<!-- no-indent -->` and `<!-- indent -->` HTML comment directives to override the indentation of individual paragraphs. Each directive applies to the immediately following paragraph:
+
+```markdown
+---
+line-spacing: double
+---
+
+# Introduction
+
+First paragraph (auto-suppressed indent after heading).
+
+Second paragraph (indented by default).
+
+<!-- no-indent -->
+Third paragraph (indent explicitly suppressed).
+
+<!-- indent -->
+Fourth paragraph (indent explicitly forced).
+```
+
+- `<!-- no-indent -->` suppresses the first-line indent on the next paragraph, even when document-level indent mode is active.
+- `<!-- indent -->` forces a first-line indent on the next paragraph, even after a heading or without document-level indent mode. Uses the document's `paragraph-indent` value (default 0.5 inches).
+
+Both directives are consumed during parsing (they do not appear in the DOCX) and are preserved through round-trips via the `MANUSCRIPT_INDENT_OVERRIDES` custom property.
+
 #### Bibliography
 
 The `bibliography-hanging-indent` field controls whether bibliography entries use a hanging indent. When `true` (default), bibliography entries are formatted with a 0.5-inch hanging indent and single-line spacing, regardless of the document's line spacing setting.
