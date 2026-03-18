@@ -4908,28 +4908,6 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 
   let xml = '<w:p>' + pPr + alertPrefix + taskPrefix + runs + '</w:p>';
 
-  if (token.type === 'list_item' && !token.ordered && token.bulletMarker) {
-    const hiddenTag = '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt('\u200B_lim:' + token.bulletMarker) + '</w:r>';
-    xml = '<w:p>' + pPr + hiddenTag + alertPrefix + taskPrefix + runs + '</w:p>';
-  }
-
-  // Encode hidden metadata runs right after pPr so the docx→md converter can
-  // reconstruct blockquote group boundaries and list continuation context.
-  if (token.type === 'blockquote' && (token.blockquoteGroupIndex !== undefined || token.listContinuation)) {
-    let hiddenTags = '';
-    if (token.blockquoteGroupIndex !== undefined) {
-      hiddenTags += '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt('\u200B_bqg' + token.blockquoteGroupIndex) + '</w:r>';
-    }
-    if (token.listContinuation) {
-      let listTagPayload = '\u200B_lic:' + token.listContinuation.type + ':' + token.listContinuation.level + ':' + (token.level || 1);
-      if (token.listContinuation.markerWidth !== undefined) {
-        listTagPayload += ':' + token.listContinuation.markerWidth;
-      }
-      hiddenTags += '<w:r><w:rPr><w:vanish/><w:color w:val="FFFFFF"/></w:rPr>' + wt(listTagPayload) + '</w:r>';
-    }
-    xml = '<w:p>' + pPr + hiddenTags + alertPrefix + taskPrefix + runs + '</w:p>';
-  }
-
   // Blockquote spacer paragraphs: exact-height empty paragraphs with an
   // inline left border (no pStyle, so the converter ignores them).  The left
   // rule extends symmetrically above/below content regardless of font size.

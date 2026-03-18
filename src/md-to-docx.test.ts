@@ -751,7 +751,7 @@ describe('generateParagraph', () => {
     expect(result).toContain('w:color="D0D7DE"');
   });
 
-  it('generates list continuation blockquote with adjusted indent and hidden marker', () => {
+  it('generates list continuation blockquote with adjusted indent and no hidden metadata marker', () => {
     const token: MdToken = {
       type: 'blockquote',
       level: 1,
@@ -761,8 +761,8 @@ describe('generateParagraph', () => {
     };
     const result = generateParagraph(token, createState());
     expect(result).toContain('<w:pPr><w:pStyle w:val="GitHubBlockquote"/><w:spacing w:after="0"/><w:ind w:left="960"/></w:pPr>');
-    expect(result).toContain('_bqg7');
-    expect(result).toContain('_lic:bullet:1:1');
+    expect(result).not.toContain('_bqg');
+    expect(result).not.toContain('_lic:');
     expect(result).not.toContain('<w:numPr>');
   });
 

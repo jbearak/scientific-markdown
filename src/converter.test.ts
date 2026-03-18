@@ -1039,12 +1039,34 @@ describe('List indent round-trip', () => {
     expect(result.markdown).not.toContain('\t');
   });
 
-  test('asterisk bullets round-trip with list-contained blockquotes intact', async () => {
+  test('unordered bullets normalize to dash while preserving list-contained blockquotes', async () => {
     const md = '* **Clinical phrasing:**\n  > quoted text';
     const { docx } = await convertMdToDocx(md);
     const result = await convertDocx(docx);
-    expect(result.markdown).toContain('* **Clinical phrasing:**');
+    expect(result.markdown).toContain('- **Clinical phrasing:**');
     expect(result.markdown).toContain('  > quoted text');
+  });
+});
+
+describe('legacy hidden metadata compatibility', () => {
+  test('legacy _bqg/_lic/_lim hidden runs are stripped from markdown output', async () => {
+    const xml = wrapDocumentXml(
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>'
+      + '<w:r><w:rPr><w:vanish/></w:rPr><w:t>\u200B_lim:*</w:t></w:r>'
+      + '<w:r><w:t>List item</w:t></w:r></w:p>'
+      + '<w:p><w:pPr><w:pStyle w:val="GitHubBlockquote"/><w:spacing w:after="0"/><w:ind w:left="960"/></w:pPr>'
+      + '<w:r><w:rPr><w:vanish/></w:rPr><w:t>\u200B_bqg7</w:t></w:r>'
+      + '<w:r><w:rPr><w:vanish/></w:rPr><w:t>\u200B_lic:bullet:1:1</w:t></w:r>'
+      + '<w:r><w:t>Quoted line</w:t></w:r></w:p>'
+    );
+    const buf = await buildSyntheticDocx(xml);
+    const result = await convertDocx(buf);
+
+    expect(result.markdown).not.toContain('_bqg');
+    expect(result.markdown).not.toContain('_lic:');
+    expect(result.markdown).not.toContain('_lim:');
+    expect(result.markdown).toContain('List item');
+    expect(result.markdown).toContain('Quoted line');
   });
 });
 
@@ -3529,6 +3551,22 @@ describe('Blockquote round-trip', () => {
     expect(result.markdown).not.toContain('> [!NOTE] This is a note.');
   });
 
+  test('literal alert marker text inside an alert paragraph is preserved', async () => {
+    const xml = wrapDocumentXml(
+      '<w:p><w:pPr><w:pStyle w:val="GitHubNote"/><w:ind w:left="240"/></w:pPr>'
+      + '<w:r><w:rPr><w:b/></w:rPr><w:t>※ Note </w:t></w:r>'
+      + '<w:r><w:br/></w:r>'
+      + '<w:r><w:t>First paragraph.</w:t></w:r></w:p>'
+      + '<w:p><w:pPr><w:pStyle w:val="GitHubNote"/><w:ind w:left="240"/></w:pPr>'
+      + '<w:r><w:t>[!NOTE] literal marker text</w:t></w:r></w:p>'
+    );
+    const buf = await buildSyntheticDocx(xml);
+    const result = await convertDocx(buf);
+
+    expect(result.markdown).toContain('> [!NOTE]\n> First paragraph.');
+    expect(result.markdown).toContain('> [!NOTE] literal marker text');
+  });
+
   test('list-contained inline alert with hard break rewrites to marker-only form', () => {
     const markdown = buildMarkdown(
       [
@@ -3549,6 +3587,23 @@ describe('Blockquote round-trip', () => {
 
     expect(markdown).toContain('10. Clinical phrasing:\n    > [!NOTE]\n    > This is a note.');
     expect(markdown).not.toContain('10. Clinical phrasing:\n    > [!NOTE] This is a note.');
+  });
+
+  test('metadata-free DOCX preserves blank lines around blockquotes structurally', async () => {
+    const xml = wrapDocumentXml(
+      '<w:p><w:r><w:t>Before paragraph.</w:t></w:r></w:p>'
+      + '<w:p/>'
+      + '<w:p/>'
+      + '<w:p><w:pPr><w:pStyle w:val="GitHubBlockquote"/><w:ind w:left="240"/></w:pPr><w:r><w:t>Quoted line</w:t></w:r></w:p>'
+      + '<w:p/>'
+      + '<w:p/>'
+      + '<w:p><w:r><w:t>After paragraph.</w:t></w:r></w:p>'
+    );
+    const buf = await buildSyntheticDocx(xml);
+    const result = await convertDocx(buf);
+
+    expect(result.markdown).toContain('Before paragraph.\n\n\n> Quoted line');
+    expect(result.markdown).toContain('> Quoted line\n\n\nAfter paragraph.');
   });
 });
 

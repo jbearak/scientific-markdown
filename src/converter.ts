@@ -235,6 +235,12 @@ export interface ListContinuation {
   markerWidth?: number; // ordered-list marker width (e.g. "10. " => 4)
 }
 
+interface StructuralListContext {
+  type: 'bullet' | 'ordered';
+  level: number;
+  markerWidth?: number;
+}
+
 export type ContentItem =
   | {
       type: 'text';
@@ -257,6 +263,9 @@ export type ContentItem =
       isCodeBlock?: boolean;   // true if Word "Code Block" paragraph style
       blockquoteGroupIndex?: number; // sequential group index from md→docx gap metadata
       customStyleName?: string;      // user-defined custom style name (from MsCustomXxx pStyle)
+      paragraphLeftIndentTwips?: number; // raw OOXML left indent for structural inference
+      blockquoteIndentUnitTwips?: 240 | 720; // base indent unit for blockquote styles
+      emptyParagraphCount?: number; // count of collapsed consecutive empty paragraphs
     }
   | { type: 'math'; latex: string; display: boolean; commentIds: Set<string>; revision?: RevisionInfo }
   | { type: 'footnote_ref'; noteId: string; noteKind: 'footnote' | 'endnote'; commentIds: Set<string>; revision?: RevisionInfo }
@@ -383,19 +392,10 @@ export async function extractNoteImageFormatMapping(data: Uint8Array | JSZip): P
 
 export interface NumberingLevelDef {
   type: 'bullet' | 'ordered';
-  bulletMarker?: '-' | '*' | '+';
 }
 
 export type NumberingDefs = Map<string, Map<string, NumberingLevelDef>>;
 export type NumberingStartOverrides = Map<string, Map<string, number>>; // numId → ilvl → start
-
-function mapBulletGlyphToMarker(glyph: string): '-' | '*' | '+' | undefined {
-  const normalized = glyph.trim();
-  if (normalized === '•' || normalized === '◦' || normalized === '▪' || normalized === '●') return '*';
-  if (normalized === '-' || normalized === '–' || normalized === '—') return '-';
-  if (normalized === '+') return '+';
-  return undefined;
-}
 
 export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: NumberingDefs; startOverrides: NumberingStartOverrides }> {
   const numberingDefs: NumberingDefs = new Map();
@@ -421,12 +421,7 @@ export async function parseNumberingDefinitions(zip: JSZip): Promise<{ defs: Num
       if (numFmtNodes.length > 0) {
         const val = getAttr(numFmtNodes[0], 'val');
         if (val === 'bullet') {
-          const lvlTextNodes = findAllDeep(lvl, 'w:lvlText');
-          const bulletGlyph = lvlTextNodes.length > 0 ? getAttr(lvlTextNodes[0], 'val') : '';
-          levels.set(ilvl, {
-            type: 'bullet',
-            ...(mapBulletGlyphToMarker(bulletGlyph) ? { bulletMarker: mapBulletGlyphToMarker(bulletGlyph) } : {}),
-          });
+          levels.set(ilvl, { type: 'bullet' });
         } else {
           levels.set(ilvl, { type: 'ordered' });
         }
@@ -506,24 +501,38 @@ export function parseTitleStyle(pPrChildren: any[]): boolean {
   return getAttr(pStyleElement, 'val').toLowerCase() === 'title';
 }
 
-export function parseBlockquoteLevel(pPrChildren: any[]): number | undefined {
+function parseParagraphLeftIndentTwips(pPrChildren: any[]): number | undefined {
+  const indElement = pPrChildren.find(child => child['w:ind'] !== undefined);
+  if (!indElement) return undefined;
+  const left = parseInt(getAttr(indElement, 'left'), 10);
+  return !isNaN(left) && left > 0 ? left : undefined;
+}
+
+function parseBlockquoteInfo(pPrChildren: any[]): { level?: number; indentUnitTwips?: 240 | 720 } {
   const pStyleElement = pPrChildren.find(child => child['w:pStyle'] !== undefined);
-  if (!pStyleElement) return undefined;
+  if (!pStyleElement) return {};
   const val = getAttr(pStyleElement, 'val').toLowerCase();
   const isAlertStyle = ALERT_STYLE_TO_TYPE[val] !== undefined;
   const isGithubBlockquoteStyle = val === 'github' || val === 'githubblockquote';
-  if (val !== 'quote' && val !== 'intensequote' && !isGithubBlockquoteStyle && !isAlertStyle) return undefined;
+  if (val !== 'quote' && val !== 'intensequote' && !isGithubBlockquoteStyle && !isAlertStyle) return {};
 
   // Extract left indent to determine nesting level
-  const indElement = pPrChildren.find(child => child['w:ind'] !== undefined);
-  if (indElement) {
-    const left = parseInt(getAttr(indElement, 'left'), 10);
-    if (!isNaN(left) && left > 0) {
-      const unit = (isGithubBlockquoteStyle || isAlertStyle) ? 240 : 720;
-      return Math.max(1, Math.round(left / unit));
+  const indentUnitTwips: 240 | 720 = (isGithubBlockquoteStyle || isAlertStyle) ? 240 : 720;
+  const left = parseParagraphLeftIndentTwips(pPrChildren);
+  if (left !== undefined) {
+    if (left > 0) {
+      return { level: Math.max(1, Math.round(left / indentUnitTwips)), indentUnitTwips };
     }
   }
-  return 1;
+  return { level: 1, indentUnitTwips };
+}
+
+export function parseBlockquoteLevel(pPrChildren: any[]): number | undefined {
+  const info = parseBlockquoteInfo(pPrChildren);
+  if (info.level !== undefined) {
+    return info.level;
+  }
+  return undefined;
 }
 
 export function parseAlertType(pPrChildren: any[]): GfmAlertType | undefined {
@@ -574,7 +583,6 @@ export function parseListMeta(pPrChildren: any[], numberingDefs: NumberingDefs, 
     type: def.type,
     level,
     ...(startNumber !== undefined ? { startNumber } : {}),
-    ...(def.bulletMarker ? { bulletMarker: def.bulletMarker } : {}),
   };
 }
 
@@ -2408,58 +2416,10 @@ export async function extractDocumentContent(
               lastItem.text += hiddenPayload;
               continue;
             }
-            // Extract blockquote group index from hidden tag (encoded by md→docx
-            // for gap metadata correlation) and attach to the most recent para item.
-            if (hiddenPayload.startsWith('_bqg')) {
-              const idx = parseInt(hiddenPayload.slice('_bqg'.length), 10);
-              if (!isNaN(idx)) {
-                for (let ti = target.length - 1; ti >= 0; ti--) {
-                  if (target[ti].type === 'para') {
-                    (target[ti] as any).blockquoteGroupIndex = idx;
-                    break;
-                  }
-                }
-              }
-              continue;
-            }
-            if (hiddenPayload.startsWith('_lic:')) {
-              const [, listType, rawLevel, rawBlockquoteLevel, rawMarkerWidth] = hiddenPayload.split(':');
-              const listLevel = parseInt(rawLevel, 10);
-              const blockquoteLevel = parseInt(rawBlockquoteLevel, 10);
-              let markerWidth = rawMarkerWidth !== undefined ? parseInt(rawMarkerWidth, 10) : undefined;
-              if (markerWidth !== undefined && !isNaN(markerWidth)) {
-                markerWidth = Math.max(0, markerWidth);
-              } else {
-                markerWidth = undefined;
-              }
-              if ((listType === 'bullet' || listType === 'ordered') && !isNaN(listLevel)) {
-                for (let ti = target.length - 1; ti >= 0; ti--) {
-                  if (target[ti].type === 'para') {
-                    (target[ti] as any).listContinuation = {
-                      type: listType,
-                      level: Math.max(0, listLevel - 1),
-                      ...(markerWidth !== undefined ? { markerWidth } : {}),
-                    };
-                    if (!isNaN(blockquoteLevel) && blockquoteLevel > 0) {
-                      (target[ti] as any).blockquoteLevel = blockquoteLevel;
-                    }
-                    break;
-                  }
-                }
-              }
-              continue;
-            }
-            if (hiddenPayload.startsWith('_lim:')) {
-              const marker = hiddenPayload.slice('_lim:'.length);
-              if (marker === '-' || marker === '*' || marker === '+') {
-                for (let ti = target.length - 1; ti >= 0; ti--) {
-                  const candidate = target[ti];
-                  if (candidate.type === 'para' && candidate.listMeta?.type === 'bullet') {
-                    candidate.listMeta.bulletMarker = marker;
-                    break;
-                  }
-                }
-              }
+            // Legacy backward-compat path: older exports stored internal
+            // round-trip metadata in hidden \u200B-prefixed runs. Ignore and
+            // strip those markers so they never leak into markdown output.
+            if (hiddenPayload.startsWith('_bqg') || hiddenPayload.startsWith('_lic:') || hiddenPayload.startsWith('_lim:')) {
               continue;
             }
             // Hidden metadata markers are not user-visible content. This avoids
@@ -2510,9 +2470,11 @@ export async function extractDocumentContent(
           let listMeta: ListMeta | undefined;
           let isTitle = false;
           let blockquoteLevel: number | undefined;
+          let blockquoteIndentUnitTwips: 240 | 720 | undefined;
           let alertType: GfmAlertType | undefined;
           let isCodeBlock = false;
           let customStyle: string | undefined;
+          let paragraphLeftIndentTwips: number | undefined;
           let paraFormatting = currentFormatting;
           let isSpacerParagraph = false;
           let isSectionBreakHandled = false;
@@ -2591,10 +2553,13 @@ export async function extractDocumentContent(
               headingLevel = parseHeadingLevel(pPrChildren);
               listMeta = parseListMeta(pPrChildren, numberingDefs, numberingStartOverrides);
               isTitle = parseTitleStyle(pPrChildren);
-              blockquoteLevel = parseBlockquoteLevel(pPrChildren);
+              const blockquoteInfo = parseBlockquoteInfo(pPrChildren);
+              blockquoteLevel = blockquoteInfo.level;
+              blockquoteIndentUnitTwips = blockquoteInfo.indentUnitTwips;
               alertType = parseAlertType(pPrChildren);
               isCodeBlock = parseCodeBlockStyle(pPrChildren);
               customStyle = parseCustomStyleName(pPrChildren, options?.customStyles ?? undefined);
+              paragraphLeftIndentTwips = parseParagraphLeftIndentTwips(pPrChildren);
               const pRPrElement = pPrChildren.find(pprChild => pprChild['w:rPr'] !== undefined);
               if (pRPrElement) {
                 const pRPrChildren = Array.isArray(pRPrElement['w:rPr']) ? pRPrElement['w:rPr'] : [pRPrElement['w:rPr']];
@@ -2641,9 +2606,11 @@ export async function extractDocumentContent(
             if (listMeta) paraItem.listMeta = listMeta;
             if (isTitle) paraItem.isTitle = true;
             if (blockquoteLevel) paraItem.blockquoteLevel = blockquoteLevel;
+            if (blockquoteIndentUnitTwips) paraItem.blockquoteIndentUnitTwips = blockquoteIndentUnitTwips;
             if (alertType) paraItem.alertType = alertType;
             if (isCodeBlock) paraItem.isCodeBlock = true;
             if (customStyle) paraItem.customStyleName = customStyle;
+            if (paragraphLeftIndentTwips !== undefined) paraItem.paragraphLeftIndentTwips = paragraphLeftIndentTwips;
             target.push(paraItem);
           }
           walk(paraChildren, paraFormatting, target, inTableCell, currentRevision);
@@ -2652,6 +2619,56 @@ export async function extractDocumentContent(
           // remove the para we just pushed — it would become a trailing blank line.
           if (inBibliographyField && needsPara && target.length > targetLenBeforePara) {
             target.splice(targetLenBeforePara, 1);
+          } else if (needsPara) {
+            const paraItem = target[targetLenBeforePara];
+            if (
+              paraItem?.type === 'para' &&
+              target.length === targetLenBeforePara + 1 &&
+              !paraItem.headingLevel &&
+              !paraItem.listMeta &&
+              !paraItem.isTitle &&
+              !paraItem.blockquoteLevel &&
+              !paraItem.isCodeBlock &&
+              !paraItem.customStyleName
+            ) {
+              paraItem.emptyParagraphCount = 1;
+              const prevItem = targetLenBeforePara > 0 ? target[targetLenBeforePara - 1] : undefined;
+              if (
+                prevItem?.type === 'para' &&
+                prevItem.emptyParagraphCount !== undefined &&
+                !prevItem.headingLevel &&
+                !prevItem.listMeta &&
+                !prevItem.isTitle &&
+                !prevItem.blockquoteLevel &&
+                !prevItem.isCodeBlock &&
+                !prevItem.customStyleName
+              ) {
+                prevItem.emptyParagraphCount += paraItem.emptyParagraphCount;
+                target.splice(targetLenBeforePara, 1);
+              }
+            }
+          } else if (
+            target.length === targetLenBeforePara &&
+            !headingLevel &&
+            !listMeta &&
+            !isTitle &&
+            !blockquoteLevel &&
+            !isCodeBlock &&
+            !customStyle
+          ) {
+            const prevItem = target.length > 0 ? target[target.length - 1] : undefined;
+            if (
+              prevItem?.type === 'para' &&
+              prevItem.emptyParagraphCount !== undefined &&
+              !prevItem.headingLevel &&
+              !prevItem.listMeta &&
+              !prevItem.isTitle &&
+              !prevItem.blockquoteLevel &&
+              !prevItem.isCodeBlock &&
+              !prevItem.customStyleName
+            ) {
+              prevItem.emptyParagraphCount += 1;
+            }
           }
         } else if (key === 'm:oMathPara') {
           // Display equation — extract m:oMath children from within
@@ -4005,6 +4022,339 @@ function renderTableOrFallback(
   return rHtml(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
 }
 
+function isStructuralBoundaryItem(item: ContentItem): boolean {
+  return item.type === 'para'
+    || item.type === 'table'
+    || item.type === 'landscape_open'
+    || item.type === 'landscape_close'
+    || item.type === 'portrait_open'
+    || item.type === 'portrait_close'
+    || item.type === 'bibliography_marker'
+    || item.type === 'custom_style_open'
+    || item.type === 'custom_style_close';
+}
+
+function paragraphHasContent(content: ContentItem[], paraIndex: number): boolean {
+  for (let i = paraIndex + 1; i < content.length; i++) {
+    if (isStructuralBoundaryItem(content[i])) return false;
+    return true;
+  }
+  return false;
+}
+
+function isPlainEmptyParagraph(item: Extract<ContentItem, { type: 'para' }>): boolean {
+  return !item.headingLevel
+    && !item.listMeta
+    && !item.isTitle
+    && !item.blockquoteLevel
+    && !item.isCodeBlock
+    && !item.customStyleName
+    && item.emptyParagraphCount !== undefined;
+}
+
+function clearListContextsFromLevel(contexts: Map<number, StructuralListContext>, minLevel: number): void {
+  for (const level of [...contexts.keys()]) {
+    if (level >= minLevel) contexts.delete(level);
+  }
+}
+
+function inferOrderedMarkerWidth(
+  listMeta: ListMeta,
+  orderedCounters: Map<number, number>,
+  listTypesByLevel: Map<number, 'bullet' | 'ordered'>,
+  lastListLevel: number | undefined,
+  lastListType: 'bullet' | 'ordered' | undefined,
+): number | undefined {
+  if (listMeta.type !== 'ordered') return undefined;
+  const levelType = listTypesByLevel.get(listMeta.level);
+  const isNewListContext = levelType !== 'ordered' && (!lastListType || lastListType !== 'ordered');
+  const isNewSubList = lastListLevel !== undefined && listMeta.level > lastListLevel;
+  if (listMeta.startNumber !== undefined && (isNewListContext || isNewSubList)) {
+    orderedCounters.set(listMeta.level, listMeta.startNumber);
+  } else if (isNewListContext || isNewSubList) {
+    orderedCounters.set(listMeta.level, 1);
+  }
+  const currentNumber = listMeta.startNumber !== undefined && (isNewListContext || isNewSubList)
+    ? listMeta.startNumber
+    : (orderedCounters.get(listMeta.level) ?? 1);
+  orderedCounters.set(listMeta.level, currentNumber + 1);
+  return String(currentNumber).length + 2;
+}
+
+function inferListContinuationForBlockquote(
+  item: Extract<ContentItem, { type: 'para' }>,
+  listContexts: Map<number, StructuralListContext>,
+): { blockquoteLevel: number; listContinuation?: ListContinuation } | undefined {
+  if (!item.blockquoteLevel || item.paragraphLeftIndentTwips === undefined || item.blockquoteIndentUnitTwips === undefined) {
+    return undefined;
+  }
+  const fallback = { blockquoteLevel: item.blockquoteLevel };
+  if (listContexts.size === 0) return fallback;
+
+  const rawIndent = item.paragraphLeftIndentTwips;
+  const unit = item.blockquoteIndentUnitTwips;
+  const candidates = [...listContexts.values()].sort((a, b) => b.level - a.level);
+  for (const context of candidates) {
+    const continuationIndent = 720 * (context.level + 1);
+    const adjustedIndent = rawIndent - continuationIndent;
+    if (adjustedIndent < unit || adjustedIndent % unit !== 0) continue;
+    const inferredLevel = adjustedIndent / unit;
+    if (!Number.isInteger(inferredLevel) || inferredLevel < 1) continue;
+    return {
+      blockquoteLevel: inferredLevel,
+      listContinuation: {
+        type: context.type,
+        level: context.level,
+        ...(context.markerWidth !== undefined ? { markerWidth: context.markerWidth } : {}),
+      },
+    };
+  }
+
+  return fallback;
+}
+
+function alertGlyphForType(alertType: GfmAlertType): string | undefined {
+  for (const [glyph, type] of Object.entries(ALERT_GLYPH_TO_TYPE)) {
+    if (type === alertType) return glyph;
+  }
+  return undefined;
+}
+
+function paragraphStartsWithExportedAlertLead(
+  content: ContentItem[],
+  paraIndex: number,
+  alertType: GfmAlertType,
+): boolean {
+  const glyph = alertGlyphForType(alertType);
+  if (!glyph) return false;
+  const expectedLead = glyph + ' ' + gfmAlertTitle(alertType) + ' ';
+  let sawLead = false;
+
+  for (let i = paraIndex + 1; i < content.length; i++) {
+    const item = content[i];
+    if (isStructuralBoundaryItem(item)) break;
+    if (item.type !== 'text') return false;
+    if (!sawLead) {
+      if (!item.formatting.bold || item.text !== expectedLead) return false;
+      sawLead = true;
+      continue;
+    }
+    return item.text.startsWith('\\\n');
+  }
+
+  return false;
+}
+
+function isRenderableNonBlockquoteStructuralItem(
+  content: ContentItem[],
+  contentIndex: number,
+  item: ContentItem,
+): boolean {
+  if (item.type === 'table') return true;
+  if (item.type !== 'para') return false;
+  if (item.blockquoteLevel) return false;
+  return !isPlainEmptyParagraph(item) || paragraphHasContent(content, contentIndex);
+}
+
+function hasRenderableInlineContent(content: ContentItem[], startIndex: number, endIndex: number): boolean {
+  for (let i = startIndex; i < endIndex; i++) {
+    if (!isStructuralBoundaryItem(content[i])) return true;
+  }
+  return false;
+}
+
+function deriveBlockquoteSpacingFromStructure(content: ContentItem[]): {
+  derivedBlockquoteGaps: Map<number, number>;
+  derivedBlockquotePreContentBlankLines: Map<number, number>;
+  derivedBlockquotePostContentBlankLines: Map<number, number>;
+} {
+  const structuralItems = content.flatMap((item, index) => isStructuralBoundaryItem(item) ? [{ item, index }] : []);
+  const groups: Array<{ groupIndex: number; startPos: number; endPos: number }> = [];
+
+  for (let pos = 0; pos < structuralItems.length; pos++) {
+    const entry = structuralItems[pos];
+    if (entry.item.type !== 'para' || entry.item.blockquoteGroupIndex === undefined) continue;
+    const currentGroupIndex = entry.item.blockquoteGroupIndex;
+    const lastGroup = groups.length > 0 ? groups[groups.length - 1] : undefined;
+    if (lastGroup && lastGroup.groupIndex === currentGroupIndex) {
+      lastGroup.endPos = pos;
+    } else {
+      groups.push({ groupIndex: currentGroupIndex, startPos: pos, endPos: pos });
+    }
+  }
+
+  const derivedBlockquoteGaps = new Map<number, number>();
+  const derivedBlockquotePreContentBlankLines = new Map<number, number>();
+  const derivedBlockquotePostContentBlankLines = new Map<number, number>();
+
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+
+    let preBlankCount = 0;
+    let prePos = group.startPos - 1;
+    while (prePos >= 0) {
+      const entry = structuralItems[prePos];
+      if (entry.item.type === 'para' && isPlainEmptyParagraph(entry.item) && !paragraphHasContent(content, entry.index)) {
+        preBlankCount += entry.item.emptyParagraphCount ?? 1;
+        prePos--;
+        continue;
+      }
+      break;
+    }
+    const preRangeStart = prePos >= 0 ? structuralItems[prePos].index + 1 : 0;
+    const preRangeEnd = preBlankCount > 0
+      ? structuralItems[prePos + 1].index
+      : structuralItems[group.startPos].index;
+    const hasPrecedingContent = (prePos >= 0
+      && isRenderableNonBlockquoteStructuralItem(content, structuralItems[prePos].index, structuralItems[prePos].item))
+      || hasRenderableInlineContent(content, preRangeStart, preRangeEnd);
+    if (preBlankCount > 0 && hasPrecedingContent) {
+      derivedBlockquotePreContentBlankLines.set(group.groupIndex, preBlankCount);
+    }
+
+    let postBlankCount = 0;
+    let postPos = group.endPos + 1;
+    while (postPos < structuralItems.length) {
+      const entry = structuralItems[postPos];
+      if (entry.item.type === 'para' && isPlainEmptyParagraph(entry.item) && !paragraphHasContent(content, entry.index)) {
+        postBlankCount += entry.item.emptyParagraphCount ?? 1;
+        postPos++;
+        continue;
+      }
+      break;
+    }
+    const postRangeStart = postBlankCount > 0
+      ? structuralItems[postPos - 1].index + 1
+      : structuralItems[group.endPos].index + 1;
+    const postRangeEnd = postPos < structuralItems.length ? structuralItems[postPos].index : content.length;
+    const hasFollowingContent = (postPos < structuralItems.length
+      && isRenderableNonBlockquoteStructuralItem(content, structuralItems[postPos].index, structuralItems[postPos].item))
+      || hasRenderableInlineContent(content, postRangeStart, postRangeEnd);
+    if (postBlankCount > 0 && hasFollowingContent) {
+      derivedBlockquotePostContentBlankLines.set(group.groupIndex, postBlankCount);
+    }
+
+    const nextGroup = gi + 1 < groups.length ? groups[gi + 1] : undefined;
+    if (!nextGroup) continue;
+
+    let gapBlankCount = 0;
+    let sawInterveningContent = false;
+    for (let pos = group.endPos + 1; pos < nextGroup.startPos; pos++) {
+      const entry = structuralItems[pos];
+      if (entry.item.type === 'para' && isPlainEmptyParagraph(entry.item) && !paragraphHasContent(content, entry.index)) {
+        gapBlankCount += entry.item.emptyParagraphCount ?? 1;
+      } else if (isRenderableNonBlockquoteStructuralItem(content, entry.index, entry.item)) {
+        sawInterveningContent = true;
+      }
+    }
+    derivedBlockquoteGaps.set(group.groupIndex, sawInterveningContent ? -1 : gapBlankCount);
+  }
+
+  return {
+    derivedBlockquoteGaps,
+    derivedBlockquotePreContentBlankLines,
+    derivedBlockquotePostContentBlankLines,
+  };
+}
+
+function annotateStructuralParagraphMetadata(content: ContentItem[]): {
+  derivedBlockquoteGaps: Map<number, number>;
+  derivedBlockquotePreContentBlankLines: Map<number, number>;
+  derivedBlockquotePostContentBlankLines: Map<number, number>;
+} {
+  const listContexts = new Map<number, StructuralListContext>();
+  const listTypesByLevel = new Map<number, 'bullet' | 'ordered'>();
+  const orderedCounters = new Map<number, number>();
+  let lastListLevel: number | undefined;
+  let lastListType: 'bullet' | 'ordered' | undefined;
+  let nextBlockquoteGroupIndex = 0;
+  let currentBlockquoteGroupIndex: number | undefined;
+  let lastBlockquoteLevel: number | undefined;
+  let lastBlockquoteType: GfmAlertType | 'plain' | undefined;
+
+  for (let i = 0; i < content.length; i++) {
+    const item = content[i];
+
+    if (item.type === 'para') {
+      if (item.listMeta) {
+        clearListContextsFromLevel(listContexts, item.listMeta.level + 1);
+        for (const level of [...listTypesByLevel.keys()]) {
+          if (level > item.listMeta.level) listTypesByLevel.delete(level);
+        }
+        for (const level of [...orderedCounters.keys()]) {
+          if (level > item.listMeta.level) orderedCounters.delete(level);
+        }
+        const markerWidth = inferOrderedMarkerWidth(
+          item.listMeta,
+          orderedCounters,
+          listTypesByLevel,
+          lastListLevel,
+          lastListType,
+        );
+        listTypesByLevel.set(item.listMeta.level, item.listMeta.type);
+        listContexts.set(item.listMeta.level, {
+          type: item.listMeta.type,
+          level: item.listMeta.level,
+          ...(markerWidth !== undefined ? { markerWidth } : {}),
+        });
+        lastListLevel = item.listMeta.level;
+        lastListType = item.listMeta.type;
+        currentBlockquoteGroupIndex = undefined;
+        lastBlockquoteLevel = undefined;
+        lastBlockquoteType = undefined;
+        continue;
+      }
+
+      if (item.blockquoteLevel) {
+        const inferred = inferListContinuationForBlockquote(item, listContexts);
+        if (inferred) {
+          item.blockquoteLevel = inferred.blockquoteLevel;
+          item.listContinuation = inferred.listContinuation;
+        }
+        const currentType: GfmAlertType | 'plain' = item.alertType || 'plain';
+        const startsNewGroup = currentBlockquoteGroupIndex === undefined
+          || item.blockquoteLevel !== lastBlockquoteLevel
+          || currentType !== lastBlockquoteType
+          || (item.alertType !== undefined && paragraphStartsWithExportedAlertLead(content, i, item.alertType));
+        if (startsNewGroup) {
+          currentBlockquoteGroupIndex = nextBlockquoteGroupIndex++;
+        }
+        item.blockquoteGroupIndex = currentBlockquoteGroupIndex;
+        lastBlockquoteLevel = item.blockquoteLevel;
+        lastBlockquoteType = currentType;
+        lastListLevel = undefined;
+        lastListType = undefined;
+        continue;
+      }
+
+      if (!isPlainEmptyParagraph(item) || paragraphHasContent(content, i)) {
+        listContexts.clear();
+        listTypesByLevel.clear();
+        orderedCounters.clear();
+        lastListLevel = undefined;
+        lastListType = undefined;
+      }
+      currentBlockquoteGroupIndex = undefined;
+      lastBlockquoteLevel = undefined;
+      lastBlockquoteType = undefined;
+      continue;
+    }
+
+    if (isStructuralBoundaryItem(item)) {
+      listContexts.clear();
+      listTypesByLevel.clear();
+      orderedCounters.clear();
+      lastListLevel = undefined;
+      lastListType = undefined;
+      currentBlockquoteGroupIndex = undefined;
+      lastBlockquoteLevel = undefined;
+      lastBlockquoteType = undefined;
+    }
+  }
+
+  return deriveBlockquoteSpacingFromStructure(content);
+}
+
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
@@ -4248,6 +4598,54 @@ export function buildMarkdown(
     }
 
     if (item.type === 'para') {
+      if (
+        isPlainEmptyParagraph(item) &&
+        !paragraphHasContent(mergedContent, i)
+      ) {
+        let prevStructuralIdx = i - 1;
+        while (prevStructuralIdx >= 0) {
+          const prevItem = mergedContent[prevStructuralIdx];
+          if (
+            prevItem.type !== 'para'
+            || !isPlainEmptyParagraph(prevItem)
+            || paragraphHasContent(mergedContent, prevStructuralIdx)
+          ) {
+            break;
+          }
+          prevStructuralIdx--;
+        }
+        let nextStructuralIdx = i + 1;
+        while (nextStructuralIdx < mergedContent.length) {
+          const nextItem = mergedContent[nextStructuralIdx];
+          if (
+            nextItem.type !== 'para'
+            || !isPlainEmptyParagraph(nextItem)
+            || paragraphHasContent(mergedContent, nextStructuralIdx)
+          ) {
+            break;
+          }
+          nextStructuralIdx++;
+        }
+
+        const prevCandidate = prevStructuralIdx >= 0 ? mergedContent[prevStructuralIdx] : undefined;
+        const nextCandidate = nextStructuralIdx < mergedContent.length ? mergedContent[nextStructuralIdx] : undefined;
+        const prevPara = prevCandidate?.type === 'para'
+          ? prevCandidate
+          : undefined;
+        const nextPara = nextCandidate?.type === 'para'
+          ? nextCandidate
+          : undefined;
+
+        if (
+          nextPara?.blockquoteLevel &&
+          nextPara.blockquoteGroupIndex !== undefined &&
+          blockquotePreContentBlankLines?.has(nextPara.blockquoteGroupIndex)
+        ) {
+          i++;
+          continue;
+        }
+      }
+
       // Code block grouping: collect consecutive code-block paragraphs into a fenced block
       if (item.isCodeBlock) {
         if (output.length > 0) {
@@ -4429,7 +4827,8 @@ export function buildMarkdown(
             // Structural separator before heading/list/code-block content.
             // Keep pending metadata so spacing is emitted at the real content.
           } else {
-            const blankCount = blockquotePostContentBlankLines.get(pendingPostContentGroupIndex);
+            const blankCount = blockquotePostContentBlankLines.get(pendingPostContentGroupIndex)
+              ?? item.emptyParagraphCount;
             if (blankCount !== undefined && blankCount >= 0) {
               output.push('\n' + '\n'.repeat(blankCount));
             } else {
@@ -5539,6 +5938,12 @@ export async function convertDocx(
     extractEndnotes(zip, enContext),
   ]);
 
+  const {
+    derivedBlockquoteGaps,
+    derivedBlockquotePreContentBlankLines,
+    derivedBlockquotePostContentBlankLines,
+  } = annotateStructuralParagraphMetadata(docContent);
+
   // Post-process: inject custom_style_open/custom_style_close sentinels around
   // runs of paragraphs that share a customStyleName.
   {
@@ -5646,9 +6051,9 @@ export async function convertDocx(
     commentIdMapping,
     notes: notesMap.size > 0 ? { map: notesMap, assignedLabels } : undefined,
     codeBlockLangs: codeBlockLangMapping,
-    blockquoteGaps: blockquoteGapMapping,
-    blockquotePreContentBlankLines: blockquotePreContentBlankLineMapping,
-    blockquotePostContentBlankLines: blockquotePostContentBlankLineMapping,
+    blockquoteGaps: blockquoteGapMapping ?? derivedBlockquoteGaps,
+    blockquotePreContentBlankLines: blockquotePreContentBlankLineMapping ?? derivedBlockquotePreContentBlankLines,
+    blockquotePostContentBlankLines: blockquotePostContentBlankLineMapping ?? derivedBlockquotePostContentBlankLines,
     blockquoteAlertInlineByGroup: blockquoteAlertStyleMapping,
     imageFormatMapping,
     noteImageFormatMapping,
