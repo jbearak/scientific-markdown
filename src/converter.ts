@@ -4299,6 +4299,9 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
         });
         lastListLevel = item.listMeta.level;
         lastListType = item.listMeta.type;
+        currentBlockquoteGroupIndex = undefined;
+        lastBlockquoteLevel = undefined;
+        lastBlockquoteType = undefined;
         continue;
       }
 
@@ -4337,14 +4340,7 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
       continue;
     }
 
-    if (item.type === 'table'
-      || item.type === 'landscape_open'
-      || item.type === 'landscape_close'
-      || item.type === 'portrait_open'
-      || item.type === 'portrait_close'
-      || item.type === 'bibliography_marker'
-      || item.type === 'custom_style_open'
-      || item.type === 'custom_style_close') {
+    if (isStructuralBoundaryItem(item)) {
       listContexts.clear();
       listTypesByLevel.clear();
       orderedCounters.clear();
