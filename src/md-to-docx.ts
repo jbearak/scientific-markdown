@@ -1533,6 +1533,12 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     if (target < result.length && result[target].type === 'paragraph' && result[target].runs.length > 0) {
       result[target].indentOverride = override;
       result.splice(i, 1);
+    } else if (target < result.length && result[target].type === 'list_item') {
+      // Apply to all consecutive list items in this list block
+      for (let j = target; j < result.length && result[j].type === 'list_item'; j++) {
+        result[j].indentOverride = override;
+      }
+      result.splice(i, 1);
     }
   }
 
@@ -2742,6 +2748,8 @@ export interface DocxGenState {
   afterHeading: boolean;           // suppress indent on first para after heading
   indentOverrides: Map<number, 'indent' | 'no-indent'>; // body paragraph index → override
   bodyParagraphIndex: number;      // counter for body paragraphs (for indent override tracking)
+  listIndentOverrides: Map<number, 'indent' | 'no-indent'>; // list block index → override
+  listBlockIndex: number;          // counter for list blocks (consecutive groups of list_items)
 }
 
 interface CommentEntry {
@@ -4153,6 +4161,14 @@ function indentOverrideProps(overrides: Map<number, 'indent' | 'no-indent'>): Cu
     mapping[String(index)] = override;
   }
   return chunkCustomProps('MANUSCRIPT_INDENT_OVERRIDES_', JSON.stringify(mapping));
+}
+function listIndentOverrideProps(overrides: Map<number, 'indent' | 'no-indent'>): CustomPropEntry[] {
+  if (overrides.size === 0) return [];
+  const mapping: Record<string, string> = {};
+  for (const [index, override] of overrides) {
+    mapping[String(index)] = override;
+  }
+  return chunkCustomProps('MANUSCRIPT_LIST_INDENT_OVERRIDES_', JSON.stringify(mapping));
 }
 
 function gridTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
@@ -5736,6 +5752,14 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     if (token.type !== 'list_item') {
       state.activeListStartOverrides.clear();
     }
+    // Track list block index for indent override round-trip.
+    // A new list block starts when we see a list_item after a non-list-item.
+    if (token.type === 'list_item' && prevToken?.type !== 'list_item') {
+      if (token.indentOverride) {
+        state.listIndentOverrides.set(state.listBlockIndex, token.indentOverride);
+      }
+      state.listBlockIndex++;
+    }
     if (token.type === 'table') {
       if (token.sourceFormat) {
         state.tableFormats.set(state.tableIndex, token.sourceFormat);
@@ -6071,6 +6095,8 @@ export async function convertMdToDocx(
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
+    listIndentOverrides: new Map(),
+    listBlockIndex: 0,
   };
 
   // Compute indent mode: when line-spacing is non-single, auto-enable first-line indent
@@ -6401,6 +6427,7 @@ export async function convertMdToDocx(
   customProps.push(...paragraphIndentProps(frontmatter));
   customProps.push(...bibliographyHangingIndentProps(frontmatter));
   customProps.push(...indentOverrideProps(state.indentOverrides));
+  customProps.push(...listIndentOverrideProps(state.listIndentOverrides));
   customProps.push(...blockquoteGapProps(state.blockquoteGaps));
   customProps.push(...blockquotePreContentBlankLineProps(state.blockquotePreContentBlankLines));
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));

@@ -1496,6 +1496,20 @@ export async function extractIndentOverrides(data: Uint8Array | JSZip): Promise<
   } catch { return null; }
 }
 
+export async function extractListIndentOverrides(data: Uint8Array | JSZip): Promise<Map<number, string> | null> {
+  const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_LIST_INDENT_OVERRIDES');
+  if (!mappingJson) return null;
+  try {
+    const obj = JSON.parse(mappingJson) as Record<string, string>;
+    const map = new Map<number, string>();
+    for (const [k, v] of Object.entries(obj)) {
+      const idx = parseInt(k, 10);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v);
+    }
+    return map.size > 0 ? map : null;
+  } catch { return null; }
+}
+
 // Extract blockquote gap metadata from custom XML properties.
 // Returns a Map<number, number> mapping group index → blank-line count between
 // that group and the next.  Uses the same chunked-JSON pattern as code block
@@ -4935,9 +4949,16 @@ export function buildMarkdown(
         lastBlockquoteLevel = undefined;
       }
 
-      // Emit per-paragraph indent sentinel before body paragraphs
-      if (item.indentOverride && !item.headingLevel && !item.listMeta && !item.blockquoteLevel && !item.isCodeBlock) {
-        output.push('<!-- ' + item.indentOverride + ' -->\n');
+      // Emit per-paragraph/list indent sentinel
+      if (item.indentOverride && !item.headingLevel && !item.blockquoteLevel && !item.isCodeBlock) {
+        if (item.listMeta) {
+          // Emit sentinel only before the first item of a list block
+          if (!lastListType) {
+            output.push('<!-- ' + item.indentOverride + ' -->\n');
+          }
+        } else {
+          output.push('<!-- ' + item.indentOverride + ' -->\n');
+        }
       }
 
       if (item.headingLevel) {
@@ -5895,7 +5916,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5940,6 +5961,7 @@ export async function convertDocx(
     extractParagraphIndent(zip),
     extractBibliographyHangingIndent(zip),
     extractIndentOverrides(zip),
+    extractListIndentOverrides(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -6022,6 +6044,49 @@ export async function convertDocx(
       const override = storedIndentOverrides.get(bodyIdx);
       if (override) item.indentOverride = override as 'indent' | 'no-indent';
       bodyIdx++;
+    }
+  }
+
+  // Post-process: apply per-list-block indent overrides from custom properties.
+  // A list block is a maximal sequence of consecutive 'para' items with listMeta.
+  if (storedListIndentOverrides) {
+    let listBlockIdx = 0;
+    let inList = false;
+    for (const item of docContent) {
+      if (item.type === 'para' && item.listMeta) {
+        if (!inList) {
+          // Start of a new list block
+          const override = storedListIndentOverrides.get(listBlockIdx);
+          if (override) item.indentOverride = override as 'indent' | 'no-indent';
+          inList = true;
+          listBlockIdx++;
+        }
+        // Propagate the override from the first list item to all items in this block
+        if (item.indentOverride === undefined) {
+          // Look back to find the override from the first item of this block
+          // (already set above for the first item)
+        }
+      } else if (item.type === 'para' || item.type === 'table'
+          || isStructuralBoundaryItem(item)) {
+        inList = false;
+      }
+    }
+    // Second pass: propagate override to all items in each list block
+    inList = false;
+    let currentOverride: 'indent' | 'no-indent' | undefined;
+    for (const item of docContent) {
+      if (item.type === 'para' && item.listMeta) {
+        if (!inList) {
+          currentOverride = item.indentOverride;
+          inList = true;
+        } else if (currentOverride) {
+          item.indentOverride = currentOverride;
+        }
+      } else if (item.type === 'para' || item.type === 'table'
+          || isStructuralBoundaryItem(item)) {
+        inList = false;
+        currentOverride = undefined;
+      }
     }
   }
 

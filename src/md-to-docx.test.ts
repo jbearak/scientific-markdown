@@ -94,6 +94,8 @@ function makeState(): DocxGenState {
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
+    listIndentOverrides: new Map(),
+    listBlockIndex: 0,
   };
 }
 
@@ -3742,5 +3744,34 @@ describe('per-paragraph indent overrides', () => {
     const { convertDocx } = await import('./converter');
     const result = await convertDocx(docx);
     expect(result.markdown).toContain('<!-- indent -->\nFirst paragraph after heading.');
+  });
+
+  it('parseMd transfers <!-- no-indent --> to all list items', () => {
+    const tokens = parseMd('<!-- no-indent -->\n1. apple\n2. pear');
+    // Directive should be consumed
+    expect(tokens.filter(t => t.runs.some(r => r.type === 'html_comment' && r.text.includes('no-indent')))).toHaveLength(0);
+    // All list items should have the override
+    const listItems = tokens.filter(t => t.type === 'list_item');
+    expect(listItems).toHaveLength(2);
+    expect(listItems[0].indentOverride).toBe('no-indent');
+    expect(listItems[1].indentOverride).toBe('no-indent');
+  });
+
+  it('parseMd transfers <!-- indent --> to bullet list items', () => {
+    const tokens = parseMd('<!-- indent -->\n- alpha\n- beta\n- gamma');
+    const listItems = tokens.filter(t => t.type === 'list_item');
+    expect(listItems).toHaveLength(3);
+    for (const item of listItems) {
+      expect(item.indentOverride).toBe('indent');
+    }
+  });
+
+  it('MD→DOCX→MD round-trips <!-- no-indent --> before a list', async () => {
+    const md = '---\nline-spacing: double\n---\n\n# Heading\n\nSome text.\n\n<!-- no-indent -->\n1. apple\n2. pear\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- no-indent -->\n1. apple');
+    expect(result.markdown).toContain('2. pear');
   });
 });

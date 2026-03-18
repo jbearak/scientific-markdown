@@ -379,7 +379,7 @@ paragraph-indent: 0.5
 
 #### Per-Paragraph Indent Overrides
 
-Use `<!-- no-indent -->` and `<!-- indent -->` HTML comment directives to override the indentation of individual paragraphs. Each directive applies to the immediately following paragraph:
+Use `<!-- no-indent -->` and `<!-- indent -->` HTML comment directives to override the indentation of individual paragraphs or lists. Each directive applies to the immediately following paragraph or list block:
 
 ```markdown
 ---
@@ -397,12 +397,16 @@ Third paragraph (indent explicitly suppressed).
 
 <!-- indent -->
 Fourth paragraph (indent explicitly forced).
+
+<!-- no-indent -->
+1. First item
+2. Second item
 ```
 
-- `<!-- no-indent -->` suppresses the first-line indent on the next paragraph, even when document-level indent mode is active.
-- `<!-- indent -->` forces a first-line indent on the next paragraph, even after a heading or without document-level indent mode. Uses the document's `paragraph-indent` value (default 0.5 inches).
+- `<!-- no-indent -->` suppresses the first-line indent on the next paragraph, even when document-level indent mode is active. When placed before a list, it applies to all items in the list.
+- `<!-- indent -->` forces a first-line indent on the next paragraph, even after a heading or without document-level indent mode. Uses the document's `paragraph-indent` value (default 0.5 inches). Also applies to lists.
 
-Both directives are consumed during parsing (they do not appear in the DOCX) and are preserved through round-trips via the `MANUSCRIPT_INDENT_OVERRIDES` custom property.
+Both directives are consumed during parsing (they do not appear in the DOCX) and are preserved through round-trips via `MANUSCRIPT_INDENT_OVERRIDES` and `MANUSCRIPT_LIST_INDENT_OVERRIDES` custom properties.
 
 #### Bibliography
 
