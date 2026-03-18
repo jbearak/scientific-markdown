@@ -1449,6 +1449,38 @@ export async function extractGridTableMaxLineWidth(data: Uint8Array | JSZip): Pr
   return null;
 }
 
+async function extractStringCustomProp(data: Uint8Array | JSZip, propName: string): Promise<string | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== propName) continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
+      if (child['vt:lpwstr'] !== undefined) {
+        const raw = nodeText(child['vt:lpwstr'] || []).trim();
+        return raw.length > 0 ? raw : null;
+      }
+    }
+  }
+  return null;
+}
+
+export async function extractLineSpacing(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_LINE_SPACING');
+}
+
+export async function extractParagraphIndent(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_PARAGRAPH_INDENT');
+}
+
+export async function extractBibliographyHangingIndent(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT');
+}
+
 // Extract blockquote gap metadata from custom XML properties.
 // Returns a Map<number, number> mapping group index → blank-line count between
 // that group and the next.  Uses the same chunked-JSON pattern as code block
@@ -5843,7 +5875,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5884,6 +5916,9 @@ export async function convertDocx(
     extractDefaultTableColWidths(zip),
     extractCustomStyles(zip),
     extractTableBorders(zip),
+    extractLineSpacing(zip),
+    extractParagraphIndent(zip),
+    extractBibliographyHangingIndent(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -6146,6 +6181,27 @@ export async function convertDocx(
   // Reconstruct table-borders from stored custom property
   if (storedTableBorders) {
     fm.tableBorders = storedTableBorders;
+  }
+  // Reconstruct line-spacing, paragraph-indent, bibliography-hanging-indent
+  if (storedLineSpacing) {
+    const n = parseFloat(storedLineSpacing);
+    if (storedLineSpacing === 'single' || storedLineSpacing === '1.5' || storedLineSpacing === 'double') {
+      fm.lineSpacing = storedLineSpacing;
+    } else if (isFinite(n) && n > 0) {
+      fm.lineSpacing = n;
+    }
+  }
+  if (storedParagraphIndent) {
+    if (storedParagraphIndent === 'none') {
+      fm.paragraphIndent = 'none';
+    } else {
+      const n = parseFloat(storedParagraphIndent);
+      if (isFinite(n) && n >= 0) fm.paragraphIndent = n;
+    }
+  }
+  if (storedBibHangingIndent) {
+    if (storedBibHangingIndent === 'true') fm.bibliographyHangingIndent = true;
+    else if (storedBibHangingIndent === 'false') fm.bibliographyHangingIndent = false;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {

@@ -91,6 +91,7 @@ function makeState(): DocxGenState {
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
+    afterHeading: false,
   };
 }
 
@@ -3550,5 +3551,130 @@ describe('LATENT_STYLES', () => {
     const exceptions = LATENT_STYLES.match(/<w:lsdException\b/g);
     expect(exceptions).not.toBeNull();
     expect(exceptions!.length).toBe(declaredCount);
+  });
+});
+
+describe('line spacing and paragraph indent', () => {
+  it('double-spaced Normal style has w:line="480" and w:after="0"', () => {
+    const xml = stylesXml(undefined, undefined, undefined, undefined, 'double', true);
+    // Normal style
+    const normalMatch = xml.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
+    expect(normalMatch).not.toBeNull();
+    expect(normalMatch![1]).toContain('w:line="480"');
+    expect(normalMatch![1]).toContain('w:after="0"');
+    // pPrDefault also updated
+    expect(xml).toContain('<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="480" w:lineRule="auto"/></w:pPr></w:pPrDefault>');
+  });
+
+  it('plain paragraph gets w:firstLine when indent mode active', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }] };
+    const state = makeState();
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = false;
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:firstLine="720"');
+  });
+
+  it('first paragraph after heading has no w:firstLine', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }] };
+    const state = makeState();
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = true;
+    const xml = generateParagraph(token, state);
+    expect(xml).not.toContain('w:firstLine');
+  });
+
+  it('bibliography paragraphs have Bibliography style by default', async () => {
+    const md = '---\ncsl: apa\nbibliography: test.bib\n---\nSome text [@key1]\n';
+    const { docx } = await convertMdToDocx(md, {
+      bibtex: '@article{key1, author={Smith}, title={Title}, journal={J}, year={2020}}'
+    });
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    expect(doc).toContain('w:pStyle w:val="Bibliography"');
+  });
+
+  it('bibliography-hanging-indent: false produces bib paragraphs without style', async () => {
+    const md = '---\ncsl: apa\nbibliography: test.bib\nbibliography-hanging-indent: false\n---\nSome text [@key1]\n';
+    const { docx } = await convertMdToDocx(md, {
+      bibtex: '@article{key1, author={Smith}, title={Title}, journal={J}, year={2020}}'
+    });
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    // When hanging-indent is false, bib paragraphs should NOT have the Bibliography style
+    expect(doc).not.toContain('w:pStyle w:val="Bibliography"');
+  });
+
+  it('paragraph-indent: none with line-spacing: double produces no first-line indent', async () => {
+    const md = '---\nline-spacing: double\nparagraph-indent: none\n---\n# Heading\n\nFirst paragraph.\n\nSecond paragraph.\n';
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    expect(doc).not.toContain('w:firstLine');
+    // But Normal style should still have double spacing
+    const styles = await zip.file('word/styles.xml')!.async('text');
+    const normalMatch = styles.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
+    expect(normalMatch![1]).toContain('w:line="480"');
+  });
+
+  it('Bibliography style has single-line spacing and hanging indent by default', () => {
+    const xml = stylesXml(undefined, undefined, undefined, undefined, 'double', true);
+    const bibMatch = xml.match(/<w:style[^>]*w:styleId="Bibliography"[^>]*>([\s\S]*?)<\/w:style>/);
+    expect(bibMatch).not.toBeNull();
+    expect(bibMatch![1]).toContain('w:line="240"');
+    expect(bibMatch![1]).toContain('w:hanging="720"');
+    expect(bibMatch![1]).toContain('w:after="200"');
+  });
+
+  it('Bibliography style omits hanging indent when disabled', () => {
+    const xml = stylesXml(undefined, undefined, undefined, undefined, 'double', true, false);
+    const bibMatch = xml.match(/<w:style[^>]*w:styleId="Bibliography"[^>]*>([\s\S]*?)<\/w:style>/);
+    expect(bibMatch).not.toBeNull();
+    expect(bibMatch![1]).not.toContain('w:hanging');
+  });
+});
+
+describe('line spacing round-trip', () => {
+  it('MD→DOCX→MD preserves line-spacing: double', async () => {
+    const md = '---\nline-spacing: double\n---\n\nHello world.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('line-spacing: double');
+  });
+
+  it('MD→DOCX→MD preserves paragraph-indent: none', async () => {
+    const md = '---\nline-spacing: double\nparagraph-indent: none\n---\n\nHello world.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('paragraph-indent: none');
+  });
+
+  it('MD→DOCX→MD preserves bibliography-hanging-indent: false', async () => {
+    const md = '---\nbibliography-hanging-indent: false\n---\n\nHello world.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('bibliography-hanging-indent: false');
+  });
+
+  it('MD→DOCX→MD preserves numeric line-spacing', async () => {
+    const md = '---\nline-spacing: 1.8\n---\n\nHello world.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('line-spacing: 1.8');
+  });
+
+  it('MD→DOCX→MD preserves paragraph-indent: 0.3', async () => {
+    const md = '---\nparagraph-indent: 0.3\n---\n\nHello world.\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('paragraph-indent: 0.3');
   });
 });

@@ -2716,6 +2716,8 @@ export interface DocxGenState {
   noteNextRId: number; // next rId for footnotes.xml.rels (independent of document rIds)
   footnoteCrossRefLabels: Set<string>; // footnote labels that have 2+ references (need bookmarks + cross-ref fields)
   nextBookmarkId: number; // counter for unique bookmark IDs within footnotes/endnotes XML
+  firstLineIndentTwips?: number;   // undefined = no indent mode
+  afterHeading: boolean;           // suppress indent on first para after heading
 }
 
 interface CommentEntry {
@@ -2874,6 +2876,15 @@ const GITHUB_BLOCKQUOTE_BORDER_COLOR = 'D0D7DE';
 const GITHUB_BLOCKQUOTE_INDENT = 240;
 // Single-line spacing in OOXML (240 twips = 12pt)
 const SINGLE_LINE_SPACING = 240;
+
+/** Resolve a frontmatter line-spacing value to OOXML twips (240 = single). */
+function resolveLineSpacingTwips(ls: string | number | undefined): number {
+  if (ls === 'single') return 240;
+  if (ls === '1.5') return 360;
+  if (ls === 'double') return 480;
+  if (typeof ls === 'number') return Math.round(ls * 240);
+  return 276; // default 1.15
+}
 // Left/right indent for shading-mode code blocks to prevent margin overflow (~0.22in)
 export const CODE_BLOCK_MARGIN_INDENT = 317;
 
@@ -3290,6 +3301,65 @@ const ALERT_STYLE_ID_TO_TYPE: Record<string, GfmAlertType> = {
  * color from the given scheme, regardless of what scheme the template was
  * originally generated with.  Returns the (potentially mutated) XML string.
  */
+/**
+ * Patch template styles.xml to update Normal style line spacing and indent-mode after.
+ * Also injects Bibliography style if missing.
+ */
+function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number | undefined, indentMode: boolean, bibliographyHangingIndent: boolean | undefined): string {
+  const lsTwips = resolveLineSpacingTwips(lineSpacingFm);
+  const afterVal = indentMode ? '0' : '200';
+
+  // Patch Normal style's w:spacing
+  const normalRegex = /(<w:style\b[^>]*\bw:styleId="Normal"[^>]*>)([\s\S]*?)(<\/w:style>)/;
+  const normalMatch = normalRegex.exec(xml);
+  if (normalMatch) {
+    let inner = normalMatch[2];
+    const spacingRegex = /<w:spacing\b[^/]*\/>/;
+    const newSpacing = '<w:spacing w:after="' + afterVal + '" w:line="' + lsTwips + '" w:lineRule="auto"/>';
+    if (spacingRegex.test(inner)) {
+      inner = inner.replace(spacingRegex, newSpacing);
+    } else {
+      // Insert spacing into pPr or add pPr
+      const pPrMatch = /(<w:pPr\b[^>]*>)([\s\S]*?)(<\/w:pPr>)/.exec(inner);
+      if (pPrMatch) {
+        inner = inner.slice(0, pPrMatch.index) + pPrMatch[1] + newSpacing + pPrMatch[2] + pPrMatch[3] + inner.slice(pPrMatch.index + pPrMatch[0].length);
+      } else {
+        inner = '<w:pPr>' + newSpacing + '</w:pPr>' + inner;
+      }
+    }
+    xml = xml.slice(0, normalMatch.index) + normalMatch[1] + inner + normalMatch[3] + xml.slice(normalMatch.index + normalMatch[0].length);
+  }
+
+  // Patch pPrDefault w:spacing to match
+  const pPrDefaultRegex = /(<w:pPrDefault>[\s\S]*?<w:pPr>)([\s\S]*?)(<\/w:pPr>[\s\S]*?<\/w:pPrDefault>)/;
+  const pPrDefaultMatch = pPrDefaultRegex.exec(xml);
+  if (pPrDefaultMatch) {
+    let pPrContent = pPrDefaultMatch[2];
+    const spacingRegex = /<w:spacing\b[^/]*\/>/;
+    const newSpacing = '<w:spacing w:after="160" w:line="' + lsTwips + '" w:lineRule="auto"/>';
+    if (spacingRegex.test(pPrContent)) {
+      pPrContent = pPrContent.replace(spacingRegex, newSpacing);
+    } else {
+      pPrContent = newSpacing + pPrContent;
+    }
+    xml = xml.slice(0, pPrDefaultMatch.index) + pPrDefaultMatch[1] + pPrContent + pPrDefaultMatch[3] + xml.slice(pPrDefaultMatch.index + pPrDefaultMatch[0].length);
+  }
+
+  // Inject Bibliography style if not present
+  if (!xml.includes('w:styleId="Bibliography"')) {
+    const bibStyle = '<w:style w:type="paragraph" w:styleId="Bibliography">' +
+      '<w:name w:val="Bibliography"/>' +
+      '<w:basedOn w:val="Normal"/>' +
+      '<w:pPr><w:spacing w:after="200" w:line="' + SINGLE_LINE_SPACING + '" w:lineRule="auto"/>' +
+      (bibliographyHangingIndent !== false ? '<w:ind w:left="720" w:hanging="720"/>' : '') +
+      '</w:pPr>' +
+      '</w:style>';
+    xml = xml.replace('</w:styles>', bibStyle + '</w:styles>');
+  }
+
+  return xml;
+}
+
 export function applyAlertColorsToTemplate(stylesXml: string, scheme: ColorScheme): string {
   const colors = alertColorsByScheme(scheme);
   let xml = stylesXml;
@@ -3376,7 +3446,7 @@ function customStyleXml(
     '</w:style>\n';
 }
 
-export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme, customStyles?: Record<string, import('./frontmatter').CustomStyleDef>): string {
+export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlockConfig, colorScheme?: ColorScheme, customStyles?: Record<string, import('./frontmatter').CustomStyleDef>, lineSpacingFm?: string | number, indentMode?: boolean, bibliographyHangingIndent?: boolean): string {
   const alertColors = alertColorsByScheme(colorScheme ?? getDefaultColorScheme());
   // Helper: build w:rFonts element for a given font name
   function rFonts(font: string): string {
@@ -3534,12 +3604,12 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     '<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>' +
     '<w14:ligatures w14:val="standardContextual"/>' +
     '</w:rPr></w:rPrDefault>\n' +
-    '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="278" w:lineRule="auto"/></w:pPr></w:pPrDefault>\n' +
+    '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="' + resolveLineSpacingTwips(lineSpacingFm) + '" w:lineRule="auto"/></w:pPr></w:pPrDefault>\n' +
     '</w:docDefaults>\n' +
     LATENT_STYLES + '\n' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">\n' +
     '<w:name w:val="Normal"/>\n' +
-    '<w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr>\n' +
+    '<w:pPr><w:spacing w:after="' + (indentMode ? '0' : '200') + '" w:line="' + resolveLineSpacingTwips(lineSpacingFm) + '" w:lineRule="auto"/></w:pPr>\n' +
     normalRpr +
     '</w:style>\n' +
     '<w:style w:type="paragraph" w:styleId="Heading1">\n' +
@@ -3703,6 +3773,13 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
             .join('');
         })()
       : '') +
+    '<w:style w:type="paragraph" w:styleId="Bibliography">\n' +
+    '<w:name w:val="Bibliography"/>\n' +
+    '<w:basedOn w:val="Normal"/>\n' +
+    '<w:pPr><w:spacing w:after="200" w:line="' + SINGLE_LINE_SPACING + '" w:lineRule="auto"/>' +
+    (bibliographyHangingIndent !== false ? '<w:ind w:left="720" w:hanging="720"/>' : '') +
+    '</w:pPr>\n' +
+    '</w:style>\n' +
     '</w:styles>';
 }
 
@@ -4031,6 +4108,19 @@ function codeBlockStylingProps(fm: Frontmatter): CustomPropEntry[] {
 function pipeTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
   if (fm.pipeTableMaxLineWidth === undefined) return [];
   return [{ name: 'MANUSCRIPT_PIPE_TABLE_MAX_LINE_WIDTH', value: String(fm.pipeTableMaxLineWidth) }];
+}
+
+function lineSpacingProps(fm: Frontmatter): CustomPropEntry[] {
+  if (fm.lineSpacing === undefined) return [];
+  return [{ name: 'MANUSCRIPT_LINE_SPACING', value: String(fm.lineSpacing) }];
+}
+function paragraphIndentProps(fm: Frontmatter): CustomPropEntry[] {
+  if (fm.paragraphIndent === undefined) return [];
+  return [{ name: 'MANUSCRIPT_PARAGRAPH_INDENT', value: String(fm.paragraphIndent) }];
+}
+function bibliographyHangingIndentProps(fm: Frontmatter): CustomPropEntry[] {
+  if (fm.bibliographyHangingIndent === undefined) return [];
+  return [{ name: 'MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT', value: String(fm.bibliographyHangingIndent) }];
 }
 
 function gridTableMaxLineWidthProps(fm: Frontmatter): CustomPropEntry[] {
@@ -4863,6 +4953,12 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
       break;
   }
 
+  // First-line indent for body paragraphs in indent mode (non-single spacing).
+  // Suppress after headings and when a custom style is active.
+  if (state.firstLineIndentTwips && token.type === 'paragraph' && !state.afterHeading && !state.activeCustomStyle && !pPr) {
+    pPr = '<w:pPr><w:ind w:firstLine="' + state.firstLineIndentTwips + '"/></w:pPr>';
+  }
+
   // Pure HTML-comment paragraphs are hidden (vanish) — collapse their spacing
   // so they don't contribute visible gaps in Word's layout engine.
   // The paragraph mark is also vanished (via pPr>rPr) so the paragraph is
@@ -5466,6 +5562,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       const jcEl = wantsCenter ? '<w:jc w:val="center"/>' : (titleStyleHasCenter ? '<w:jc w:val="left"/>' : '');
       body += '<w:p><w:pPr><w:pStyle w:val="Title"/>' + jcEl + '</w:pPr>' + generateRun(frontmatter.title[i], rPr) + '</w:p>';
     }
+    // Title acts like heading — suppress first-line indent on next paragraph
+    state.afterHeading = true;
   }
 
   // Compute page size and margins for section break injection
@@ -5634,6 +5732,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       }
       state.tableIndex++;
     } else {
+      state.afterHeading = !!(prevToken?.type === 'heading');
       body += generateParagraph(token, state, options, bibEntries, citeprocEngine);
     }
     if (token.type === 'blockquote' && token.alertLast && token.blockquoteGroupIndex !== undefined) {
@@ -5665,7 +5764,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   const hasBiblMarker = body.includes(BIBL_PLACEHOLDER);
   let biblXml = '';
   if (citeprocEngine) {
-    biblXml += generateBibliographyXml(citeprocEngine, options?.zoteroBiblData);
+    biblXml += generateBibliographyXml(citeprocEngine, options?.zoteroBiblData, frontmatter?.bibliographyHangingIndent);
   }
   if (state.missingKeys.size > 0) {
     biblXml += generateMissingKeysXml([...state.missingKeys]);
@@ -5921,7 +6020,22 @@ export async function convertMdToDocx(
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
+    afterHeading: false,
   };
+
+  // Compute indent mode: when line-spacing is non-single, auto-enable first-line indent
+  // unless paragraph-indent is explicitly 'none'.
+  {
+    const lsTwips = resolveLineSpacingTwips(frontmatter.lineSpacing);
+    const isNonSingle = lsTwips !== 240 && lsTwips !== 276; // 276 = default 1.15
+    if (frontmatter.paragraphIndent === 'none') {
+      // Explicitly disabled — no indent
+    } else if (typeof frontmatter.paragraphIndent === 'number') {
+      state.firstLineIndentTwips = Math.round(frontmatter.paragraphIndent * 1440); // inches to twips
+    } else if (isNonSingle) {
+      state.firstLineIndentTwips = 720; // default 0.5 inch
+    }
+  }
 
   // Pre-scan all tokens (main document + footnotes) for citation keys so
   // updateItems() registers only cited entries.  This ensures numeric styles
@@ -6147,13 +6261,15 @@ export async function convertMdToDocx(
       fontOverrides,
       frontmatter.styles
     );
+    mutated = applyLineSpacingToTemplate(mutated, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent);
     mutated = applyAlertColorsToTemplate(mutated, effectiveColors);
     zip.file('word/styles.xml', mutated);
   } else if (templateParts?.has('word/styles.xml')) {
-    const decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
+    let decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
+    decoded = applyLineSpacingToTemplate(decoded, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent);
     zip.file('word/styles.xml', applyAlertColorsToTemplate(decoded, effectiveColors));
   } else {
-    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles));
+    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent));
   }
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15
@@ -6231,6 +6347,9 @@ export async function convertMdToDocx(
   customProps.push(...codeBlockStylingProps(frontmatter));
   customProps.push(...pipeTableMaxLineWidthProps(frontmatter));
   customProps.push(...gridTableMaxLineWidthProps(frontmatter));
+  customProps.push(...lineSpacingProps(frontmatter));
+  customProps.push(...paragraphIndentProps(frontmatter));
+  customProps.push(...bibliographyHangingIndentProps(frontmatter));
   customProps.push(...blockquoteGapProps(state.blockquoteGaps));
   customProps.push(...blockquotePreContentBlankLineProps(state.blockquotePreContentBlankLines));
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));

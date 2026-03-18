@@ -25,6 +25,7 @@ csl: apa
 
 - `title`: The title of your paper.
 - `csl`: The citation style to use (e.g., `apa`, `ieee`, `nature`). You can use any style from the [CSL repository](https://github.com/citation-style-language/styles).
+- `line-spacing`: Line spacing (`single`, `1.5`, `double`). When set to `double`, paragraphs are automatically indented instead of separated by space — the standard academic manuscript format. See [Specification](../specification.md#line-spacing-and-paragraph-indent) for details.
 - Text style customization: see [Configuration](../configuration.md) for options like fonts and spacing.
 
 ## Citations and Bibliography

@@ -659,7 +659,8 @@ export function generateFallbackText(keys: string[], entries: Map<string, Bibtex
  */
 export function generateBibliographyXml(
   citeprocEngine: any,
-  biblData?: { uncited?: any[]; omitted?: any[]; custom?: any[] }
+  biblData?: { uncited?: any[]; omitted?: any[]; custom?: any[] },
+  hangingIndent?: boolean
 ): string {
   const biblPayload = JSON.stringify({
     uncited: biblData?.uncited || [],
@@ -675,7 +676,8 @@ export function generateBibliographyXml(
     for (const entry of bib.entries) {
       const trimmed = entry.trim();
       if (trimmed) {
-        bibParagraphs += '<w:p>' + htmlToOoxmlRuns(trimmed) + '</w:p>';
+        const bibPPr = hangingIndent !== false ? '<w:pPr><w:pStyle w:val="Bibliography"/></w:pPr>' : '';
+        bibParagraphs += '<w:p>' + bibPPr + htmlToOoxmlRuns(trimmed) + '</w:p>';
       }
     }
   }
