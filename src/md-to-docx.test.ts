@@ -92,7 +92,7 @@ function makeState(): DocxGenState {
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
-    nonSingleSpacing: false,
+    indentMode: false,
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
@@ -3666,6 +3666,8 @@ describe('line spacing and paragraph indent', () => {
     const styles = await zip.file('word/styles.xml')!.async('text');
     const normalMatch = styles.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
     expect(normalMatch![1]).toContain('w:line="480"');
+    // paragraph-indent: none deactivates indent mode → inter-paragraph gap preserved
+    expect(normalMatch![1]).toContain('w:after="200"');
   });
 
   it('custom-styled paragraphs inherit global indent in double-spaced documents, except after headings', async () => {
@@ -3789,7 +3791,7 @@ describe('line spacing round-trip', () => {
     expect(result.markdown).toContain('paragraph-indent: 0.3');
   });
 
-  it('paragraph-indent alone does not remove inter-paragraph spacing', async () => {
+  it('explicit paragraph-indent with single spacing activates indent mode (no inter-paragraph gap)', async () => {
     const md = '---\nparagraph-indent: 0.5\n---\n\nFirst paragraph.\n\nSecond paragraph.\n';
     const { docx } = await convertMdToDocx(md);
     const JSZip = (await import('jszip')).default;
@@ -3797,8 +3799,8 @@ describe('line spacing round-trip', () => {
     const styles = await zip.file('word/styles.xml')!.async('text');
     const normalMatch = styles.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
     expect(normalMatch).not.toBeNull();
-    // Normal style should have after="200" (default spacing), NOT after="0"
-    expect(normalMatch![1]).toContain('w:after="200"');
+    // Explicit paragraph-indent activates indent mode → w:after="0" (no gap)
+    expect(normalMatch![1]).toContain('w:after="0"');
   });
 
   it('title suppresses first-line indent on next paragraph', async () => {

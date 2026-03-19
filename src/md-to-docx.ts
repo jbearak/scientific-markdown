@@ -2750,7 +2750,7 @@ export interface DocxGenState {
   footnoteCrossRefLabels: Set<string>; // footnote labels that have 2+ references (need bookmarks + cross-ref fields)
   nextBookmarkId: number; // counter for unique bookmark IDs within footnotes/endnotes XML
   firstLineIndentTwips?: number;   // undefined = no indent mode
-  nonSingleSpacing: boolean;       // true when line-spacing is explicitly non-single (controls inter-paragraph spacing removal)
+  indentMode: boolean;       // true when first-line indent is active (controls inter-paragraph spacing removal)
   afterHeading: boolean;           // suppress indent on first para after heading
   indentOverrides: Map<number, 'indent' | 'no-indent'>; // body paragraph index → override
   bodyParagraphIndex: number;      // counter for body paragraphs (for indent override tracking)
@@ -3334,14 +3334,8 @@ const ALERT_STYLE_ID_TO_TYPE: Record<string, GfmAlertType> = {
 };
 
 /**
- * Patch alert border colors in a template styles.xml string.
- * Finds each GitHubXxx style and replaces the w:left border color with the
- * color from the given scheme, regardless of what scheme the template was
- * originally generated with.  Returns the (potentially mutated) XML string.
- */
-/**
  * Patch template styles.xml to update Normal style line spacing and indent-mode after.
- * Also injects Bibliography style if missing.
+ * Also injects or patches Bibliography style for bibliographyHangingIndent.
  */
 function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number | undefined, indentMode: boolean, bibliographyHangingIndent: boolean | undefined): string {
   const lsTwips = resolveLineSpacingTwips(lineSpacingFm);
@@ -3388,7 +3382,7 @@ function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number 
     xml = xml.slice(0, pPrDefaultMatch.index) + pPrDefaultMatch[1] + pPrContent + pPrDefaultMatch[3] + xml.slice(pPrDefaultMatch.index + pPrDefaultMatch[0].length);
   }
 
-  // Inject Bibliography style if not present
+  // Inject or patch Bibliography style
   if (!xml.includes('w:styleId="Bibliography"')) {
     const bibStyle = '<w:style w:type="paragraph" w:styleId="Bibliography">' +
       '<w:name w:val="Bibliography"/>' +
@@ -3398,6 +3392,45 @@ function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number 
       '</w:pPr>' +
       '</w:style>';
     xml = xml.replace('</w:styles>', bibStyle + '</w:styles>');
+  } else {
+    // Template already defines Bibliography — merge w:left/w:hanging into its w:ind
+    const bibRegex = /(<w:style\b[^>]*\bw:styleId="Bibliography"[^>]*>)([\s\S]*?)(<\/w:style>)/;
+    const bibMatch = bibRegex.exec(xml);
+    if (bibMatch) {
+      let inner = bibMatch[2];
+      const wantHanging = bibliographyHangingIndent !== false;
+      const pPrMatch = /(<w:pPr\b[^>]*>)([\s\S]*?)(<\/w:pPr>)/.exec(inner);
+      if (pPrMatch) {
+        let pPrContent = pPrMatch[2];
+        const existingInd = /<w:ind\b([^/]*)\/>/g.exec(pPrContent);
+        if (existingInd) {
+          // Merge: strip w:left/w:hanging, then re-add if wanted (preserves other attrs like w:right)
+          let attrs = existingInd[1]
+            .replace(/\s*w:left="[^"]*"/g, '')
+            .replace(/\s*w:hanging="[^"]*"/g, '');
+          if (wantHanging) {
+            attrs += ' w:left="720" w:hanging="720"';
+          }
+          const merged = attrs.trim() ? '<w:ind ' + attrs.trim() + '/>' : '';
+          pPrContent = pPrContent.replace(existingInd[0], merged);
+        } else if (wantHanging) {
+          // No existing w:ind — insert after w:spacing for dirty-flag ordering (pBdr → spacing → ind)
+          const indEl = '<w:ind w:left="720" w:hanging="720"/>';
+          const spacingEnd = /<\/w:spacing>|<w:spacing\b[^/]*\/>/.exec(pPrContent);
+          if (spacingEnd) {
+            const pos = spacingEnd.index + spacingEnd[0].length;
+            pPrContent = pPrContent.slice(0, pos) + indEl + pPrContent.slice(pos);
+          } else {
+            pPrContent += indEl;
+          }
+        }
+        inner = inner.slice(0, pPrMatch.index) + pPrMatch[1] + pPrContent + pPrMatch[3] + inner.slice(pPrMatch.index + pPrMatch[0].length);
+      } else if (wantHanging) {
+        // No pPr exists yet — add one
+        inner = '<w:pPr><w:ind w:left="720" w:hanging="720"/></w:pPr>' + inner;
+      }
+      xml = xml.slice(0, bibMatch.index) + bibMatch[1] + inner + bibMatch[3] + xml.slice(bibMatch.index + bibMatch[0].length);
+    }
   }
 
   return xml;
@@ -5671,7 +5704,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
   for (const token of tokens) {
     // Any close sentinel directly preceding any open sentinel skips the open's break
     // to avoid an empty intermediate section that renders as a blank page.
-    const prevWasClose: boolean = !!(preserveCloseForNextToken || prevToken?.landscapeClose || prevToken?.portraitClose);
+    const prevWasClose: boolean = !!preserveCloseForNextToken;
     preserveCloseForNextToken = false;
 
     // Bibliography marker: emit placeholder that will be replaced after the loop
@@ -5681,7 +5714,6 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     if (token.bibliographyMarker) {
       body += BIBL_PLACEHOLDER;
       preserveCloseForNextToken = !!prevWasClose;
-      prevToken = token;
       continue;
     }
 
@@ -5691,7 +5723,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       // Validate that the style is declared in frontmatter
       if (frontmatter?.styles && !frontmatter.styles[token.customStyleOpen]) {
         state.warnings.push('Custom style "' + token.customStyleOpen + '" used in <!-- style: --> directive but not declared in frontmatter styles.');
-        prevToken = token;
+        preserveCloseForNextToken = !!prevWasClose;
         continue;
       }
       if (token.blankLinesBefore !== undefined) sentinelGaps['cso' + sentinelCsoIdx] = token.blankLinesBefore;
@@ -5706,6 +5738,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.blankLinesAfter !== undefined) sentinelGaps['csca' + sentinelCscIdx] = token.blankLinesAfter;
       sentinelCscIdx++;
       state.activeCustomStyle = undefined;
+      // Not a section boundary — just thread close-status through (unlike landscapeClose/portraitClose which set true)
       preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
@@ -5719,7 +5752,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
         emitPortraitBreak();
       }
       state.inLandscapeSection = true;
-      prevToken = token;
+      preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
     if (token.landscapeClose) {
@@ -5729,7 +5762,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       // End the landscape section with an empty paragraph carrying landscape sectPr
       emitLandscapeBreak();
       state.inLandscapeSection = false;
-      prevToken = token;
+      preserveCloseForNextToken = true;
       continue;
     }
 
@@ -5742,7 +5775,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
         emitPortraitBreak();
       }
       state.inPortraitSection = true;
-      prevToken = token;
+      preserveCloseForNextToken = !!prevWasClose;
       continue;
     }
     if (token.portraitClose) {
@@ -5753,7 +5786,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       state.portraitBreakOrdinals.add(state.sectionBreakOrdinal);
       emitPortraitBreak();
       state.inPortraitSection = false;
-      prevToken = token;
+      preserveCloseForNextToken = true;
       continue;
     }
 
@@ -6118,7 +6151,7 @@ export async function convertMdToDocx(
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
-    nonSingleSpacing: false,
+    indentMode: false,
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
@@ -6138,7 +6171,7 @@ export async function convertMdToDocx(
     } else if (isNonSingle) {
       state.firstLineIndentTwips = 720; // default 0.5 inch
     }
-    state.nonSingleSpacing = isNonSingle;
+    state.indentMode = state.firstLineIndentTwips !== undefined;
   }
 
   // Pre-scan all tokens (main document + footnotes) for citation keys so
@@ -6365,15 +6398,15 @@ export async function convertMdToDocx(
       fontOverrides,
       frontmatter.styles
     );
-    mutated = applyLineSpacingToTemplate(mutated, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent);
+    mutated = applyLineSpacingToTemplate(mutated, frontmatter.lineSpacing, state.indentMode, frontmatter.bibliographyHangingIndent);
     mutated = applyAlertColorsToTemplate(mutated, effectiveColors);
     zip.file('word/styles.xml', mutated);
   } else if (templateParts?.has('word/styles.xml')) {
     let decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
-    decoded = applyLineSpacingToTemplate(decoded, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent);
+    decoded = applyLineSpacingToTemplate(decoded, frontmatter.lineSpacing, state.indentMode, frontmatter.bibliographyHangingIndent);
     zip.file('word/styles.xml', applyAlertColorsToTemplate(decoded, effectiveColors));
   } else {
-    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent));
+    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles, frontmatter.lineSpacing, state.indentMode, frontmatter.bibliographyHangingIndent));
   }
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15

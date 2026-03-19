@@ -1215,8 +1215,8 @@ export async function extractCustomStyles(data: Uint8Array | JSZip): Promise<Rec
       if (typeof d.fontStyle === 'string') styleDef.fontStyle = d.fontStyle;
       if (typeof d.spacingBefore === 'number') styleDef.spacingBefore = d.spacingBefore;
       if (typeof d.spacingAfter === 'number') styleDef.spacingAfter = d.spacingAfter;
-      if (d.paragraphIndent === 'none') styleDef.paragraphIndent = 'none';
-      else if (typeof d.paragraphIndent === 'number') styleDef.paragraphIndent = d.paragraphIndent;
+      if (d.paragraphIndent === 'none' || d.paragraphIndent === 0) styleDef.paragraphIndent = 'none';
+      else if (typeof d.paragraphIndent === 'number' && d.paragraphIndent > 0) styleDef.paragraphIndent = d.paragraphIndent;
       result[name] = styleDef;
     }
     return Object.keys(result).length > 0 ? result : null;
@@ -4958,7 +4958,15 @@ export function buildMarkdown(
         if (item.listMeta) {
           // Emit sentinel only before the first item of a list block
           if (!lastListType) {
-            output.push('<!-- ' + item.indentOverride + ' -->\n');
+            // Indent the sentinel to match the list nesting level so it doesn't
+            // break an enclosing list as a top-level HTML block (CommonMark §4.6).
+            const useTab = options?.listIndent === 'tab';
+            const sentinelIndent = useTab
+              ? '\t'.repeat(item.listMeta.level)
+              : item.listMeta.type === 'bullet'
+                ? ' '.repeat(2 * item.listMeta.level)
+                : ' '.repeat(3 * item.listMeta.level);
+            output.push(sentinelIndent + '<!-- ' + item.indentOverride + ' -->\n');
           }
         } else if (!item.listContinuation) {
           // Skip continuation paragraphs (list items with indented blockquotes) —
