@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
-import { computeCodeRegions, isInsideCodeRegion } from '../code-regions';
+import { computeCodeRegions } from '../code-regions';
+import { scanOrientationDirectives } from '../orientation-scan';
 import {
 	CompletionItem,
 	CompletionItemKind,
@@ -651,48 +652,29 @@ async function validateCslField(doc: TextDocument): Promise<void> {
 function validateOrientationDirectives(doc: TextDocument): void {
 	const text = doc.getText();
 	const codeRegions = computeCodeRegions(text);
-	const directiveRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
-	const openStack = new Map<string, [number, number]>(); // name -> [matchStart, matchEnd]
+	const findings = scanOrientationDirectives(text, codeRegions);
 	const diagnostics: Diagnostic[] = [];
 
-	let m: RegExpExecArray | null;
-	while ((m = directiveRe.exec(text)) !== null) {
-		if (isInsideCodeRegion(m.index, codeRegions)) continue;
-		const isClose = m[1] === '/';
-		const name = m[2].toLowerCase();
-		const offset = m.index;
-		const end = offset + m[0].length;
-
-		if (!isClose) {
-			if (openStack.has(name)) {
-				diagnostics.push({
-					severity: DiagnosticSeverity.Error,
-					range: Range.create(doc.positionAt(offset), doc.positionAt(end)),
-					message: 'Nested <!-- ' + name + ' --> \u2014 previous <!-- ' + name + ' --> was never closed.',
-					source: 'manuscript-markdown',
-				});
-			} else {
-				openStack.set(name, [offset, end]);
-			}
-		} else {
-			if (openStack.has(name)) {
-				openStack.delete(name);
-			} else {
-				diagnostics.push({
-					severity: DiagnosticSeverity.Error,
-					range: Range.create(doc.positionAt(offset), doc.positionAt(end)),
-					message: 'Orphaned <!-- /' + name + ' --> \u2014 no matching <!-- ' + name + ' --> precedes it.',
-					source: 'manuscript-markdown',
-				});
-			}
+	for (const f of findings) {
+		let message: string;
+		switch (f.kind) {
+			case 'nested':
+				message = 'Nested <!-- ' + f.directiveName + ' --> \u2014 previous <!-- ' + (f.relatedName ?? f.directiveName) + ' --> was never closed.';
+				break;
+			case 'crossed':
+				message = '<!-- /' + f.directiveName + ' --> does not match the active <!-- ' + f.relatedName + ' --> section.';
+				break;
+			case 'orphaned':
+				message = 'Orphaned <!-- /' + f.directiveName + ' --> \u2014 no matching <!-- ' + f.directiveName + ' --> precedes it.';
+				break;
+			case 'unclosed':
+				message = 'Unclosed <!-- ' + f.directiveName + ' --> \u2014 no matching <!-- /' + f.directiveName + ' --> before end of file.';
+				break;
 		}
-	}
-
-	for (const [name, [openOffset, openEnd]] of openStack) {
 		diagnostics.push({
 			severity: DiagnosticSeverity.Error,
-			range: Range.create(doc.positionAt(openOffset), doc.positionAt(openEnd)),
-			message: 'Unclosed <!-- ' + name + ' --> \u2014 no matching <!-- /' + name + ' --> before end of file.',
+			range: Range.create(doc.positionAt(f.start), doc.positionAt(f.end)),
+			message,
 			source: 'manuscript-markdown',
 		});
 	}

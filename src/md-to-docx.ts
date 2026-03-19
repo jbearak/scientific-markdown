@@ -8,7 +8,7 @@ import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
-import { computeCodeRegions, isInsideCodeRegion } from './code-regions';
+import { scanOrientationDirectives } from './orientation-scan';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
 import { LATENT_STYLES } from './latent-styles';
@@ -1237,7 +1237,7 @@ function promoteSoftbreaks(runs: MdRun[]): void {
   }
 }
 
-export function parseMd(markdown: string, warnings?: string[], breaks = false): MdToken[] {
+export function parseMd(markdown: string, warnings?: string[], breaks = false, originalText?: string): MdToken[] {
   const md = createMarkdownIt();
   // Preserve explicit source semantics for blockquotes by disabling markdown-it
   // lazy continuation behavior (where a non-`>` line can be absorbed into a
@@ -1419,50 +1419,47 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     }
   }
 
-  // Pre-scan: warn on unclosed/orphaned landscape and portrait directives with line numbers
+  // Pre-scan: warn on unclosed/orphaned/nested/crossed orientation directives with line numbers.
+  // When originalText is provided (from convertMdToDocx), scan that so line numbers match the
+  // user's file rather than the stripped body passed to parseMd.
   if (warnings) {
-    const codeRegions = computeCodeRegions(markdown);
-    const openDirectives = new Map<string, number>(); // name -> 1-based line number of open
-    const preScanRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
-    let lineEnds: number[] | undefined;
-    const lineNumAt = (offset: number): number => {
-      if (!lineEnds) {
-        lineEnds = [];
-        for (let i = 0; i < markdown.length; i++) {
-          if (markdown[i] === '\n') lineEnds.push(i);
+    const scanText = originalText ?? markdown;
+    const findings = scanOrientationDirectives(scanText);
+    if (findings.length > 0) {
+      let lineEnds: number[] | undefined;
+      const lineNumAt = (offset: number): number => {
+        if (!lineEnds) {
+          lineEnds = [];
+          for (let i = 0; i < scanText.length; i++) {
+            if (scanText[i] === '\n') lineEnds.push(i);
+          }
+        }
+        let lo = 0;
+        let hi = lineEnds.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (lineEnds[mid] < offset) lo = mid + 1;
+          else hi = mid;
+        }
+        return lo + 1; // 1-based
+      };
+      for (const f of findings) {
+        const line = lineNumAt(f.start);
+        switch (f.kind) {
+          case 'nested':
+            warnings.push('Nested <!-- ' + f.directiveName + ' --> near line ' + line + ' (previous <!-- ' + (f.relatedName ?? f.directiveName) + ' --> near line ' + lineNumAt(f.relatedStart!) + ' was never closed).');
+            break;
+          case 'crossed':
+            warnings.push('<!-- /' + f.directiveName + ' --> near line ' + line + ' does not match the active <!-- ' + f.relatedName + ' --> section (opened near line ' + lineNumAt(f.relatedStart!) + ').');
+            break;
+          case 'orphaned':
+            warnings.push('Orphaned <!-- /' + f.directiveName + ' --> near line ' + line + ' \u2014 no preceding <!-- ' + f.directiveName + ' --> found.');
+            break;
+          case 'unclosed':
+            warnings.push('Unclosed <!-- ' + f.directiveName + ' --> (opened near line ' + line + ') \u2014 no matching <!-- /' + f.directiveName + ' --> found.');
+            break;
         }
       }
-      let lo = 0;
-      let hi = lineEnds.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (lineEnds[mid] < offset) lo = mid + 1;
-        else hi = mid;
-      }
-      return lo + 1; // 1-based
-    };
-    let preScanM: RegExpExecArray | null;
-    while ((preScanM = preScanRe.exec(markdown)) !== null) {
-      if (isInsideCodeRegion(preScanM.index, codeRegions)) continue;
-      const isClose = preScanM[1] === '/';
-      const name = preScanM[2].toLowerCase();
-      const lineNum = lineNumAt(preScanM.index);
-      if (!isClose) {
-        if (openDirectives.has(name)) {
-          warnings.push('Nested <!-- ' + name + ' --> near line ' + lineNum + ' (previous <!-- ' + name + ' --> near line ' + openDirectives.get(name) + ' was never closed).');
-        } else {
-          openDirectives.set(name, lineNum);
-        }
-      } else {
-        if (openDirectives.has(name)) {
-          openDirectives.delete(name);
-        } else {
-          warnings.push('Orphaned <!-- /' + name + ' --> near line ' + lineNum + ' \u2014 no preceding <!-- ' + name + ' --> found.');
-        }
-      }
-    }
-    for (const [name, openLine] of openDirectives) {
-      warnings.push('Unclosed <!-- ' + name + ' --> (opened near line ' + openLine + ') \u2014 no matching <!-- /' + name + ' --> found.');
     }
   }
 
@@ -6017,7 +6014,7 @@ export async function convertMdToDocx(
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
   const parseWarnings: string[] = [];
-  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false);
+  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false, markdown);
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.
