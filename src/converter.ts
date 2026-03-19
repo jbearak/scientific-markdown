@@ -4958,7 +4958,9 @@ export function buildMarkdown(
           if (!lastListType) {
             output.push('<!-- ' + item.indentOverride + ' -->\n');
           }
-        } else {
+        } else if (!item.listContinuation) {
+          // Skip continuation paragraphs (list items with indented blockquotes) —
+          // they're part of the enclosing list block, not standalone paragraphs.
           output.push('<!-- ' + item.indentOverride + ' -->\n');
         }
       }
@@ -6068,7 +6070,7 @@ export async function convertDocx(
           // Look back to find the override from the first item of this block
           // (already set above for the first item)
         }
-      } else if (item.type === 'para' || item.type === 'table'
+      } else if ((item.type === 'para' && !item.listContinuation) || item.type === 'table'
           || isStructuralBoundaryItem(item)) {
         inList = false;
       }
@@ -6084,7 +6086,7 @@ export async function convertDocx(
         } else if (currentOverride) {
           item.indentOverride = currentOverride;
         }
-      } else if (item.type === 'para' || item.type === 'table'
+      } else if ((item.type === 'para' && !item.listContinuation) || item.type === 'table'
           || isStructuralBoundaryItem(item)) {
         inList = false;
         currentOverride = undefined;
@@ -6295,26 +6297,32 @@ export async function convertDocx(
   if (storedTableBorders) {
     fm.tableBorders = storedTableBorders;
   }
-  // Reconstruct line-spacing, paragraph-indent, bibliography-hanging-indent
+  // Reconstruct line-spacing, paragraph-indent, bibliography-hanging-indent.
+  // Normalize to lowercase before comparing so values like 'Double' or 'NONE'
+  // stored in docProps/custom.xml survive the round-trip (frontmatter.ts already
+  // lowercases on the write path, but external tools might uppercase).
   if (storedLineSpacing) {
-    const n = parseFloat(storedLineSpacing);
-    if (storedLineSpacing === 'single' || storedLineSpacing === '1.5' || storedLineSpacing === 'double') {
-      fm.lineSpacing = storedLineSpacing;
+    const ls = storedLineSpacing.toLowerCase();
+    const n = parseFloat(ls);
+    if (ls === 'single' || ls === '1.5' || ls === 'double') {
+      fm.lineSpacing = ls as 'single' | '1.5' | 'double';
     } else if (isFinite(n) && n > 0) {
       fm.lineSpacing = n;
     }
   }
   if (storedParagraphIndent) {
-    if (storedParagraphIndent === 'none') {
+    const pi = storedParagraphIndent.toLowerCase();
+    if (pi === 'none') {
       fm.paragraphIndent = 'none';
     } else {
-      const n = parseFloat(storedParagraphIndent);
+      const n = parseFloat(pi);
       if (isFinite(n) && n >= 0) fm.paragraphIndent = n;
     }
   }
   if (storedBibHangingIndent) {
-    if (storedBibHangingIndent === 'true') fm.bibliographyHangingIndent = true;
-    else if (storedBibHangingIndent === 'false') fm.bibliographyHangingIndent = false;
+    const bhi = storedBibHangingIndent.toLowerCase();
+    if (bhi === 'true') fm.bibliographyHangingIndent = true;
+    else if (bhi === 'false') fm.bibliographyHangingIndent = false;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {
