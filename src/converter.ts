@@ -266,6 +266,7 @@ export type ContentItem =
       paragraphLeftIndentTwips?: number; // raw OOXML left indent for structural inference
       blockquoteIndentUnitTwips?: 240 | 720; // base indent unit for blockquote styles
       emptyParagraphCount?: number; // count of collapsed consecutive empty paragraphs
+      indentOverride?: 'indent' | 'no-indent'; // per-paragraph indent override for round-trip
     }
   | { type: 'math'; latex: string; display: boolean; commentIds: Set<string>; revision?: RevisionInfo }
   | { type: 'footnote_ref'; noteId: string; noteKind: 'footnote' | 'endnote'; commentIds: Set<string>; revision?: RevisionInfo }
@@ -1447,6 +1448,68 @@ export async function extractGridTableMaxLineWidth(data: Uint8Array | JSZip): Pr
     }
   }
   return null;
+}
+
+async function extractStringCustomProp(data: Uint8Array | JSZip, propName: string): Promise<string | null> {
+  const zip = data instanceof JSZip ? data : await loadZip(data);
+  const parsed = await readZipXml(zip, 'docProps/custom.xml');
+  if (!parsed) return null;
+  const propertyNodes = findAllDeep(parsed, 'property');
+  for (const propNode of propertyNodes) {
+    const name: string = propNode?.[':@']?.['@_name'] ?? getAttr(propNode, 'name');
+    if (name !== propName) continue;
+    const children = propNode['property'];
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
+      if (child['vt:lpwstr'] !== undefined) {
+        const raw = nodeText(child['vt:lpwstr'] || []).trim();
+        return raw.length > 0 ? raw : null;
+      }
+    }
+  }
+  return null;
+}
+
+export async function extractLineSpacing(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_LINE_SPACING');
+}
+
+export async function extractParagraphIndent(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_PARAGRAPH_INDENT');
+}
+
+export async function extractBibliographyHangingIndent(data: Uint8Array | JSZip): Promise<string | null> {
+  return extractStringCustomProp(data, 'MANUSCRIPT_BIBLIOGRAPHY_HANGING_INDENT');
+}
+
+export async function extractIndentOverrides(data: Uint8Array | JSZip): Promise<Map<number, string> | null> {
+  const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_INDENT_OVERRIDES');
+  if (!mappingJson) return null;
+  try {
+    const obj = JSON.parse(mappingJson);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const map = new Map<number, string>();
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const idx = parseInt(k, 10);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v as string);
+    }
+    return map.size > 0 ? map : null;
+  } catch { return null; }
+}
+
+export async function extractListIndentOverrides(data: Uint8Array | JSZip): Promise<Map<number, string> | null> {
+  const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_LIST_INDENT_OVERRIDES');
+  if (!mappingJson) return null;
+  try {
+    const obj = JSON.parse(mappingJson);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const map = new Map<number, string>();
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const idx = parseInt(k, 10);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v as string);
+    }
+    return map.size > 0 ? map : null;
+  } catch { return null; }
 }
 
 // Extract blockquote gap metadata from custom XML properties.
@@ -4888,6 +4951,20 @@ export function buildMarkdown(
         lastBlockquoteLevel = undefined;
       }
 
+      // Emit per-paragraph/list indent sentinel
+      if (item.indentOverride && !item.headingLevel && !item.blockquoteLevel && !item.isCodeBlock) {
+        if (item.listMeta) {
+          // Emit sentinel only before the first item of a list block
+          if (!lastListType) {
+            output.push('<!-- ' + item.indentOverride + ' -->\n');
+          }
+        } else if (!item.listContinuation) {
+          // Skip continuation paragraphs (list items with indented blockquotes) —
+          // they're part of the enclosing list block, not standalone paragraphs.
+          output.push('<!-- ' + item.indentOverride + ' -->\n');
+        }
+      }
+
       if (item.headingLevel) {
         lastAlertParagraphKey = undefined;
         pendingAlertPrefixStrip = undefined;
@@ -5843,7 +5920,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -5884,6 +5961,11 @@ export async function convertDocx(
     extractDefaultTableColWidths(zip),
     extractCustomStyles(zip),
     extractTableBorders(zip),
+    extractLineSpacing(zip),
+    extractParagraphIndent(zip),
+    extractBibliographyHangingIndent(zip),
+    extractIndentOverrides(zip),
+    extractListIndentOverrides(zip),
   ]);
 
   // Resolve pipeTableMaxLineWidth: explicit override > stored DOCX value > caller default > 120
@@ -5943,6 +6025,74 @@ export async function convertDocx(
     derivedBlockquotePreContentBlankLines,
     derivedBlockquotePostContentBlankLines,
   } = annotateStructuralParagraphMetadata(docContent);
+
+  // Post-process: apply per-paragraph indent overrides from custom properties.
+  // Uses the same body-paragraph counting as md-to-docx generation: count
+  // non-heading, non-title, non-code, non-list, non-blockquote para items that
+  // have inline content following them (i.e. not empty separator paragraphs).
+  if (storedIndentOverrides) {
+    let bodyIdx = 0;
+    for (let ci = 0; ci < docContent.length; ci++) {
+      const item = docContent[ci];
+      if (item.type !== 'para' || item.headingLevel || item.isTitle || item.isCodeBlock
+          || item.listMeta || item.blockquoteLevel) continue;
+      // Skip empty separator paragraphs (no inline content follows before next structural item)
+      if (isPlainEmptyParagraph(item)) continue;
+      // Check if this para has any non-html_comment inline content after it
+      let hasNonCommentContent = false;
+      for (let j = ci + 1; j < docContent.length; j++) {
+        if (isStructuralBoundaryItem(docContent[j])) break;
+        if (docContent[j].type !== 'html_comment') { hasNonCommentContent = true; break; }
+      }
+      if (!hasNonCommentContent) { continue; }
+      const override = storedIndentOverrides.get(bodyIdx);
+      if (override) item.indentOverride = override as 'indent' | 'no-indent';
+      bodyIdx++;
+    }
+  }
+
+  // Post-process: apply per-list-block indent overrides from custom properties.
+  // A list block is a maximal sequence of consecutive 'para' items with listMeta.
+  if (storedListIndentOverrides) {
+    let listBlockIdx = 0;
+    let inList = false;
+    for (const item of docContent) {
+      if (item.type === 'para' && item.listMeta) {
+        if (!inList) {
+          // Start of a new list block
+          const override = storedListIndentOverrides.get(listBlockIdx);
+          if (override) item.indentOverride = override as 'indent' | 'no-indent';
+          inList = true;
+          listBlockIdx++;
+        }
+        // Propagate the override from the first list item to all items in this block
+        if (item.indentOverride === undefined) {
+          // Look back to find the override from the first item of this block
+          // (already set above for the first item)
+        }
+      } else if ((item.type === 'para' && !item.listContinuation) || item.type === 'table'
+          || isStructuralBoundaryItem(item)) {
+        inList = false;
+      }
+    }
+    // Second pass: propagate override to all items in each list block
+    inList = false;
+    let currentOverride: 'indent' | 'no-indent' | undefined;
+    for (const item of docContent) {
+      if (item.type === 'para' && item.listMeta) {
+        if (!inList) {
+          currentOverride = item.indentOverride;
+          inList = true;
+        } else if (currentOverride) {
+          item.indentOverride = currentOverride;
+        }
+      } else if ((item.type === 'para' && !item.listContinuation) || item.type === 'table'
+          || isStructuralBoundaryItem(item)) {
+        inList = false;
+        currentOverride = undefined;
+      }
+    }
+  }
 
   // Post-process: inject custom_style_open/custom_style_close sentinels around
   // runs of paragraphs that share a customStyleName.
@@ -6146,6 +6296,33 @@ export async function convertDocx(
   // Reconstruct table-borders from stored custom property
   if (storedTableBorders) {
     fm.tableBorders = storedTableBorders;
+  }
+  // Reconstruct line-spacing, paragraph-indent, bibliography-hanging-indent.
+  // Normalize to lowercase before comparing so values like 'Double' or 'NONE'
+  // stored in docProps/custom.xml survive the round-trip (frontmatter.ts already
+  // lowercases on the write path, but external tools might uppercase).
+  if (storedLineSpacing) {
+    const ls = storedLineSpacing.toLowerCase();
+    const n = parseFloat(ls);
+    if (ls === 'single' || ls === '1.5' || ls === 'double') {
+      fm.lineSpacing = ls as 'single' | '1.5' | 'double';
+    } else if (isFinite(n) && n > 0) {
+      fm.lineSpacing = n;
+    }
+  }
+  if (storedParagraphIndent) {
+    const pi = storedParagraphIndent.toLowerCase();
+    if (pi === 'none') {
+      fm.paragraphIndent = 'none';
+    } else {
+      const n = parseFloat(pi);
+      if (isFinite(n) && n >= 0) fm.paragraphIndent = n;
+    }
+  }
+  if (storedBibHangingIndent) {
+    const bhi = storedBibHangingIndent.toLowerCase();
+    if (bhi === 'true') fm.bibliographyHangingIndent = true;
+    else if (bhi === 'false') fm.bibliographyHangingIndent = false;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {

@@ -59,6 +59,9 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `blockquote-style` | Word paragraph style for blockquotes: `Quote`, `IntenseQuote`, or `GitHub` (gray left border bar). Case-insensitive. Default: `GitHub`. Overrides the VS Code setting. |
 | `pipe-table-max-line-width` | Maximum line width for pipe tables in DOCX→MD conversion. Tables wider than this fall back to HTML. `0` disables pipe tables entirely. Default: `120`. Overrides the VS Code `pipeTableMaxLineWidth` setting but is itself overridden by the CLI `--pipe-table-max-line-width` flag. |
 | `breaks` | When `true`, bare newlines within a paragraph are treated as hard line breaks (`<w:br/>`) in DOCX output. When `false` (default), bare newlines are soft breaks rendered as spaces — use a trailing `\` for an explicit hard line break. See [Line Breaks](#line-breaks). |
+| `line-spacing` | Line spacing for body text: `single`, `1.5`, `double`, or a numeric multiplier (e.g., `1.8`). When set to a non-single value (other than the default 1.15), inter-paragraph spacing is removed and first-line paragraph indentation is automatically enabled (see [Line Spacing and Paragraph Indent](#line-spacing-and-paragraph-indent)). |
+| `paragraph-indent` | First-line paragraph indentation in inches (e.g., `0.5`, `0.3`). Auto-enabled at 0.5 inches when `line-spacing` is non-single. Set to `none` to disable auto-indent while keeping line spacing. |
+| `bibliography-hanging-indent` | When `true` (default), bibliography entries use a hanging indent (0.5 inch) with single-line spacing regardless of document line spacing. Set to `false` to disable. |
 | `styles` | Custom paragraph style definitions. A YAML map of style names to property objects. See [Custom Styles](#custom-styles). |
 
 ### Heading and Title Font Configuration
@@ -328,6 +331,94 @@ All paragraphs between the opening and closing directives receive the named styl
 #### Round-Trip
 
 Custom styles are preserved through DOCX round-trips. On export, each style is created as a Word paragraph style (basedOn Normal) with a `MsCustomXxx` style ID. The style definitions are stored in the `MANUSCRIPT_CUSTOM_STYLES` custom property in `docProps/custom.xml`. On import, the custom property is read back and the style definitions are emitted in the frontmatter `styles` block, with `<!-- style: name -->` / `<!-- /style -->` directives re-emitted around the styled paragraphs.
+
+### Line Spacing and Paragraph Indent
+
+The `line-spacing` frontmatter field controls the line spacing for body text in the DOCX output. Accepted values are `single`, `1.5`, `double`, or any positive numeric multiplier (e.g., `1.8`). When omitted, the default is 1.15 (Word's standard).
+
+```yaml
+---
+line-spacing: double
+---
+```
+
+When line spacing is set to a non-single value (anything other than `single` or the default 1.15), the converter automatically:
+
+1. Removes inter-paragraph spacing (`w:after="0"` on the Normal style)
+2. Applies a 0.5-inch first-line indent to body paragraphs
+
+This matches the academic manuscript convention of double-spaced text with paragraph indentation instead of inter-paragraph gaps.
+
+**First paragraph after a heading**: The first-line indent is automatically suppressed on the first paragraph following a heading or title, following standard typographic convention.
+
+**Overriding the default indent**: Use `paragraph-indent` to customize:
+
+```yaml
+---
+line-spacing: double
+paragraph-indent: 0.3
+---
+```
+
+**Disabling auto-indent**: Set `paragraph-indent: none` to keep the line spacing without paragraph indentation:
+
+```yaml
+---
+line-spacing: double
+paragraph-indent: none
+---
+```
+
+**Explicit indent without line spacing**: `paragraph-indent` can be set independently of `line-spacing` to add first-line indentation at any line spacing:
+
+```yaml
+---
+paragraph-indent: 0.5
+---
+```
+
+#### Per-Paragraph Indent Overrides
+
+Use `<!-- no-indent -->` and `<!-- indent -->` HTML comment directives to override the indentation of individual paragraphs or lists. Each directive applies to the immediately following paragraph or list block:
+
+```markdown
+---
+line-spacing: double
+---
+
+# Introduction
+
+First paragraph (auto-suppressed indent after heading).
+
+Second paragraph (indented by default).
+
+<!-- no-indent -->
+Third paragraph (indent explicitly suppressed).
+
+<!-- indent -->
+Fourth paragraph (indent explicitly forced).
+
+<!-- no-indent -->
+1. First item
+2. Second item
+```
+
+- `<!-- no-indent -->` suppresses the first-line indent on the next paragraph, even when document-level indent mode is active. When placed before a list, it applies to all items in the list.
+- `<!-- indent -->` forces a first-line indent on the next paragraph, even after a heading or without document-level indent mode. Uses the document's `paragraph-indent` value (default 0.5 inches). Also applies to lists.
+
+Both directives are consumed during parsing (they do not appear in the DOCX) and are preserved through round-trips via `MANUSCRIPT_INDENT_OVERRIDES` and `MANUSCRIPT_LIST_INDENT_OVERRIDES` custom properties.
+
+#### Bibliography
+
+The `bibliography-hanging-indent` field controls whether bibliography entries use a hanging indent. When `true` (default), bibliography entries are formatted with a 0.5-inch hanging indent and single-line spacing, regardless of the document's line spacing setting.
+
+```yaml
+---
+bibliography-hanging-indent: false
+---
+```
+
+All three settings are preserved through DOCX round-trips via custom properties in `docProps/custom.xml`.
 
 ## Standard Markdown
 

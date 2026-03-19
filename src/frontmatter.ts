@@ -125,6 +125,9 @@ export interface Frontmatter {
   colors?: ColorScheme;
   styles?: Record<string, CustomStyleDef>;
   breaks?: boolean;
+  lineSpacing?: string | number;
+  paragraphIndent?: number | 'none';
+  bibliographyHangingIndent?: boolean;
 }
 
 /** Parse a col-widths value: "2 1 1", "2,1,1", "[2, 1, 1]", "equal", "auto". */
@@ -406,6 +409,30 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         if (value === 'true') metadata.breaks = true;
         else if (value === 'false') metadata.breaks = false;
         break;
+      case 'line-spacing': {
+        const lower = value.toLowerCase();
+        if (lower === 'single' || lower === '1.5' || lower === 'double') {
+          metadata.lineSpacing = lower;
+        } else {
+          const n = parseFloat(value);
+          if (isFinite(n) && n > 0) metadata.lineSpacing = n;
+        }
+        break;
+      }
+      case 'paragraph-indent': {
+        const lower = value.toLowerCase();
+        if (lower === 'none') {
+          metadata.paragraphIndent = 'none';
+        } else {
+          const n = parseFloat(value);
+          if (isFinite(n) && n >= 0) metadata.paragraphIndent = n;
+        }
+        break;
+      }
+      case 'bibliography-hanging-indent':
+        if (value === 'true') metadata.bibliographyHangingIndent = true;
+        else if (value === 'false') metadata.bibliographyHangingIndent = false;
+        break;
     }
   }
 
@@ -481,6 +508,9 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
       }
     },
     'breaks': () => { if (metadata.breaks !== undefined) lines.push('breaks: ' + metadata.breaks); },
+    'line-spacing': () => { if (metadata.lineSpacing !== undefined) lines.push('line-spacing: ' + metadata.lineSpacing); },
+    'paragraph-indent': () => { if (metadata.paragraphIndent !== undefined) lines.push('paragraph-indent: ' + metadata.paragraphIndent); },
+    'bibliography-hanging-indent': () => { if (metadata.bibliographyHangingIndent !== undefined) lines.push('bibliography-hanging-indent: ' + metadata.bibliographyHangingIndent); },
   };
 
   // Default emission order (backward compatible)
@@ -493,6 +523,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
     'blockquote-style', 'colors', 'styles', 'breaks',
+    'line-spacing', 'paragraph-indent', 'bibliography-hanging-indent',
   ];
 
   const aliasToCanonical: Record<string, string> = {
