@@ -3918,4 +3918,13 @@ describe('per-paragraph indent overrides', () => {
     expect(result.markdown).toContain('<!-- no-indent -->\n1. apple');
     expect(result.markdown).toContain('2. pear');
   });
+
+  it('MD→DOCX→MD round-trips inline style sentinels without extra blank lines', async () => {
+    const md = '<!-- style: caption -->**Table 1. Text**<!-- /style -->\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('<!-- style: caption -->\n**Table 1. Text**\n<!-- /style -->');
+    expect(result.markdown).not.toContain('**Table 1. Text**\n\n<!-- /style -->');
+  });
 });
