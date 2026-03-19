@@ -293,6 +293,7 @@ styles:
     font-style: italic
     spacing-before: 12
     spacing-after: 12
+    paragraph-indent: none
   block-title:
     font-style: bold-smallcaps-center
     spacing-before: 6
@@ -309,6 +310,7 @@ styles:
 | `font-style` | Same [font style values](#heading-and-title-font-configuration) as `header-font-style`. Since custom styles inherit from Normal, the default is already non-bold — `normal` is rarely needed here. |
 | `spacing-before` | Spacing before the paragraph in points. |
 | `spacing-after` | Spacing after the paragraph in points. |
+| `paragraph-indent` | First-line paragraph indentation in inches (for example `0.5`) or `none` to explicitly suppress inherited indent. |
 
 All properties are optional. Unspecified properties inherit from the Normal style.
 

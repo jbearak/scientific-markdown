@@ -1040,6 +1040,7 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
         if (fs.includes('center')) csRules.push('text-align: center');
         if (def.spacingBefore !== undefined) csRules.push('margin-top: ' + def.spacingBefore + 'pt');
         if (def.spacingAfter !== undefined) csRules.push('margin-bottom: ' + def.spacingAfter + 'pt');
+        if (def.paragraphIndent !== undefined) csRules.push('text-indent: ' + (def.paragraphIndent === 'none' ? '0' : def.paragraphIndent + 'in'));
         if (csRules.length > 0) {
           css += '.ms-custom-style-' + safeName + ' p { ' + csRules.join('; ') + '; }\n';
         }

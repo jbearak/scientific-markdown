@@ -84,6 +84,7 @@ function makeState(): DocxGenState {
     blockquotePreContentBlankLines: new Map(),
     pipeTableAligned: new Map(),
     sentinelGaps: {},
+    customStyles: undefined,
     activeListStartOverrides: new Map(),
     inNoteBody: false,
     noteRelationships: new Map(),
@@ -3589,6 +3590,48 @@ describe('line spacing and paragraph indent', () => {
     expect(xml).not.toContain('w:firstLine');
   });
 
+  it('custom-styled paragraph inherits document-level indent when style indent is unset', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }] };
+    const state = makeState();
+    state.activeCustomStyle = 'pullquote';
+    state.customStyles = {
+      pullquote: { font: 'Georgia' },
+    };
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = false;
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:pStyle w:val="MsCustomPullquote"');
+    expect(xml).toContain('w:firstLine="720"');
+  });
+
+  it('custom-styled paragraph suppresses inherited document-level indent when style sets paragraph-indent: none', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }] };
+    const state = makeState();
+    state.activeCustomStyle = 'pullquote';
+    state.customStyles = {
+      pullquote: { paragraphIndent: 'none' },
+    };
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = false;
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:pStyle w:val="MsCustomPullquote"');
+    expect(xml).not.toContain('w:firstLine="720"');
+  });
+
+  it('custom-styled first paragraph after heading still suppresses document-level indent when style indent is unset', () => {
+    const token: MdToken = { type: 'paragraph', runs: [{ type: 'text', text: 'Hello' }] };
+    const state = makeState();
+    state.activeCustomStyle = 'pullquote';
+    state.customStyles = {
+      pullquote: { font: 'Georgia' },
+    };
+    state.firstLineIndentTwips = 720;
+    state.afterHeading = true;
+    const xml = generateParagraph(token, state);
+    expect(xml).toContain('w:pStyle w:val="MsCustomPullquote"');
+    expect(xml).not.toContain('w:firstLine');
+  });
+
   it('bibliography paragraphs have Bibliography style by default', async () => {
     const md = '---\ncsl: apa\nbibliography: test.bib\n---\nSome text [@key1]\n';
     const { docx } = await convertMdToDocx(md, {
@@ -3623,6 +3666,69 @@ describe('line spacing and paragraph indent', () => {
     const styles = await zip.file('word/styles.xml')!.async('text');
     const normalMatch = styles.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
     expect(normalMatch![1]).toContain('w:line="480"');
+  });
+
+  it('custom-styled paragraphs inherit global indent in double-spaced documents, except after headings', async () => {
+    const md = [
+      '---',
+      'line-spacing: double',
+      'styles:',
+      '  pullquote:',
+      '    font: Georgia',
+      '---',
+      '',
+      '# Heading',
+      '',
+      '<!-- style: pullquote -->',
+      '',
+      'First paragraph.',
+      '',
+      'Second paragraph.',
+      '',
+      '<!-- /style -->',
+    ].join('\n');
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    expect(doc).toContain('<w:pStyle w:val="MsCustomPullquote"/>');
+    expect(doc).toContain('First paragraph.</w:t>');
+    expect(doc).toContain('Second paragraph.</w:t>');
+    expect(doc).toContain('Second paragraph.</w:t></w:r></w:p>');
+    expect(doc).toContain('w:firstLine="720"');
+    const firstIdx = doc.indexOf('First paragraph.');
+    const secondIdx = doc.indexOf('Second paragraph.');
+    expect(firstIdx).toBeGreaterThan(-1);
+    expect(secondIdx).toBeGreaterThan(-1);
+    const firstWindow = doc.slice(Math.max(0, firstIdx - 250), firstIdx);
+    const secondWindow = doc.slice(Math.max(0, secondIdx - 250), secondIdx);
+    expect(firstWindow).not.toContain('w:firstLine="720"');
+    expect(secondWindow).toContain('w:firstLine="720"');
+  });
+
+  it('custom-style paragraph-indent: none suppresses global indent in double-spaced documents', async () => {
+    const md = [
+      '---',
+      'line-spacing: double',
+      'styles:',
+      '  pullquote:',
+      '    paragraph-indent: none',
+      '---',
+      '',
+      '<!-- style: pullquote -->',
+      '',
+      'Styled text.',
+      '',
+      '<!-- /style -->',
+    ].join('\n');
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    const styles = await zip.file('word/styles.xml')!.async('text');
+    expect(doc).not.toContain('w:firstLine="720"');
+    expect(styles).toContain('w:styleId="MsCustomPullquote"');
+    expect(styles).toContain('w:firstLine="0"');
   });
 
   it('Bibliography style has single-line spacing and hanging indent by default', () => {
