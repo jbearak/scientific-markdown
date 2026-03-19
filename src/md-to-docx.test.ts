@@ -3801,6 +3801,9 @@ describe('line spacing round-trip', () => {
     expect(normalMatch).not.toBeNull();
     // Explicit paragraph-indent activates indent mode → w:after="0" (no gap)
     expect(normalMatch![1]).toContain('w:after="0"');
+    // End-to-end: document.xml paragraphs carry the expected first-line indent
+    const doc = await zip.file('word/document.xml')!.async('text');
+    expect(doc).toContain('w:firstLine="720"');
   });
 
   it('title suppresses first-line indent on next paragraph', async () => {

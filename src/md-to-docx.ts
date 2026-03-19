@@ -3421,7 +3421,10 @@ function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number 
             const pos = spacingEnd.index + spacingEnd[0].length;
             pPrContent = pPrContent.slice(0, pos) + indEl + pPrContent.slice(pos);
           } else {
-            pPrContent += indEl;
+            const insertBefore = /<w:jc\b|<w:outlineLvl\b/.exec(pPrContent);
+            pPrContent = insertBefore
+              ? pPrContent.slice(0, insertBefore.index) + indEl + pPrContent.slice(insertBefore.index)
+              : pPrContent + indEl;
           }
         }
         inner = inner.slice(0, pPrMatch.index) + pPrMatch[1] + pPrContent + pPrMatch[3] + inner.slice(pPrMatch.index + pPrMatch[0].length);
@@ -5714,6 +5717,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
     if (token.bibliographyMarker) {
       body += BIBL_PLACEHOLDER;
       preserveCloseForNextToken = !!prevWasClose;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
 
@@ -5724,6 +5729,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (frontmatter?.styles && !frontmatter.styles[token.customStyleOpen]) {
         state.warnings.push('Custom style "' + token.customStyleOpen + '" used in <!-- style: --> directive but not declared in frontmatter styles.');
         preserveCloseForNextToken = !!prevWasClose;
+        if (prevToken?.type === 'heading') state.afterHeading = true;
+        prevToken = undefined;
         continue;
       }
       if (token.blankLinesBefore !== undefined) sentinelGaps['cso' + sentinelCsoIdx] = token.blankLinesBefore;
@@ -5731,6 +5738,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       sentinelCsoIdx++;
       state.activeCustomStyle = token.customStyleOpen;
       preserveCloseForNextToken = !!prevWasClose;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
     if (token.customStyleClose) {
@@ -5740,6 +5749,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       state.activeCustomStyle = undefined;
       // Not a section boundary — just thread close-status through (unlike landscapeClose/portraitClose which set true)
       preserveCloseForNextToken = !!prevWasClose;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
 
@@ -5753,6 +5764,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       }
       state.inLandscapeSection = true;
       preserveCloseForNextToken = !!prevWasClose;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
     if (token.landscapeClose) {
@@ -5763,6 +5776,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       emitLandscapeBreak();
       state.inLandscapeSection = false;
       preserveCloseForNextToken = true;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
 
@@ -5776,6 +5791,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       }
       state.inPortraitSection = true;
       preserveCloseForNextToken = !!prevWasClose;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
     if (token.portraitClose) {
@@ -5787,6 +5804,8 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       emitPortraitBreak();
       state.inPortraitSection = false;
       preserveCloseForNextToken = true;
+      if (prevToken?.type === 'heading') state.afterHeading = true;
+      prevToken = undefined;
       continue;
     }
 
@@ -6166,7 +6185,7 @@ export async function convertMdToDocx(
     const isNonSingle = lsTwips !== 240 && lsTwips !== 276; // 276 = default 1.15
     if (frontmatter.paragraphIndent === 'none') {
       // Explicitly disabled — no indent
-    } else if (typeof frontmatter.paragraphIndent === 'number') {
+    } else if (typeof frontmatter.paragraphIndent === 'number' && frontmatter.paragraphIndent > 0) {
       state.firstLineIndentTwips = Math.round(frontmatter.paragraphIndent * 1440); // inches to twips
     } else if (isNonSingle) {
       state.firstLineIndentTwips = 720; // default 0.5 inch
