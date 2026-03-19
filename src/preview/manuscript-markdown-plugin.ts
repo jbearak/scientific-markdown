@@ -2,9 +2,10 @@ import type MarkdownIt from 'markdown-it';
 import type StateInline from 'markdown-it/lib/rules_inline/state_inline.mjs';
 import type StateBlock from 'markdown-it/lib/rules_block/state_block.mjs';
 import { VALID_COLOR_IDS, getDefaultHighlightColor } from '../highlight-colors';
-import { PARA_PLACEHOLDER, preprocessCriticMarkup, findMatchingClose } from '../critic-markup';
-import { wrapBareLatexEnvironments } from '../latex-env-preprocess';
-import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
+import { PARA_PLACEHOLDER, findMatchingClose } from '../critic-markup';
+import { GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
+import { preprocessGridTablesWithMap, wrapBareLatexEnvironmentsWithMap, preprocessCriticMarkupWithMap } from './preprocess-with-map';
+import { LineMap } from './line-map';
 import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
 import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
@@ -992,7 +993,11 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const defaultScheme: ColorScheme = (md as any).manuscriptColors || getDefaultColorScheme();
     state.env.colorScheme = metadata.colors || defaultScheme;
     md.set({ breaks: metadata.breaks ?? false });
-    state.src = preprocessCriticMarkup(wrapBareLatexEnvironments(preprocessGridTables(state.src)));
+    const r1 = preprocessGridTablesWithMap(state.src);
+    const r2 = wrapBareLatexEnvironmentsWithMap(r1.output);
+    const r3 = preprocessCriticMarkupWithMap(r2.output);
+    state.src = r3.output;
+    state.env.lineMap = LineMap.chain(LineMap.chain(r1.map, r2.map), r3.map);
   });
 
   // Inject <style> block for header-font-style and custom styles preview
@@ -1154,6 +1159,19 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     }
   });
 
+  // Remap token .map values from preprocessed line numbers back to original
+  // source line numbers so VS Code's data-line scroll sync attributes are correct.
+  // Must run after all other core rules that create or modify tokens.
+  md.core.ruler.push('manuscript_scroll_sync_remap', (state: any) => {
+    const lineMap: LineMap | undefined = state.env.lineMap;
+    if (!lineMap || lineMap.isIdentity) return;
+    for (const token of state.tokens) {
+      if (token.map) {
+        token.map = [lineMap.remap(token.map[0]), lineMap.remap(token.map[1])];
+      }
+    }
+  });
+
   // Register renderers for each Manuscript Markdown token type
   for (const pattern of patterns) {
     md.renderer.rules[`manuscript_markdown_${pattern.name}_open`] = (tokens, idx) => {
@@ -1269,9 +1287,10 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     if (!alertType) {
       return self.renderToken(tokens, idx, options);
     }
+    const dataLine = token.map ? ' data-line="' + token.map[0] + '"' : '';
     const title = token.meta?.gfmAlertTitle || gfmAlertTitle(alertType);
     const schemeClass = env.colorScheme && ALLOWED_PREVIEW_SCHEMES.has(env.colorScheme) ? ' color-scheme-' + env.colorScheme : '';
-    return '<blockquote class="markdown-alert markdown-alert-' + alertType + schemeClass + '"><p class="markdown-alert-title">' + alertOcticonSvg(alertType) + ' ' + escapeHtmlText(title) + '</p>\n';
+    return '<blockquote' + dataLine + ' class="markdown-alert markdown-alert-' + alertType + schemeClass + '"><p class="markdown-alert-title">' + alertOcticonSvg(alertType) + ' ' + escapeHtmlText(title) + '</p>\n';
   };
 
 }

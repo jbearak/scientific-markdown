@@ -948,6 +948,17 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 				],
 			},
 		},
+		middleware: {
+			// Only forward documentSymbol requests for .bib files to the LSP server.
+			// For Markdown, the server returns null which can interfere with VS Code's
+			// built-in Markdown outline/breadcrumb provider.
+			provideDocumentSymbols: (document, token, next) => {
+				if (document.languageId === 'bibtex' || document.uri.fsPath.endsWith('.bib')) {
+					return next(document, token);
+				}
+				return undefined;
+			},
+		},
 	};
 
 	languageClient = new LanguageClient(
