@@ -56,22 +56,24 @@ function buildMapFromLines(origLines: string[], outLines: string[]): LineMap {
     // Lines diverge — find the next anchor point.
     // Look for the next output line that matches some original line ahead.
     let foundAnchor = false;
-    // Search forward in output for a line that matches somewhere in original
-    for (let pScan = pi; pScan < outLines.length && pScan < pi + 200; pScan++) {
-      // Look for this output line in original, starting from oi
-      for (let oScan = oi; oScan < origLines.length && oScan < oi + 200; oScan++) {
-        if (outLines[pScan] === origLines[oScan]) {
-          // Only anchor on non-blank lines to avoid false matches on blank
-          // lines within or adjacent to a changed region.
-          if (outLines[pScan].trim() !== '') {
-            oi = oScan;
-            pi = pScan;
-            foundAnchor = true;
-            break;
-          }
-        }
+    // Build an index of non-blank original lines to their first occurrence
+    // from oi onward, then do a single O(n) scan of output lines.
+    const origIndex = new Map<string, number>();
+    for (let oScan = oi; oScan < origLines.length; oScan++) {
+      const line = origLines[oScan];
+      if (line.trim() !== '' && !origIndex.has(line)) {
+        origIndex.set(line, oScan);
       }
-      if (foundAnchor) break;
+    }
+    for (let pScan = pi; pScan < outLines.length; pScan++) {
+      if (outLines[pScan].trim() === '') continue;
+      const oMatch = origIndex.get(outLines[pScan]);
+      if (oMatch !== undefined) {
+        oi = oMatch;
+        pi = pScan;
+        foundAnchor = true;
+        break;
+      }
     }
 
     if (!foundAnchor) {

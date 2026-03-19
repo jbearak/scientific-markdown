@@ -174,6 +174,7 @@ function alertBlockquoteRule(state: any): void {
     if (allOffsets[0] > 0) {
       const bqOpen = new state.Token('blockquote_open', 'blockquote', 1);
       bqOpen.markup = '>';
+      bqOpen.map = tokens[i].map;
       rebuilt.push(bqOpen);
       for (let k = 0; k < allOffsets[0]; k++) {
         rebuilt.push(inner[k]);
@@ -188,6 +189,7 @@ function alertBlockquoteRule(state: any): void {
       const endOffset = h + 1 < hits.length ? allOffsets[h + 1] : inner.length;
       const bqOpen = new state.Token('blockquote_open', 'blockquote', 1);
       bqOpen.markup = '>';
+      bqOpen.map = tokens[i].map;
       bqOpen.meta = { gfmAlertType: hits[h].type, gfmAlertTitle: gfmAlertTitle(hits[h].type) };
       rebuilt.push(bqOpen);
       for (let k = startOffset; k < endOffset; k++) {

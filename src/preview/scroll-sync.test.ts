@@ -147,6 +147,25 @@ describe('Scroll sync: token .map remapping after preprocessing', () => {
     });
   });
 
+  describe('merged alerts', () => {
+    it('split blockquote_open tokens retain .map from the original blockquote', () => {
+      const src = [
+        '> [!NOTE]',
+        '> note text',
+        '> [!TIP]',
+        '> tip text',
+      ].join('\n');
+
+      const tokens = parseWithPlugin(src);
+      const bqOpens = findAllTokens(tokens, 'blockquote_open');
+      // The multi-alert split should produce two blockquote_open tokens, both with .map
+      expect(bqOpens.length).toBe(2);
+      for (const bq of bqOpens) {
+        expect(bq.map).not.toBeNull();
+      }
+    });
+  });
+
   describe('no preprocessing needed', () => {
     it('preserves correct maps for plain markdown', () => {
       const src = [

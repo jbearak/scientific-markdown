@@ -73,6 +73,30 @@ describe('wrapBareLatexEnvironmentsWithMap', () => {
   });
 });
 
+describe('preprocessGridTablesWithMap — large table', () => {
+  it('remaps correctly for a grid table with more than 200 rows', () => {
+    const rows: string[] = [];
+    rows.push('Before');           // 0
+    rows.push('');                 // 1
+    rows.push('+------+------+');  // 2
+    for (let i = 0; i < 210; i++) {
+      rows.push('| a    | b    |');
+      rows.push('+------+------+');
+    }
+    rows.push('');
+    rows.push('After large table');
+    const afterOrigLine = rows.length - 1;
+
+    const src = rows.join('\n');
+    const { output, map } = preprocessGridTablesWithMap(src);
+    const outLines = output.split('\n');
+
+    const afterIdx = outLines.indexOf('After large table');
+    expect(afterIdx).toBeGreaterThan(-1);
+    expect(map.remap(afterIdx)).toBe(afterOrigLine);
+  });
+});
+
 describe('preprocessCriticMarkupWithMap', () => {
   it('returns identity map when no CriticMarkup present', () => {
     const src = 'Hello\n\nWorld\n';
