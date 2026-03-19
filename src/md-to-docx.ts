@@ -1571,6 +1571,7 @@ function applyCustomStyleSentinels(tokens: MdToken[], warnings?: string[]): void
 
       const openSentinel: MdToken = { type: 'paragraph', runs: [], customStyleOpen: styleName };
       openSentinel.blankLinesBefore = tokens[i].blankLinesBefore;
+      openSentinel.blankLinesAfter = 0; // inline: no blank line between open sentinel and content
 
       // Re-parse content to recover inline formatting (bold, italic, links, etc.)
       const md = createMarkdownIt();
@@ -1581,6 +1582,7 @@ function applyCustomStyleSentinels(tokens: MdToken[], warnings?: string[]): void
       };
 
       const closeSentinel: MdToken = { type: 'paragraph', runs: [], customStyleClose: true };
+      closeSentinel.blankLinesBefore = 0; // inline: no blank line between content and close sentinel
       closeSentinel.blankLinesAfter = tokens[i].blankLinesAfter;
 
       tokens.splice(i, 1, openSentinel, contentToken, closeSentinel);
