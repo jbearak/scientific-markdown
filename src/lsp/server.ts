@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
+import { computeCodeRegions, isInsideCodeRegion } from '../code-regions';
 import {
 	CompletionItem,
 	CompletionItemKind,
@@ -95,11 +96,13 @@ const bibCache = new Map<string, CachedBibData>();
 /** Per-source diagnostic maps so validators don't overwrite each other. */
 const citekeyDiagnostics = new Map<string, Diagnostic[]>();
 const cslDiagnostics = new Map<string, Diagnostic[]>();
+const orientationDiagnostics = new Map<string, Diagnostic[]>();
 
 function publishDiagnostics(uri: string): void {
 	const citekey = citekeyDiagnostics.get(uri) ?? [];
 	const csl = cslDiagnostics.get(uri) ?? [];
-	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...csl] });
+	const orientation = orientationDiagnostics.get(uri) ?? [];
+	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...csl, ...orientation] });
 }
 
 interface OpenDocBibCache {
@@ -139,6 +142,7 @@ async function runValidationPipeline(doc: TextDocument): Promise<void> {
 		await updateBibReverseMap(doc.uri, text, metadata);
 		await validateCitekeys(doc, metadata);
 		await validateCslField(doc);
+		validateOrientationDirectives(doc);
 	} catch (error) {
 		connection.console.error(
 			`Validation pipeline error for ${doc.uri}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`
@@ -261,6 +265,7 @@ documents.onDidClose((event) => {
 		removeBibReverseMapEntry(event.document.uri);
 		citekeyDiagnostics.delete(event.document.uri);
 		cslDiagnostics.delete(event.document.uri);
+		orientationDiagnostics.delete(event.document.uri);
 		connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 	}
 });
@@ -641,6 +646,59 @@ async function validateCslField(doc: TextDocument): Promise<void> {
 		// Don't let validation errors crash the LSP connection
 		connection.console.error(`Error building CSL suggestions: ${e instanceof Error ? e.stack ?? e.message : e}`);
 	}
+}
+
+function validateOrientationDirectives(doc: TextDocument): void {
+	const text = doc.getText();
+	const codeRegions = computeCodeRegions(text);
+	const directiveRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
+	const openStack = new Map<string, [number, number]>(); // name -> [matchStart, matchEnd]
+	const diagnostics: Diagnostic[] = [];
+
+	let m: RegExpExecArray | null;
+	while ((m = directiveRe.exec(text)) !== null) {
+		if (isInsideCodeRegion(m.index, codeRegions)) continue;
+		const isClose = m[1] === '/';
+		const name = m[2].toLowerCase();
+		const offset = m.index;
+		const end = offset + m[0].length;
+
+		if (!isClose) {
+			if (openStack.has(name)) {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Error,
+					range: Range.create(doc.positionAt(offset), doc.positionAt(end)),
+					message: 'Nested <!-- ' + name + ' --> \u2014 previous <!-- ' + name + ' --> was never closed.',
+					source: 'manuscript-markdown',
+				});
+			} else {
+				openStack.set(name, [offset, end]);
+			}
+		} else {
+			if (openStack.has(name)) {
+				openStack.delete(name);
+			} else {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Error,
+					range: Range.create(doc.positionAt(offset), doc.positionAt(end)),
+					message: 'Orphaned <!-- /' + name + ' --> \u2014 no matching <!-- ' + name + ' --> precedes it.',
+					source: 'manuscript-markdown',
+				});
+			}
+		}
+	}
+
+	for (const [name, [openOffset, openEnd]] of openStack) {
+		diagnostics.push({
+			severity: DiagnosticSeverity.Error,
+			range: Range.create(doc.positionAt(openOffset), doc.positionAt(openEnd)),
+			message: 'Unclosed <!-- ' + name + ' --> \u2014 no matching <!-- /' + name + ' --> before end of file.',
+			source: 'manuscript-markdown',
+		});
+	}
+
+	orientationDiagnostics.set(doc.uri, diagnostics);
+	publishDiagnostics(doc.uri);
 }
 
 function extractWorkspaceRoots(params: InitializeParams): string[] {

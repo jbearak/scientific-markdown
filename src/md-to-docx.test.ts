@@ -3187,11 +3187,46 @@ describe('landscape sections', () => {
       const tokens = parseMd(md, warnings);
       expect(warnings.length).toBe(1);
       expect(warnings[0]).toContain('Nested');
+      expect(warnings[0]).toContain('near line');
       // Should have: open, para1, close, open, para2, close
       const opens = tokens.filter(t => t.landscapeOpen);
       const closes = tokens.filter(t => t.landscapeClose);
       expect(opens.length).toBe(2);
       expect(closes.length).toBe(2);
+    });
+
+    it('unclosed <!-- landscape --> warns with line number', () => {
+      const warnings: string[] = [];
+      const md = 'Before\n\n<!-- landscape -->\n\nParagraph inside';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain('Unclosed');
+      expect(warnings[0]).toContain('landscape');
+      expect(warnings[0]).toContain('near line 3');
+    });
+
+    it('orphaned <!-- /landscape --> warns with line number', () => {
+      const warnings: string[] = [];
+      const md = 'Before\n\n<!-- /landscape -->\n\nAfter';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain('Orphaned');
+      expect(warnings[0]).toContain('/landscape');
+      expect(warnings[0]).toContain('near line 3');
+    });
+
+    it('matched <!-- landscape --> pair produces no warnings', () => {
+      const warnings: string[] = [];
+      const md = '<!-- landscape -->\n\nContent\n\n<!-- /landscape -->';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(0);
+    });
+
+    it('directives inside fenced code blocks do not warn', () => {
+      const warnings: string[] = [];
+      const md = '```\n<!-- landscape -->\n```';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(0);
     });
 
     it('transfers <!-- table-orientation: landscape --> to table token', () => {
@@ -3364,10 +3399,31 @@ describe('portrait sections', () => {
       const tokens = parseMd(md, warnings);
       expect(warnings.length).toBe(1);
       expect(warnings[0]).toContain('Nested');
+      expect(warnings[0]).toContain('near line');
       const opens = tokens.filter(t => t.portraitOpen);
       const closes = tokens.filter(t => t.portraitClose);
       expect(opens.length).toBe(2);
       expect(closes.length).toBe(2);
+    });
+
+    it('unclosed <!-- portrait --> warns with line number', () => {
+      const warnings: string[] = [];
+      const md = 'Before\n\n<!-- portrait -->\n\nParagraph inside';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain('Unclosed');
+      expect(warnings[0]).toContain('portrait');
+      expect(warnings[0]).toContain('near line 3');
+    });
+
+    it('orphaned <!-- /portrait --> warns with line number', () => {
+      const warnings: string[] = [];
+      const md = 'Before\n\n<!-- /portrait -->\n\nAfter';
+      parseMd(md, warnings);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain('Orphaned');
+      expect(warnings[0]).toContain('/portrait');
+      expect(warnings[0]).toContain('near line 3');
     });
 
     it('transfers <!-- table-orientation: portrait --> to table token', () => {

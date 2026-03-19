@@ -8,6 +8,7 @@ import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
+import { computeCodeRegions, isInsideCodeRegion } from './code-regions';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
 import { LATENT_STYLES } from './latent-styles';
@@ -1418,6 +1419,53 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
     }
   }
 
+  // Pre-scan: warn on unclosed/orphaned landscape and portrait directives with line numbers
+  if (warnings) {
+    const codeRegions = computeCodeRegions(markdown);
+    const openDirectives = new Map<string, number>(); // name -> 1-based line number of open
+    const preScanRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
+    let lineEnds: number[] | undefined;
+    const lineNumAt = (offset: number): number => {
+      if (!lineEnds) {
+        lineEnds = [];
+        for (let i = 0; i < markdown.length; i++) {
+          if (markdown[i] === '\n') lineEnds.push(i);
+        }
+      }
+      let lo = 0;
+      let hi = lineEnds.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (lineEnds[mid] < offset) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo + 1; // 1-based
+    };
+    let preScanM: RegExpExecArray | null;
+    while ((preScanM = preScanRe.exec(markdown)) !== null) {
+      if (isInsideCodeRegion(preScanM.index, codeRegions)) continue;
+      const isClose = preScanM[1] === '/';
+      const name = preScanM[2].toLowerCase();
+      const lineNum = lineNumAt(preScanM.index);
+      if (!isClose) {
+        if (openDirectives.has(name)) {
+          warnings.push('Nested <!-- ' + name + ' --> near line ' + lineNum + ' (previous <!-- ' + name + ' --> near line ' + openDirectives.get(name) + ' was never closed).');
+        } else {
+          openDirectives.set(name, lineNum);
+        }
+      } else {
+        if (openDirectives.has(name)) {
+          openDirectives.delete(name);
+        } else {
+          warnings.push('Orphaned <!-- /' + name + ' --> near line ' + lineNum + ' \u2014 no preceding <!-- ' + name + ' --> found.');
+        }
+      }
+    }
+    for (const [name, openLine] of openDirectives) {
+      warnings.push('Unclosed <!-- ' + name + ' --> (opened near line ' + openLine + ') \u2014 no matching <!-- /' + name + ' --> found.');
+    }
+  }
+
   // Post-process: convert <!-- landscape --> / <!-- /landscape --> fences into sentinel tokens
   {
     let inLandscape = false;
@@ -1428,8 +1476,7 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
       const text = run.text.trim();
       if (/^<!--\s*landscape\s*-->$/i.test(text)) {
         if (inLandscape) {
-          // Nested landscape: warn and treat as close + open
-          if (warnings) warnings.push('Nested <!-- landscape --> treated as <!-- /landscape --><!-- landscape -->');
+          // Nested landscape: treat as close + open (warning emitted by pre-scan above)
           const closeSentinel: MdToken = { type: 'paragraph', runs: [], landscapeClose: true };
           closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
           closeSentinel.blankLinesAfter = result[i].blankLinesAfter;
@@ -1468,7 +1515,7 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
       const text = run.text.trim();
       if (/^<!--\s*portrait\s*-->$/i.test(text)) {
         if (inPortrait) {
-          if (warnings) warnings.push('Nested <!-- portrait --> treated as <!-- /portrait --><!-- portrait -->');
+          // Nested portrait: treat as close + open (warning emitted by pre-scan above)
           const closeSentinel: MdToken = { type: 'paragraph', runs: [], portraitClose: true };
           closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
           closeSentinel.blankLinesAfter = result[i].blankLinesAfter;
