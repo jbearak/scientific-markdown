@@ -4,7 +4,7 @@ import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 import { parseBibtex, BibtexEntry } from './bibtex-parser';
-import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
+import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type CustomStyleDef, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
@@ -2741,6 +2741,7 @@ export interface DocxGenState {
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
   activeCustomStyle?: string; // currently active <!-- style: X --> block name
+  customStyles?: Record<string, CustomStyleDef>; // declared styles for indent inheritance/overrides
   activeListStartOverrides: Map<number, number>; // ilvl → override numId for restarted ordered lists
   inNoteBody: boolean; // true while generating footnote/endnote body XML
   noteRelationships: Map<string, string>; // URL -> rId for hyperlinks inside footnote/endnote bodies
@@ -3453,15 +3454,18 @@ function customStyleXml(
   const styleId = customStyleId(name);
   const displayName = customStyleDisplayName(name);
 
-  // pPr: spacing + center alignment (ordering: spacing → jc per OOXML schema)
+  // pPr: spacing + indent + center alignment (ordering: spacing → ind → jc)
   let spacingParts = '';
   const beforeTwips = def.spacingBefore !== undefined ? Math.round(def.spacingBefore * 20) : undefined;
   const afterTwips = def.spacingAfter !== undefined ? Math.round(def.spacingAfter * 20) : undefined;
   if (beforeTwips !== undefined && beforeTwips !== 0) spacingParts += ' w:before="' + beforeTwips + '"';
   if (afterTwips !== undefined) spacingParts += ' w:after="' + afterTwips + '"';
   const spacingEl = spacingParts ? '<w:spacing' + spacingParts + '/>' : '';
+  const indentEl = def.paragraphIndent !== undefined
+    ? '<w:ind w:firstLine="' + (def.paragraphIndent === 'none' ? '0' : Math.round(def.paragraphIndent * 1440)) + '"/>'
+    : '';
   const jcEl = def.fontStyle?.includes('center') ? '<w:jc w:val="center"/>' : '';
-  const pPr = (spacingEl || jcEl) ? '<w:pPr>' + spacingEl + jcEl + '</w:pPr>\n' : '';
+  const pPr = (spacingEl || indentEl || jcEl) ? '<w:pPr>' + spacingEl + indentEl + jcEl + '</w:pPr>\n' : '';
 
   // rPr: style flags + font + size (ordering: style flags → rFonts → sz per dirty-flag invariant #4)
   const fs = def.fontStyle ?? '';
@@ -4954,8 +4958,17 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 
   // Apply custom style when inside a <!-- style: X --> block (only for plain paragraphs)
   if (token.type === 'paragraph' && state.activeCustomStyle) {
+    const styleDef = state.customStyles?.[state.activeCustomStyle];
     const twips = state.firstLineIndentTwips || 720;
-    const indXml = token.indentOverride === 'indent' ? '<w:ind w:firstLine="' + twips + '"/>' : '';
+    let indXml = '';
+    if (token.indentOverride === 'indent') {
+      indXml = '<w:ind w:firstLine="' + twips + '"/>';
+    } else if (token.indentOverride === 'no-indent') {
+      indXml = '<w:ind w:firstLine="0"/>';
+    } else if (styleDef?.paragraphIndent === undefined && state.firstLineIndentTwips && !state.afterHeading) {
+      // Undeclared custom-style paragraph-indent inherits the document-level indent behavior.
+      indXml = '<w:ind w:firstLine="' + state.firstLineIndentTwips + '"/>';
+    }
     pPr = '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/>' + indXml + '</w:pPr>';
   }
 
@@ -6097,6 +6110,7 @@ export async function convertMdToDocx(
     portraitBreakOrdinals: new Set(),
     templateSectPr,
     sentinelGaps: {},
+    customStyles: frontmatter.styles,
     activeListStartOverrides: new Map(),
     inNoteBody: false,
     noteRelationships: new Map(),

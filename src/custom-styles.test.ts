@@ -32,6 +32,7 @@ describe('Custom Styles — Frontmatter Parsing', () => {
       '    font-style: bold-italic-center',
       '    spacing-before: 12',
       '    spacing-after: 6',
+      '    paragraph-indent: 0.3',
       '---',
       'Hello',
     ].join('\n');
@@ -43,6 +44,21 @@ describe('Custom Styles — Frontmatter Parsing', () => {
     expect(def.fontStyle).toBe('bold-italic-center');
     expect(def.spacingBefore).toBe(12);
     expect(def.spacingAfter).toBe(6);
+    expect(def.paragraphIndent).toBe(0.3);
+  });
+
+  it('parses paragraph-indent: none for a custom style', () => {
+    const md = [
+      '---',
+      'styles:',
+      '  caption:',
+      '    paragraph-indent: none',
+      '---',
+      'Hello',
+    ].join('\n');
+    const { metadata } = parseFrontmatter(md);
+    expect(metadata.styles).toBeDefined();
+    expect(metadata.styles!['caption'].paragraphIndent).toBe('none');
   });
 
   it('parses multiple styles in one block', () => {
@@ -119,8 +135,8 @@ describe('Custom Styles — Frontmatter Parsing', () => {
   it('serialize → re-parse round-trip preserves styles', () => {
     const original: import('./frontmatter').Frontmatter = {
       styles: {
-        pullquote: { font: 'Georgia', fontSize: 14, fontStyle: 'bold-italic-center', spacingBefore: 12, spacingAfter: 6 },
-        sidebar: { font: 'Helvetica', fontSize: 10 },
+        pullquote: { font: 'Georgia', fontSize: 14, fontStyle: 'bold-italic-center', spacingBefore: 12, spacingAfter: 6, paragraphIndent: 0.3 },
+        sidebar: { font: 'Helvetica', fontSize: 10, paragraphIndent: 'none' },
       },
     };
     const serialized = serializeFrontmatter(original);
@@ -144,6 +160,7 @@ describe('Custom Styles — Frontmatter Parsing', () => {
     expect(def.fontStyle).toBeUndefined();
     expect(def.spacingBefore).toBeUndefined();
     expect(def.spacingAfter).toBeUndefined();
+    expect(def.paragraphIndent).toBeUndefined();
   });
 });
 
@@ -273,6 +290,7 @@ describe('Custom Styles — OOXML Generation', () => {
         fontStyle: 'bold-center',
         spacingBefore: 12,
         spacingAfter: 6,
+        paragraphIndent: 0.3,
       },
     };
     const xml = getStylesXmlWithCustom(customStyles);
@@ -281,9 +299,20 @@ describe('Custom Styles — OOXML Generation', () => {
     expect(block).toContain('w:before="240"');   // 12 * 20
     expect(block).toContain('w:after="120"');     // 6 * 20
     expect(block).toContain('<w:jc w:val="center"/>');
+    expect(block).toContain('w:firstLine="432"');
     expect(block).toContain('w:ascii="Georgia"');
     expect(block).toContain('w:val="28"');        // 14 * 2
     expect(block).toContain('<w:b/>');
+  });
+
+  it('paragraph-indent: none emits explicit zero first-line indent', () => {
+    const customStyles: Record<string, CustomStyleDef> = {
+      caption: { paragraphIndent: 'none' },
+    };
+    const xml = getStylesXmlWithCustom(customStyles);
+    const block = extractStyleBlock(xml, 'MsCustomCaption');
+    expect(block).not.toBeNull();
+    expect(block).toContain('w:firstLine="0"');
   });
 
   it('fontStyle: "normal" → no style flags', () => {
@@ -426,6 +455,7 @@ describe('Custom Styles — Round-Trip', () => {
       '    font-style: bold-italic-center',
       '    spacing-before: 12',
       '    spacing-after: 6',
+      '    paragraph-indent: 0.3',
       '---',
       '',
       '<!-- style: pullquote -->',
@@ -447,11 +477,12 @@ describe('Custom Styles — Round-Trip', () => {
     expect(def.fontStyle).toContain('center');
     expect(def.spacingBefore).toBe(12);
     expect(def.spacingAfter).toBe(6);
+    expect(def.paragraphIndent).toBe(0.3);
   });
 
   it('frontmatter styles deep-equal after round-trip', async () => {
     const originalStyles: Record<string, CustomStyleDef> = {
-      sidebar: { font: 'Helvetica', fontSize: 10, spacingBefore: 8, spacingAfter: 4 },
+      sidebar: { font: 'Helvetica', fontSize: 10, spacingBefore: 8, spacingAfter: 4, paragraphIndent: 'none' },
     };
     const md = [
       serializeFrontmatter({ styles: originalStyles }),
@@ -467,6 +498,35 @@ describe('Custom Styles — Round-Trip', () => {
     const { metadata } = parseFrontmatter(result.markdown);
     expect(metadata.styles).toBeDefined();
     expect(metadata.styles!['sidebar']).toEqual(originalStyles['sidebar']);
+  });
+
+  it('falls back to styles.xml custom style extraction when custom properties are absent', async () => {
+    const md = [
+      '---',
+      'styles:',
+      '  pullquote:',
+      '    font: Georgia',
+      '    paragraph-indent: 0.3',
+      '---',
+      '',
+      '<!-- style: pullquote -->',
+      '',
+      'Styled text.',
+      '',
+      '<!-- /style -->',
+    ].join('\n');
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    zip.remove('docProps/custom.xml');
+    const stripped = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+
+    const result = await convertDocx(stripped);
+    const { metadata } = parseFrontmatter(result.markdown);
+    expect(metadata.styles).toBeDefined();
+    expect(metadata.styles!['pullquote']).toBeDefined();
+    expect(metadata.styles!['pullquote'].font).toBe('Georgia');
+    expect(metadata.styles!['pullquote'].paragraphIndent).toBe(0.3);
   });
 });
 
@@ -485,6 +545,7 @@ describe('Custom Styles — Preview Plugin', () => {
       '    font-style: bold-italic',
       '    spacing-before: 12',
       '    spacing-after: 6',
+      '    paragraph-indent: 0.3',
       '---',
       '',
       'Hello',
@@ -497,6 +558,7 @@ describe('Custom Styles — Preview Plugin', () => {
     expect(html).toContain('font-style: italic');
     expect(html).toContain('margin-top: 12pt');
     expect(html).toContain('margin-bottom: 6pt');
+    expect(html).toContain('text-indent: 0.3in');
   });
 
   it('generates custom style CSS without headerFontStyle', () => {
@@ -516,6 +578,20 @@ describe('Custom Styles — Preview Plugin', () => {
     expect(html).toContain('font-family: "Georgia"');
     expect(html).toContain('font-size: 14pt');
     expect(html).toContain('margin-top: 12pt');
+  });
+
+  it('generates zero text-indent for paragraph-indent: none', () => {
+    const md = [
+      '---',
+      'styles:',
+      '  caption:',
+      '    paragraph-indent: none',
+      '---',
+      '',
+      'Hello',
+    ].join('\n');
+    const html = renderWithPlugin(md, 'github');
+    expect(html).toContain('text-indent: 0');
   });
 
   it('wraps style block in div with correct class', () => {

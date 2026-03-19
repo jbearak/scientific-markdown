@@ -34,6 +34,7 @@ export interface CustomStyleDef {
   fontStyle?: string;      // normalized: bold-italic-...-center
   spacingBefore?: number;  // points
   spacingAfter?: number;   // points
+  paragraphIndent?: number | 'none'; // inches; 'none' = explicit zero first-line indent
 }
 
 /** Parse a value that may be a YAML inline array `[v1, v2, ...]` or bare comma-separated values. */
@@ -253,6 +254,16 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
             case 'spacing-after': {
               const n = parseFloat(innerVal);
               if (isFinite(n) && n >= 0) def.spacingAfter = n;
+              break;
+            }
+            case 'paragraph-indent': {
+              const lower = innerVal.toLowerCase();
+              if (lower === 'none') {
+                def.paragraphIndent = 'none';
+              } else {
+                const n = parseFloat(innerVal);
+                if (isFinite(n) && n >= 0) def.paragraphIndent = n;
+              }
               break;
             }
           }
@@ -505,6 +516,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
         if (def.fontStyle) lines.push('    font-style: ' + def.fontStyle);
         if (def.spacingBefore !== undefined) lines.push('    spacing-before: ' + def.spacingBefore);
         if (def.spacingAfter !== undefined) lines.push('    spacing-after: ' + def.spacingAfter);
+        if (def.paragraphIndent !== undefined) lines.push('    paragraph-indent: ' + def.paragraphIndent);
       }
     },
     'breaks': () => { if (metadata.breaks !== undefined) lines.push('breaks: ' + metadata.breaks); },
