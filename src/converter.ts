@@ -1215,6 +1215,8 @@ export async function extractCustomStyles(data: Uint8Array | JSZip): Promise<Rec
       if (typeof d.fontStyle === 'string') styleDef.fontStyle = d.fontStyle;
       if (typeof d.spacingBefore === 'number') styleDef.spacingBefore = d.spacingBefore;
       if (typeof d.spacingAfter === 'number') styleDef.spacingAfter = d.spacingAfter;
+      if (d.paragraphIndent === 'none') styleDef.paragraphIndent = 'none';
+      else if (typeof d.paragraphIndent === 'number') styleDef.paragraphIndent = d.paragraphIndent;
       result[name] = styleDef;
     }
     return Object.keys(result).length > 0 ? result : null;
@@ -5905,6 +5907,11 @@ function extractFontOverridesFromStyles(stylesXml: string, opts?: { explicitTabl
       if (beforeMatch) def.spacingBefore = parseInt(beforeMatch[1], 10) / 20;
       const afterMatch = csPpr.match(/w:after="(\d+)"/);
       if (afterMatch) def.spacingAfter = parseInt(afterMatch[1], 10) / 20;
+      const firstLineMatch = csPpr.match(/w:firstLine="(\d+)"/);
+      if (firstLineMatch) {
+        const firstLineTwips = parseInt(firstLineMatch[1], 10);
+        def.paragraphIndent = firstLineTwips === 0 ? 'none' : firstLineTwips / 1440;
+      }
     }
     extractedCustomStyles[styleName] = def;
     csSearchPos = styleEnd + 10;
