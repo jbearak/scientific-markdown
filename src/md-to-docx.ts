@@ -1531,12 +1531,16 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false): 
       target++;
     }
     if (target < result.length && result[target].type === 'paragraph' && result[target].runs.length > 0) {
-      result[target].indentOverride = override;
+      if (result[target].indentOverride === undefined) {
+        result[target].indentOverride = override;
+      }
       result.splice(i, 1);
     } else if (target < result.length && result[target].type === 'list_item') {
       // Apply to all consecutive list items in this list block
       for (let j = target; j < result.length && result[j].type === 'list_item'; j++) {
-        result[j].indentOverride = override;
+        if (result[j].indentOverride === undefined) {
+          result[j].indentOverride = override;
+        }
       }
       result.splice(i, 1);
     }
@@ -2745,6 +2749,7 @@ export interface DocxGenState {
   footnoteCrossRefLabels: Set<string>; // footnote labels that have 2+ references (need bookmarks + cross-ref fields)
   nextBookmarkId: number; // counter for unique bookmark IDs within footnotes/endnotes XML
   firstLineIndentTwips?: number;   // undefined = no indent mode
+  nonSingleSpacing: boolean;       // true when line-spacing is explicitly non-single (controls inter-paragraph spacing removal)
   afterHeading: boolean;           // suppress indent on first para after heading
   indentOverrides: Map<number, 'indent' | 'no-indent'>; // body paragraph index → override
   bodyParagraphIndex: number;      // counter for body paragraphs (for indent override tracking)
@@ -3354,7 +3359,12 @@ function applyLineSpacingToTemplate(xml: string, lineSpacingFm: string | number 
       // Insert spacing into pPr or add pPr
       const pPrMatch = /(<w:pPr\b[^>]*>)([\s\S]*?)(<\/w:pPr>)/.exec(inner);
       if (pPrMatch) {
-        inner = inner.slice(0, pPrMatch.index) + pPrMatch[1] + newSpacing + pPrMatch[2] + pPrMatch[3] + inner.slice(pPrMatch.index + pPrMatch[0].length);
+        // Insert after pBdr if present to maintain required pBdr → spacing → ind order (dirty-flag invariant)
+        const pBdrEnd = /<\/w:pBdr>/.exec(pPrMatch[2]);
+        const insertContent = pBdrEnd
+          ? pPrMatch[2].slice(0, pBdrEnd.index + pBdrEnd[0].length) + newSpacing + pPrMatch[2].slice(pBdrEnd.index + pBdrEnd[0].length)
+          : newSpacing + pPrMatch[2];
+        inner = inner.slice(0, pPrMatch.index) + pPrMatch[1] + insertContent + pPrMatch[3] + inner.slice(pPrMatch.index + pPrMatch[0].length);
       } else {
         inner = '<w:pPr>' + newSpacing + '</w:pPr>' + inner;
       }
@@ -4944,7 +4954,9 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
 
   // Apply custom style when inside a <!-- style: X --> block (only for plain paragraphs)
   if (token.type === 'paragraph' && state.activeCustomStyle) {
-    pPr = '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/></w:pPr>';
+    const twips = state.firstLineIndentTwips || 720;
+    const indXml = token.indentOverride === 'indent' ? '<w:ind w:firstLine="' + twips + '"/>' : '';
+    pPr = '<w:pPr><w:pStyle w:val="' + customStyleId(state.activeCustomStyle) + '"/>' + indXml + '</w:pPr>';
   }
 
   switch (token.type) {
@@ -5797,7 +5809,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       }
       state.tableIndex++;
     } else {
-      state.afterHeading = !!(prevToken?.type === 'heading');
+      state.afterHeading = prevToken?.type === 'heading' || (!prevToken && state.afterHeading);
       // Track body paragraph index for indent override round-trip
       if (token.type === 'paragraph' && token.runs.length > 0 && !token.runs.every(r => r.type === 'html_comment')) {
         if (token.indentOverride) {
@@ -6092,6 +6104,7 @@ export async function convertMdToDocx(
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
+    nonSingleSpacing: false,
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
@@ -6111,6 +6124,7 @@ export async function convertMdToDocx(
     } else if (isNonSingle) {
       state.firstLineIndentTwips = 720; // default 0.5 inch
     }
+    state.nonSingleSpacing = isNonSingle;
   }
 
   // Pre-scan all tokens (main document + footnotes) for citation keys so
@@ -6337,15 +6351,15 @@ export async function convertMdToDocx(
       fontOverrides,
       frontmatter.styles
     );
-    mutated = applyLineSpacingToTemplate(mutated, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent);
+    mutated = applyLineSpacingToTemplate(mutated, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent);
     mutated = applyAlertColorsToTemplate(mutated, effectiveColors);
     zip.file('word/styles.xml', mutated);
   } else if (templateParts?.has('word/styles.xml')) {
     let decoded = new TextDecoder('utf-8').decode(templateParts.get('word/styles.xml')!);
-    decoded = applyLineSpacingToTemplate(decoded, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent);
+    decoded = applyLineSpacingToTemplate(decoded, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent);
     zip.file('word/styles.xml', applyAlertColorsToTemplate(decoded, effectiveColors));
   } else {
-    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles, frontmatter.lineSpacing, !!state.firstLineIndentTwips, frontmatter.bibliographyHangingIndent));
+    zip.file('word/styles.xml', stylesXml(fontOverrides, codeBlockConfig, effectiveColors, frontmatter.styles, frontmatter.lineSpacing, state.nonSingleSpacing, frontmatter.bibliographyHangingIndent));
   }
 
   // Always use generated settings.xml to guarantee compatibilityMode >= 15

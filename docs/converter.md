@@ -231,6 +231,9 @@ bibliography: shared/references
 | `notes` | Controls footnote/endnote generation: `footnotes` (default) or `endnotes`. Auto-detected on DOCX import. |
 | `timezone` | Local timezone offset (e.g., `+05:00`, `-05:00`). Auto-generated on DOCX import for idempotent date roundtripping. |
 | `bibliography` | Path to a `.bib` file (`.bib` extension optional). Aliases: `bib`, `bibtex`. See [Specification](specification.md#bibtex-companion-file). |
+| `line-spacing` | Line spacing for body text: `single`, `1.5`, `double`, or a numeric multiplier. See [Specification](specification.md#line-spacing-and-paragraph-indent). |
+| `paragraph-indent` | First-line paragraph indentation in inches (e.g., `0.5`). Set to `none` to disable. See [Specification](specification.md#line-spacing-and-paragraph-indent). |
+| `bibliography-hanging-indent` | When `true` (default), bibliography entries use a hanging indent. Set to `false` to disable. |
 
 > **`zotero-notes` vs `notes`:** These fields are independent. `zotero-notes` controls how Zotero citations render (in-text, footnotes, or endnotes) and is stored in `ZOTERO_PREF_*` document properties for Zotero to read. `notes` controls whether the document's own footnote/endnote references are placed at the bottom of each page (footnotes) or collected at the end (endnotes). For example, a document can use `zotero-notes: in-text` for citations while using `notes: endnotes` for its own notes.
 

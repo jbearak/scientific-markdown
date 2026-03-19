@@ -682,12 +682,17 @@ export function generateBibliographyXml(
     }
   }
 
-  // Wrap in field code
-  return '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+  // Wrap in field code.
+  // Field-begin and field-end wrapper paragraphs use single spacing with zero
+  // before/after to prevent them from rendering as visible blank lines when the
+  // document uses non-single line spacing (the instrText is hidden in normal
+  // view but the paragraph break still occupies vertical space).
+  const fieldPPr = '<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>';
+  return '<w:p>' + fieldPPr + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
     '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_BIBL ' + escapeXml(biblPayload) + ' CSL_BIBLIOGRAPHY </w:instrText></w:r>' +
     '<w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>' +
     bibParagraphs +
-    '<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>';
+    '<w:p>' + fieldPPr + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>';
 }
 
 export function generateMathXml(latex: string, display: boolean): string {

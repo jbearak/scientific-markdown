@@ -1486,11 +1486,12 @@ export async function extractIndentOverrides(data: Uint8Array | JSZip): Promise<
   const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_INDENT_OVERRIDES');
   if (!mappingJson) return null;
   try {
-    const obj = JSON.parse(mappingJson) as Record<string, string>;
+    const obj = JSON.parse(mappingJson);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
     const map = new Map<number, string>();
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
       const idx = parseInt(k, 10);
-      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v as string);
     }
     return map.size > 0 ? map : null;
   } catch { return null; }
@@ -1500,11 +1501,12 @@ export async function extractListIndentOverrides(data: Uint8Array | JSZip): Prom
   const mappingJson = await extractChunkedCustomProp(data, 'MANUSCRIPT_LIST_INDENT_OVERRIDES');
   if (!mappingJson) return null;
   try {
-    const obj = JSON.parse(mappingJson) as Record<string, string>;
+    const obj = JSON.parse(mappingJson);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
     const map = new Map<number, string>();
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
       const idx = parseInt(k, 10);
-      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v);
+      if (!isNaN(idx) && (v === 'indent' || v === 'no-indent')) map.set(idx, v as string);
     }
     return map.size > 0 ? map : null;
   } catch { return null; }

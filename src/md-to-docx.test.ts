@@ -91,6 +91,7 @@ function makeState(): DocxGenState {
     noteNextRId: 1,
     footnoteCrossRefLabels: new Set(),
     nextBookmarkId: 0,
+    nonSingleSpacing: false,
     afterHeading: false,
     indentOverrides: new Map(),
     bodyParagraphIndex: 0,
@@ -3680,6 +3681,38 @@ describe('line spacing round-trip', () => {
     const { convertDocx } = await import('./converter');
     const result = await convertDocx(docx);
     expect(result.markdown).toContain('paragraph-indent: 0.3');
+  });
+
+  it('paragraph-indent alone does not remove inter-paragraph spacing', async () => {
+    const md = '---\nparagraph-indent: 0.5\n---\n\nFirst paragraph.\n\nSecond paragraph.\n';
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const styles = await zip.file('word/styles.xml')!.async('text');
+    const normalMatch = styles.match(/<w:style[^>]*w:styleId="Normal"[^>]*>([\s\S]*?)<\/w:style>/);
+    expect(normalMatch).not.toBeNull();
+    // Normal style should have after="200" (default spacing), NOT after="0"
+    expect(normalMatch![1]).toContain('w:after="200"');
+  });
+
+  it('title suppresses first-line indent on next paragraph', async () => {
+    const md = '---\ntitle: My Title\nline-spacing: double\n---\n\nFirst paragraph after title.\n\nSecond paragraph.\n';
+    const { docx } = await convertMdToDocx(md);
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(docx);
+    const doc = await zip.file('word/document.xml')!.async('text');
+    // Split on <w:p to get all paragraphs (some have attributes like w14:paraId)
+    const paras = doc.split(/<w:p[\s>]/).slice(1);
+    // Title paragraph has pStyle=Title
+    const titleIdx = paras.findIndex(p => p.includes('w:pStyle w:val="Title"'));
+    expect(titleIdx).toBeGreaterThanOrEqual(0);
+    const firstBodyPara = paras[titleIdx + 1];
+    expect(firstBodyPara).toContain('First paragraph after title');
+    expect(firstBodyPara).not.toContain('w:firstLine');
+    // Second body paragraph should have the indent
+    const secondBodyPara = paras[titleIdx + 2];
+    expect(secondBodyPara).toContain('Second paragraph');
+    expect(secondBodyPara).toContain('w:firstLine');
   });
 });
 
