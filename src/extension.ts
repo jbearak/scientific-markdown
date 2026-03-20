@@ -926,7 +926,9 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 
 	const markdownWatcher = vscode.workspace.createFileSystemWatcher('**/*.md');
 	const bibWatcher = vscode.workspace.createFileSystemWatcher('**/*.bib');
-	languageClientDisposables = [markdownWatcher, bibWatcher];
+	const cslCacheWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(cslCacheDir), '*.csl'));
+	const cslWorkspaceWatcher = vscode.workspace.createFileSystemWatcher('**/*.csl');
+	languageClientDisposables = [markdownWatcher, bibWatcher, cslCacheWatcher, cslWorkspaceWatcher];
 
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [
@@ -938,7 +940,7 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 		],
 		initializationOptions: getLspSettings(),
 		synchronize: {
-			fileEvents: [markdownWatcher, bibWatcher],
+			fileEvents: [markdownWatcher, bibWatcher, cslCacheWatcher, cslWorkspaceWatcher],
 		},
 		markdown: {
 			isTrusted: {

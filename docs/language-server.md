@@ -37,6 +37,53 @@ When finding references from a `.bib` file, paired markdown files are discovered
 
 No workspace directory tree scanning is performed.
 
+## Frontmatter Intelligence
+
+The language server provides autocomplete, hover, and diagnostics inside YAML frontmatter blocks. See [Frontmatter reference](specification.md#yaml-frontmatter) for the full list of recognized keys.
+
+### Key Autocomplete
+
+Typing in a frontmatter block offers all recognized keys, filtering out keys already declared in the block.
+
+### Value Autocomplete
+
+Known keys offer contextual value completions:
+
+- **Booleans** — `true` / `false`
+- **Enums** — accepted values for the key (e.g., `single`, `1.5`, `double` for `line-spacing`)
+- **Fonts** — platform-appropriate font suggestions (monospace fonts for `code-font`)
+- **CSL styles** — bundled style names plus any previously downloaded styles
+- **Font styles** — combinable parts like `bold`, `italic`, `small-caps`
+
+### Hover
+
+Hovering on a recognized key shows its description, accepted values, and aliases.
+
+### Diagnostics
+
+| Severity | Condition |
+|----------|-----------|
+| Error | Invalid value for a known key (e.g., `line-spacing: triple`) |
+| Warning | Duplicate key (except `title`, which allows repeats) |
+| Warning | CSL style not found locally (the converter will download it automatically) |
+| Warning | Bibliography file not found |
+| Information | Unknown key closely resembling a known one ("Did you mean `font-size`?") |
+| Information | Case mismatch (`Title` → "Frontmatter keys are case-sensitive. Did you mean `title`?") |
+
+Unrecognized keys that do not closely resemble a known key are silently accepted — Manuscript Markdown does not flag unknown frontmatter keys, since YAML frontmatter is shared by many tools.
+
+### `styles:` Block
+
+Completions, hover, and diagnostics also work inside the `styles:` nested block for sub-properties: `font`, `font-size`, `font-style`, `spacing-before`, `spacing-after`, `paragraph-indent`.
+
+### CSL Auto-Download
+
+Non-bundled CSL styles are downloaded automatically by the converter when you run it. Once downloaded, the style appears in the autocomplete list alongside bundled ones.
+
+### Case Sensitivity
+
+Frontmatter keys are case-sensitive — `Title` is not the same as `title`. The language server flags case mismatches as informational diagnostics.
+
 ## Configuration
 
 | Setting | Type | Default | Description |

@@ -33,7 +33,7 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 |-------|-------------|
 | `title` | Document title. Multiple `title:` entries create multi-paragraph titles. |
 | `author` | Document author. Written as `dc:creator` in Document Properties on DOCX export. |
-| `csl` | CSL style short name (e.g., `apa`, `chicago-author-date`) or absolute path to a `.csl` file. Controls citation and bibliography formatting. |
+| `csl` | CSL style short name (e.g., `apa`, `chicago-author-date`) or absolute path to a `.csl` file. Controls citation and bibliography formatting. Non-bundled styles are downloaded automatically by the converter on first use. |
 | `locale` | Locale override for citation formatting (e.g., `en-US`, `en-GB`). Defaults to the style's own locale. |
 | `zotero-notes` | Zotero note type: `in-text` (default), `footnotes`, or `endnotes`. Legacy alias: `note-type`. |
 | `notes` | Controls footnote/endnote OOXML generation: `footnotes` (default) or `endnotes`. See [Footnotes](#footnotes). |
@@ -58,6 +58,8 @@ The frontmatter may also include citation-related fields (`csl`, `locale`, `zote
 | `code-block-inset` | Border width for code blocks in shading mode, in eighths of a point (`w:sz`). A positive integer. Default: `48`. Does not affect inline code. |
 | `blockquote-style` | Word paragraph style for blockquotes: `Quote`, `IntenseQuote`, or `GitHub` (gray left border bar). Case-insensitive. Default: `GitHub`. Overrides the VS Code setting. |
 | `pipe-table-max-line-width` | Maximum line width for pipe tables in DOCX→MD conversion. Tables wider than this fall back to HTML. `0` disables pipe tables entirely. Default: `120`. Overrides the VS Code `pipeTableMaxLineWidth` setting but is itself overridden by the CLI `--pipe-table-max-line-width` flag. |
+| `grid-table-max-line-width` | Maximum source line width for grid tables. Tables wider than this fall back to HTML. Default: inherited from `pipe-table-max-line-width`. |
+| `colors` | Named color scheme for syntax-highlighted code blocks: `github` or `guttmacher`. |
 | `breaks` | When `true`, bare newlines within a paragraph are treated as hard line breaks (`<w:br/>`) in DOCX output. When `false` (default), bare newlines are soft breaks rendered as spaces — use a trailing `\` for an explicit hard line break. See [Line Breaks](#line-breaks). |
 | `line-spacing` | Line spacing for body text: `single`, `1.5`, `double`, or a numeric multiplier (e.g., `1.8`). When set to a non-single value (other than the default 1.15), inter-paragraph spacing is removed and first-line paragraph indentation is automatically enabled (see [Line Spacing and Paragraph Indent](#line-spacing-and-paragraph-indent)). |
 | `paragraph-indent` | First-line paragraph indentation in inches (e.g., `0.5`, `0.3`). Auto-enabled at 0.5 inches when `line-spacing` is non-single. Set to `none` to disable auto-indent while keeping line spacing. |
