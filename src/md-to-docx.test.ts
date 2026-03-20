@@ -3244,6 +3244,28 @@ describe('landscape sections', () => {
       expect(warnings.length).toBe(0);
     });
 
+    it('inline orientation comments do not warn or become sentinels', () => {
+      const warnings: string[] = [];
+      const md = 'Paragraph <!-- landscape --> text\n\nMore text <!-- /landscape -->';
+      const tokens = parseMd(md, warnings);
+      expect(warnings).toEqual([]);
+      expect(tokens.some(t => t.landscapeOpen || t.landscapeClose)).toBe(false);
+      expect(tokens[0].runs.some(r => r.type === 'html_comment' && r.text === '<!-- landscape -->')).toBe(true);
+      expect(tokens[1].runs.some(r => r.type === 'html_comment' && r.text === '<!-- /landscape -->')).toBe(true);
+    });
+
+    it('4-space and tab-indented orientation comments do not warn or become sentinels', () => {
+      const warnings: string[] = [];
+      const md = '    <!-- landscape -->\n\n\t<!-- /landscape -->';
+      const tokens = parseMd(md, warnings);
+      expect(warnings).toEqual([]);
+      expect(tokens.some(t => t.landscapeOpen || t.landscapeClose)).toBe(false);
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0].type).toBe('code_block');
+      expect(tokens[0].runs[0].text).toContain('<!-- landscape -->');
+      expect(tokens[0].runs[0].text).toContain('<!-- /landscape -->');
+    });
+
     it('cross-type nesting (portrait inside landscape) closes landscape and opens portrait', () => {
       const warnings: string[] = [];
       const md = '<!-- landscape -->\n\nContent\n\n<!-- portrait -->\n\nMore\n\n<!-- /portrait -->';
@@ -3515,6 +3537,16 @@ describe('portrait sections', () => {
       const md = '```\n<!-- portrait -->\n```';
       parseMd(md, warnings);
       expect(warnings.length).toBe(0);
+    });
+
+    it('inline portrait comments do not warn or become sentinels', () => {
+      const warnings: string[] = [];
+      const md = 'Paragraph <!-- portrait --> text\n\nMore text <!-- /portrait -->';
+      const tokens = parseMd(md, warnings);
+      expect(warnings).toEqual([]);
+      expect(tokens.some(t => t.portraitOpen || t.portraitClose)).toBe(false);
+      expect(tokens[0].runs.some(r => r.type === 'html_comment' && r.text === '<!-- portrait -->')).toBe(true);
+      expect(tokens[1].runs.some(r => r.type === 'html_comment' && r.text === '<!-- /portrait -->')).toBe(true);
     });
 
     it('transfers <!-- table-orientation: portrait --> to table token', () => {
