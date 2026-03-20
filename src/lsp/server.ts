@@ -284,8 +284,10 @@ documents.onDidClose((event) => {
 
 connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 	let cslChanged = false;
+	let bibChanged = false;
 	for (const change of params.changes) {
 		if (isBibUri(change.uri)) {
+			bibChanged = true;
 			invalidateBibCache(change.uri);
 			const fsPath = uriToFsPath(change.uri);
 			if (fsPath) {
@@ -299,9 +301,10 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 			cslChanged = true;
 		}
 	}
-	// When a CSL file is added/changed (e.g. downloaded by the converter),
-	// revalidate all open markdown documents to clear stale CSL diagnostics.
-	if (cslChanged) {
+	// When a CSL or bib file is added/changed, revalidate all open markdown
+	// documents to clear stale frontmatter diagnostics (e.g. "Bibliography
+	// file not found" or CSL warnings).
+	if (cslChanged || bibChanged) {
 		for (const doc of documents.all()) {
 			if (isMarkdownUri(doc.uri, doc.languageId)) {
 				scheduleValidation(doc.uri);
@@ -332,7 +335,7 @@ connection.onCompletion(async (params: CompletionParams): Promise<CompletionItem
 		if (fmItems.length === 0) return [];
 		const isKey = fmLocation.kind === 'key' || fmLocation.kind === 'styles-key';
 		const replaceRange = isKey
-			? Range.create(doc.positionAt(fmLocation.keyStart), params.position)
+			? Range.create(doc.positionAt(fmLocation.keyStart), doc.positionAt(fmLocation.keyEnd))
 			: Range.create(doc.positionAt(fmLocation.valueStart), doc.positionAt(fmLocation.valueEnd));
 		const isCsl = fmItems.some(i => i.isIncomplete);
 		const items: CompletionItem[] = fmItems.map(item => ({
@@ -607,6 +610,7 @@ async function validateFrontmatterDiags(doc: TextDocument): Promise<void> {
 			},
 			sourceDir,
 			cslCacheDirs: settings.cslCacheDirs,
+			resolveBibliographyPath: () => resolveBibliographyPathAsync(doc.uri, text, workspaceRootPaths),
 		});
 
 		frontmatterDiagnostics.set(doc.uri, rawDiags.map(d => ({

@@ -513,6 +513,12 @@ describe('validateFrontmatter', () => {
 		expect(diags).toEqual([]);
 	});
 
+	test('bare comma-separated font-style array passes', async () => {
+		const text = '---\nheader-font-style: bold-italic, bold, normal\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
 	test('invalid line-spacing produces error', async () => {
 		const text = '---\nline-spacing: triple\n---\n';
 		const diags = await validateFrontmatter(text, stubCallbacks);

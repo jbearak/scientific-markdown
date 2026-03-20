@@ -965,6 +965,7 @@ export interface FrontmatterValidationCallbacks {
 	cslSuggestions: (prefix: string) => string[];
 	sourceDir?: string;
 	cslCacheDirs?: string[];
+	resolveBibliographyPath?: () => Promise<string | undefined>;
 }
 
 export async function validateFrontmatter(
@@ -1127,7 +1128,7 @@ function validateValue(def: FieldDef, line: FmLine): FrontmatterDiagnostic | und
 		case 'font-style': {
 			if (def.arrayField) {
 				// Validate each element of inline array
-				const parts = value.startsWith('[') ? value.slice(1, value.endsWith(']') ? -1 : undefined).split(',') : [value];
+				const parts = value.startsWith('[') ? value.slice(1, value.endsWith(']') ? -1 : undefined).split(',') : value.split(',');
 				for (const part of parts) {
 					const trimmed = part.trim();
 					if (trimmed && !normalizeFontStyle(trimmed)) {
@@ -1227,9 +1228,14 @@ async function validateBibPath(
 		let bibPath = line.rawValue;
 		if (!bibPath.endsWith('.bib')) bibPath = bibPath + '.bib';
 
-		const { resolve } = await import('path');
-		const absPath = resolve(callbacks.sourceDir, bibPath);
-		const exists = await callbacks.fileExists(absPath);
+		let exists: boolean;
+		if (callbacks.resolveBibliographyPath) {
+			exists = !!(await callbacks.resolveBibliographyPath());
+		} else {
+			const { resolve } = await import('path');
+			const absPath = resolve(callbacks.sourceDir, bibPath);
+			exists = await callbacks.fileExists(absPath);
+		}
 		if (!exists) {
 			diagnostics.push({
 				message: 'Bibliography file not found: `' + bibPath + '`.',
