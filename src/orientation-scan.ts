@@ -24,6 +24,29 @@ export interface OrientationDiagnostic {
  * Only one orientation can be active at a time — opening `<!-- portrait -->`
  * while `<!-- landscape -->` is active (or vice versa) is reported as nested.
  */
+/**
+ * Returns true when the match is on its own line (possibly with leading whitespace)
+ * and NOT indented 4+ spaces or a tab (which markdown-it treats as a code block).
+ * Inline uses (other content on the same line) return false.
+ */
+function isStandaloneDirective(text: string, matchStart: number, matchEnd: number): boolean {
+  // Find line boundaries
+  let lineStart = matchStart;
+  while (lineStart > 0 && text[lineStart - 1] !== '\n') lineStart--;
+  let lineEnd = matchEnd;
+  while (lineEnd < text.length && text[lineEnd] !== '\n') lineEnd++;
+
+  // Check for non-whitespace before or after the match on the same line
+  const before = text.slice(lineStart, matchStart);
+  const after = text.slice(matchEnd, lineEnd);
+  if (/\S/.test(before) || /\S/.test(after)) return false;
+
+  // Reject indented code blocks: 4+ spaces or tab at start of line
+  if (/^(\t|    )/.test(before)) return false;
+
+  return true;
+}
+
 export function scanOrientationDirectives(text: string, codeRegions?: CodeRegion[]): OrientationDiagnostic[] {
   const regions = codeRegions ?? computeCodeRegions(text);
   const directiveRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
@@ -33,6 +56,7 @@ export function scanOrientationDirectives(text: string, codeRegions?: CodeRegion
   let m: RegExpExecArray | null;
   while ((m = directiveRe.exec(text)) !== null) {
     if (isInsideCodeRegion(m.index, regions)) continue;
+    if (!isStandaloneDirective(text, m.index, m.index + m[0].length)) continue;
     const isClose = m[1] === '/';
     const name = m[2].toLowerCase();
     const start = m.index;

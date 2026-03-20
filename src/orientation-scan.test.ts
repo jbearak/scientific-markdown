@@ -68,6 +68,35 @@ describe('scanOrientationDirectives', () => {
     expect(scanOrientationDirectives(text)).toEqual([]);
   });
 
+  it('ignores inline directives (non-standalone)', () => {
+    const text = 'Text <!-- landscape --> more text';
+    expect(scanOrientationDirectives(text)).toEqual([]);
+  });
+
+  it('ignores 4-space indented directives (code block)', () => {
+    const text = '    <!-- landscape -->';
+    expect(scanOrientationDirectives(text)).toEqual([]);
+  });
+
+  it('ignores tab-indented directives (code block)', () => {
+    const text = '\t<!-- landscape -->';
+    expect(scanOrientationDirectives(text)).toEqual([]);
+  });
+
+  it('still detects 3-space indented directive', () => {
+    const text = '   <!-- landscape -->';
+    const findings = scanOrientationDirectives(text);
+    expect(findings.length).toBe(1);
+    expect(findings[0].kind).toBe('unclosed');
+  });
+
+  it('still detects directive with trailing whitespace', () => {
+    const text = '<!-- landscape -->   ';
+    const findings = scanOrientationDirectives(text);
+    expect(findings.length).toBe(1);
+    expect(findings[0].kind).toBe('unclosed');
+  });
+
   it('enforces single active orientation', () => {
     // landscape open then portrait open — portrait is nested because landscape is active.
     // The scanner keeps the original opener (landscape), so /portrait is crossed
