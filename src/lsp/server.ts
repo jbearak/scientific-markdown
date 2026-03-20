@@ -71,9 +71,14 @@ import {
 	stripCriticMarkup,
 } from './comment-language';
 import { computeBibEntryRanges } from './bib-entry-ranges';
-import { getCslCompletionContext, getCslFieldInfo } from './csl-language';
 import { type Frontmatter, parseFrontmatter, maskFrontmatter } from '../frontmatter';
 import { BUNDLED_STYLE_LABELS, isCslAvailableAsync } from '../csl-loader';
+import {
+	getFrontmatterLocation,
+	getFrontmatterCompletionItems,
+	getFrontmatterHover,
+	validateFrontmatter as validateFrontmatterFields,
+} from './frontmatter-language';
 
 const connection = createConnection(ProposedFeatures.all);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
@@ -96,14 +101,20 @@ const bibCache = new Map<string, CachedBibData>();
 
 /** Per-source diagnostic maps so validators don't overwrite each other. */
 const citekeyDiagnostics = new Map<string, Diagnostic[]>();
-const cslDiagnostics = new Map<string, Diagnostic[]>();
+const frontmatterDiagnostics = new Map<string, Diagnostic[]>();
 const orientationDiagnostics = new Map<string, Diagnostic[]>();
+
+const severityMap: Record<string, DiagnosticSeverity> = {
+	'error': DiagnosticSeverity.Error,
+	'warning': DiagnosticSeverity.Warning,
+	'information': DiagnosticSeverity.Information,
+};
 
 function publishDiagnostics(uri: string): void {
 	const citekey = citekeyDiagnostics.get(uri) ?? [];
-	const csl = cslDiagnostics.get(uri) ?? [];
+	const frontmatter = frontmatterDiagnostics.get(uri) ?? [];
 	const orientation = orientationDiagnostics.get(uri) ?? [];
-	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...csl, ...orientation] });
+	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...frontmatter, ...orientation] });
 }
 
 interface OpenDocBibCache {
@@ -142,7 +153,7 @@ async function runValidationPipeline(doc: TextDocument): Promise<void> {
 		const { metadata } = parseFrontmatter(text);
 		await updateBibReverseMap(doc.uri, text, metadata);
 		await validateCitekeys(doc, metadata);
-		await validateCslField(doc);
+		await validateFrontmatterDiags(doc);
 		validateOrientationDirectives(doc);
 	} catch (error) {
 		connection.console.error(
@@ -265,13 +276,14 @@ documents.onDidClose((event) => {
 		}
 		removeBibReverseMapEntry(event.document.uri);
 		citekeyDiagnostics.delete(event.document.uri);
-		cslDiagnostics.delete(event.document.uri);
+		frontmatterDiagnostics.delete(event.document.uri);
 		orientationDiagnostics.delete(event.document.uri);
 		connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 	}
 });
 
 connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
+	let cslChanged = false;
 	for (const change of params.changes) {
 		if (isBibUri(change.uri)) {
 			invalidateBibCache(change.uri);
@@ -281,6 +293,18 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 				revalidateMarkdownDocsForBib(fsPath).catch(e =>
 					connection.console.error(`revalidateMarkdownDocsForBib error: ${e instanceof Error ? e.message : String(e)}`)
 				);
+			}
+		}
+		if (change.uri.toLowerCase().endsWith('.csl')) {
+			cslChanged = true;
+		}
+	}
+	// When a CSL file is added/changed (e.g. downloaded by the converter),
+	// revalidate all open markdown documents to clear stale CSL diagnostics.
+	if (cslChanged) {
+		for (const doc of documents.all()) {
+			if (isMarkdownUri(doc.uri, doc.languageId)) {
+				scheduleValidation(doc.uri);
 			}
 		}
 	}
@@ -300,70 +324,27 @@ connection.onCompletion(async (params: CompletionParams): Promise<CompletionItem
 	const text = doc.getText();
 	const offset = doc.offsetAt(params.position);
 
-	// Check for CSL completion context first
-	const cslContext = getCslCompletionContext(text, offset);
-	if (cslContext) {
-		const prefix = cslContext.prefix.toLowerCase();
-		const replaceRange = Range.create(
-			doc.positionAt(cslContext.valueStart),
-			doc.positionAt(cslContext.valueEnd)
-		);
-		const items: CompletionItem[] = [];
-		for (const [id, displayName] of BUNDLED_STYLE_LABELS) {
-			if (prefix && !id.toLowerCase().startsWith(prefix) &&
-				!displayName.toLowerCase().includes(prefix)) {
-				continue;
-			}
-			items.push({
-				label: id,
-				kind: CompletionItemKind.Value,
-				detail: displayName,
-				textEdit: {
-					range: replaceRange,
-					newText: id,
-				},
-				filterText: id,
-				sortText: id,
-			});
-		}
-		return { isIncomplete: items.length > 0, items };
-	}
-
-	// Frontmatter key completions
-	const fmEnd = text.indexOf('\n---', text.indexOf('---') + 3);
-	if (text.trimStart().startsWith('---') && fmEnd !== -1 && offset < fmEnd + 4) {
-		const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
-		const lineText = text.substring(lineStart, offset);
-		if (!lineText.includes(':')) {
-			const prefix = lineText.trim().toLowerCase();
-			const fmKeys: [string, string][] = [
-				['header-font', 'Heading font family (e.g., header-font: Georgia)'],
-				['header-font-size', 'Heading font sizes (e.g., header-font-size: [24, 20, 16])'],
-				['header-font-style', 'Heading font styles (e.g., header-font-style: bold-italic, bold-center, smallcaps)'],
-				['title-font', 'Title font family (e.g., title-font: Georgia)'],
-				['title-font-size', 'Title font sizes (e.g., title-font-size: [28, 24])'],
-				['title-font-style', 'Title font styles (e.g., title-font-style: bold)'],
-				['font', 'Body font family (e.g., font: Georgia)'],
-				['code-font', 'Code font family (e.g., code-font: Fira Code)'],
-				['font-size', 'Body font size in points (e.g., font-size: 12)'],
-				['code-font-size', 'Code font size in points (e.g., code-font-size: 10)'],
-				['styles', 'Custom named paragraph styles (nested YAML block)'],
-			];
-			const replaceRange = Range.create(doc.positionAt(lineStart + lineText.length - lineText.trimStart().length), params.position);
-			const items: CompletionItem[] = [];
-			for (const [key, detail] of fmKeys) {
-				if (prefix && !key.startsWith(prefix)) continue;
-				items.push({
-					label: key,
-					kind: CompletionItemKind.Property,
-					detail,
-					textEdit: { range: replaceRange, newText: key + ': ' },
-					filterText: key,
-					sortText: key,
-				});
-			}
-			if (items.length > 0) return items;
-		}
+	// Frontmatter completions (keys, values, CSL, styles sub-props)
+	const fmLocation = getFrontmatterLocation(text, offset);
+	if (fmLocation.inFrontmatter && fmLocation.kind !== 'outside') {
+		const cachedCslStyles = await getCachedCslStyleNames();
+		const fmItems = getFrontmatterCompletionItems(fmLocation, process.platform, cachedCslStyles);
+		if (fmItems.length === 0) return [];
+		const isKey = fmLocation.kind === 'key' || fmLocation.kind === 'styles-key';
+		const replaceRange = isKey
+			? Range.create(doc.positionAt(fmLocation.keyStart), params.position)
+			: Range.create(doc.positionAt(fmLocation.valueStart), doc.positionAt(fmLocation.valueEnd));
+		const isCsl = fmItems.some(i => i.isIncomplete);
+		const items: CompletionItem[] = fmItems.map(item => ({
+			label: item.label,
+			kind: item.kind === 'property' ? CompletionItemKind.Property : CompletionItemKind.Value,
+			detail: item.detail,
+			textEdit: { range: replaceRange, newText: item.insertText },
+			filterText: item.filterText,
+			sortText: item.sortText,
+		}));
+		if (isCsl) return { isIncomplete: true, items };
+		return items;
 	}
 
 	const completionContext = getCompletionContextAtOffset(text, offset);
@@ -455,6 +436,25 @@ connection.onReferences(async (params: ReferenceParams): Promise<Location[]> => 
 });
 
 connection.onHover(async (params: HoverParams): Promise<Hover | null> => {
+	// 0. Try frontmatter hover
+	if (isMarkdownUri(params.textDocument.uri, documents.get(params.textDocument.uri)?.languageId)) {
+		const fmDoc = await getTextDocument(params.textDocument.uri, 'markdown');
+		if (fmDoc) {
+			const fmText = fmDoc.getText();
+			const fmOffset = fmDoc.offsetAt(params.position);
+			const fmLocation = getFrontmatterLocation(fmText, fmOffset);
+			const fmHover = getFrontmatterHover(fmLocation);
+			if (fmHover) {
+				return {
+					contents: {
+						kind: MarkupKind.Markdown,
+						value: fmHover.markdown,
+					},
+				};
+			}
+		}
+	}
+
 	// 1. Try citekey hover
 	const symbol = await resolveSymbolAtPosition(params.textDocument.uri, params.position);
 	if (symbol?.bibPath) {
@@ -581,72 +581,63 @@ connection.onDocumentSymbol(async (params: DocumentSymbolParams): Promise<Docume
 documents.listen(connection);
 connection.listen();
 
-async function validateCslField(doc: TextDocument): Promise<void> {
+async function validateFrontmatterDiags(doc: TextDocument): Promise<void> {
 	try {
 		const text = doc.getText();
-		const fieldInfo = getCslFieldInfo(text);
-		if (!fieldInfo || !fieldInfo.value) {
-			cslDiagnostics.set(doc.uri, []);
-			publishDiagnostics(doc.uri);
-			return;
-		}
+		const fsPath = uriToFsPath(doc.uri);
+		const sourceDir = fsPath ? path.dirname(fsPath) : undefined;
 
-		const sourceDir = (() => {
-			const fsPath = uriToFsPath(doc.uri);
-			return fsPath ? path.dirname(fsPath) : undefined;
-		})();
-
-		const available = await isCslAvailableAsync(fieldInfo.value, {
-			cacheDirs: settings.cslCacheDirs,
-			sourceDir,
-		});
-
-		if (available) {
-			cslDiagnostics.set(doc.uri, []);
-			publishDiagnostics(doc.uri);
-			return;
-		}
-
-		// Build suggestion list from bundled styles matching the user's input
-		const maxSuggestions = 3;
-		const userValue = fieldInfo.value.toLowerCase();
-		const suggestions: string[] = [];
-		let totalMatches = 0;
-		if (userValue) {
-			for (const [id, displayName] of BUNDLED_STYLE_LABELS) {
-				if (id.toLowerCase().startsWith(userValue) || displayName.toLowerCase().includes(userValue)) {
-					totalMatches++;
-					if (suggestions.length < maxSuggestions) {
-						suggestions.push(id);
+		const maxCslSuggestions = 3;
+		const rawDiags = await validateFrontmatterFields(text, {
+			fileExists: async (p) => { try { await fsp.access(p); return true; } catch { return false; } },
+			isCslAvailable: (name, opts) => isCslAvailableAsync(name, opts),
+			cslSuggestions: (prefix) => {
+				const lower = prefix.toLowerCase();
+				const suggestions: string[] = [];
+				let totalMatches = 0;
+				if (lower) {
+					for (const [id, displayName] of BUNDLED_STYLE_LABELS) {
+						if (id.toLowerCase().startsWith(lower) || displayName.toLowerCase().includes(lower)) {
+							totalMatches++;
+							if (suggestions.length < maxCslSuggestions) suggestions.push(id);
+						}
 					}
 				}
-			}
-		}
-		let message = `CSL style "${fieldInfo.value}" not found.`;
-		const remaining = totalMatches - suggestions.length;
-		if (suggestions.length === 1 && remaining === 0) {
-			message += ` Did you mean \`${suggestions[0]}\`?`;
-		} else if (suggestions.length > 0) {
-			const quoted = suggestions.map(s => `\`${s}\``);
-			const hint = remaining > 0 ? `, and ${remaining} more` : '';
-			message += ` Did you mean ${quoted.join(', ')}${hint}?`;
-		}
+				return suggestions;
+			},
+			sourceDir,
+			cslCacheDirs: settings.cslCacheDirs,
+		});
 
-		const diagnostic: Diagnostic = {
-			severity: DiagnosticSeverity.Warning,
-			range: Range.create(
-				doc.positionAt(fieldInfo.valueStart),
-				doc.positionAt(fieldInfo.valueEnd)
-			),
-			message,
+		frontmatterDiagnostics.set(doc.uri, rawDiags.map(d => ({
+			severity: severityMap[d.severity] ?? DiagnosticSeverity.Warning,
+			range: Range.create(doc.positionAt(d.start), doc.positionAt(d.end)),
+			message: d.message,
 			source: 'manuscript-markdown',
-		};
-		cslDiagnostics.set(doc.uri, [diagnostic]);
+		})));
 		publishDiagnostics(doc.uri);
 	} catch (e) {
-		// Don't let validation errors crash the LSP connection
-		connection.console.error(`Error building CSL suggestions: ${e instanceof Error ? e.stack ?? e.message : e}`);
+		connection.console.error('Frontmatter validation error for ' + doc.uri + ': ' + (e instanceof Error ? e.stack ?? e.message : e));
 	}
+}
+
+async function getCachedCslStyleNames(): Promise<string[]> {
+	const dirs = settings.cslCacheDirs;
+	if (!dirs || dirs.length === 0) return [];
+	const names: string[] = [];
+	for (const dir of dirs) {
+		try {
+			const entries = await fsp.readdir(dir);
+			for (const entry of entries) {
+				if (entry.endsWith('.csl')) {
+					names.push(entry.slice(0, -4));
+				}
+			}
+		} catch {
+			// Directory may not exist yet
+		}
+	}
+	return names;
 }
 
 function validateOrientationDirectives(doc: TextDocument): void {

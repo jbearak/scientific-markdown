@@ -1,0 +1,706 @@
+import { describe, test, expect } from 'bun:test';
+import {
+	damerauLevenshtein,
+	findTypoSuggestions,
+	getFrontmatterLocation,
+	getFrontmatterCompletionItems,
+	getFrontmatterHover,
+	validateFrontmatter,
+	FRONTMATTER_SCHEMA,
+	STYLES_SUB_PROPS,
+	type FrontmatterValidationCallbacks,
+} from './frontmatter-language';
+
+// ---------------------------------------------------------------------------
+// Schema completeness
+// ---------------------------------------------------------------------------
+
+describe('schema completeness', () => {
+	// All canonical keys from parseFrontmatter's switch in frontmatter.ts
+	const EXPECTED_KEYS = [
+		'title', 'author', 'csl', 'locale', 'zotero-notes', 'notes', 'timezone',
+		'bibliography', 'font', 'code-font', 'font-size', 'code-font-size',
+		'header-font', 'header-font-size', 'header-font-style',
+		'title-font', 'title-font-size', 'title-font-style',
+		'table-font', 'table-font-size', 'table-col-widths', 'table-borders',
+		'code-background-color', 'code-font-color', 'code-block-inset',
+		'pipe-table-max-line-width', 'grid-table-max-line-width',
+		'blockquote-style', 'colors', 'styles', 'breaks',
+		'line-spacing', 'paragraph-indent', 'bibliography-hanging-indent',
+	];
+
+	test('schema covers all expected frontmatter keys', () => {
+		const schemaKeys = FRONTMATTER_SCHEMA.map(d => d.key);
+		for (const key of EXPECTED_KEYS) {
+			expect(schemaKeys).toContain(key);
+		}
+	});
+
+	test('no extra keys in schema beyond expected', () => {
+		const expectedSet = new Set(EXPECTED_KEYS);
+		for (const def of FRONTMATTER_SCHEMA) {
+			expect(expectedSet.has(def.key)).toBe(true);
+		}
+	});
+
+	test('styles sub-properties cover all 6 expected keys', () => {
+		const keys = STYLES_SUB_PROPS.map(d => d.key);
+		expect(keys).toEqual(['font', 'font-size', 'font-style', 'spacing-before', 'spacing-after', 'paragraph-indent']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Damerau-Levenshtein
+// ---------------------------------------------------------------------------
+
+describe('damerauLevenshtein', () => {
+	test('identical strings → 0', () => {
+		expect(damerauLevenshtein('font', 'font')).toBe(0);
+	});
+
+	test('empty vs non-empty', () => {
+		expect(damerauLevenshtein('', 'abc')).toBe(3);
+		expect(damerauLevenshtein('abc', '')).toBe(3);
+	});
+
+	test('both empty → 0', () => {
+		expect(damerauLevenshtein('', '')).toBe(0);
+	});
+
+	test('single substitution → 1', () => {
+		expect(damerauLevenshtein('font', 'fant')).toBe(1);
+	});
+
+	test('single insertion → 1', () => {
+		expect(damerauLevenshtein('fnt', 'font')).toBe(1);
+	});
+
+	test('single deletion → 1', () => {
+		expect(damerauLevenshtein('fontt', 'font')).toBe(1);
+	});
+
+	test('adjacent transposition → 1', () => {
+		expect(damerauLevenshtein('tabel', 'table')).toBe(1);
+		expect(damerauLevenshtein('fnot', 'font')).toBe(1);
+	});
+
+	test('single edit on long string → 1', () => {
+		expect(damerauLevenshtein('table-bordes', 'table-borders')).toBe(1);
+		expect(damerauLevenshtein('tble-borders', 'table-borders')).toBe(1);
+		expect(damerauLevenshtein('tableborders', 'table-borders')).toBe(1);
+	});
+
+	test('completely different strings', () => {
+		expect(damerauLevenshtein('abc', 'xyz')).toBe(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// findTypoSuggestions
+// ---------------------------------------------------------------------------
+
+describe('findTypoSuggestions', () => {
+	test('exact match returns empty (not a typo)', () => {
+		expect(findTypoSuggestions('font')).toEqual([]);
+	});
+
+	test('single-char typo for short key (<=5 chars)', () => {
+		expect(findTypoSuggestions('fontt')).toEqual(['font']);
+		expect(findTypoSuggestions('fon')).toEqual(['font']);
+	});
+
+	test('single-char transposition for short key', () => {
+		expect(findTypoSuggestions('fnot')).toEqual(['font']);
+	});
+
+	test('two-char typo rejected for short key', () => {
+		// 'fo' is distance 2 from 'font' — should not suggest (key length <=5)
+		const result = findTypoSuggestions('fo');
+		expect(result).not.toContain('font');
+	});
+
+	test('two-char typo accepted for long key', () => {
+		// 'tabel-borders' is distance 2 from 'table-borders'
+		expect(findTypoSuggestions('tabel-bordes')).toEqual(['table-borders']);
+	});
+
+	test('suggests based on alias proximity', () => {
+		// 'bib' is an alias of 'bibliography'; 'bip' is distance 1 from 'bib'
+		const result = findTypoSuggestions('bip');
+		expect(result).toContain('bibliography');
+	});
+
+	test('unknown key far from all known keys returns empty', () => {
+		expect(findTypoSuggestions('foobar')).toEqual([]);
+	});
+
+	test('multiple equidistant suggestions', () => {
+		// 'notes' is distance 1 from both... let's check
+		// 'nots' is distance 1 from 'notes'
+		const result = findTypoSuggestions('nots');
+		expect(result).toContain('notes');
+	});
+
+	test('case-insensitive matching', () => {
+		expect(findTypoSuggestions('FONTT')).toEqual(['font']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getFrontmatterLocation
+// ---------------------------------------------------------------------------
+
+describe('getFrontmatterLocation', () => {
+	test('returns outside when no frontmatter', () => {
+		const text = 'Just a document.';
+		const loc = getFrontmatterLocation(text, 5);
+		expect(loc.kind).toBe('outside');
+		expect(loc.inFrontmatter).toBe(false);
+	});
+
+	test('returns outside when offset is past frontmatter', () => {
+		const text = '---\nfont: Georgia\n---\n\nBody text.';
+		const loc = getFrontmatterLocation(text, text.indexOf('Body'));
+		expect(loc.kind).toBe('outside');
+	});
+
+	test('key position when cursor is on key name', () => {
+		const text = '---\nfont: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('font') + 2);
+		expect(loc.kind).toBe('key');
+		expect(loc.key).toBe('font');
+	});
+
+	test('value position when cursor is after colon', () => {
+		const text = '---\nfont: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('Georgia') + 3);
+		expect(loc.kind).toBe('value');
+		expect(loc.key).toBe('font');
+	});
+
+	test('collects all declared keys', () => {
+		const text = '---\nfont: Georgia\nfont-size: 12\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('font') + 2);
+		expect(loc.declaredKeys.has('font')).toBe(true);
+		expect(loc.declaredKeys.has('font-size')).toBe(true);
+	});
+
+	test('resolves aliases in declaredKeys', () => {
+		const text = '---\nbib: refs.bib\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('bib'));
+		expect(loc.declaredKeys.has('bibliography')).toBe(true);
+	});
+
+	test('handles empty line in frontmatter as key position', () => {
+		const text = '---\nfont: Georgia\n\n---\n';
+		const emptyLineOffset = text.indexOf('\n\n') + 1;
+		const loc = getFrontmatterLocation(text, emptyLineOffset);
+		expect(loc.kind).toBe('key');
+		expect(loc.inFrontmatter).toBe(true);
+	});
+
+	test('styles block: style name level', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('MyQuote'));
+		expect(loc.kind).toBe('styles-name');
+	});
+
+	test('styles block: sub-property key position', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('    font') + 4 + 2);
+		expect(loc.kind).toBe('styles-key');
+		expect(loc.key).toBe('font');
+	});
+
+	test('styles block: sub-property value position', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('Georgia') + 3);
+		expect(loc.kind).toBe('styles-value');
+		expect(loc.key).toBe('font');
+		expect(loc.styleName).toBe('MyQuote');
+	});
+
+	test('handles \\r\\n line endings', () => {
+		const text = '---\r\nfont: Georgia\r\n---\r\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('Georgia') + 3);
+		expect(loc.kind).toBe('value');
+		expect(loc.key).toBe('font');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getFrontmatterCompletionItems
+// ---------------------------------------------------------------------------
+
+describe('getFrontmatterCompletionItems', () => {
+	test('key completions include all schema keys minus already declared', () => {
+		const text = '---\nfont: Georgia\n\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('\n\n') + 1);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		// Should not include 'font' since it's already declared
+		expect(items.find(i => i.label === 'font')).toBeUndefined();
+		// Should include other keys
+		expect(items.find(i => i.label === 'font-size')).toBeDefined();
+		expect(items.find(i => i.label === 'title')).toBeDefined();
+	});
+
+	test('key completions filter by prefix', () => {
+		const text = '---\ntab\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('tab') + 3);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		for (const item of items) {
+			expect(item.label.startsWith('tab')).toBe(true);
+		}
+		expect(items.length).toBeGreaterThan(0);
+	});
+
+	test('value completions for boolean field', () => {
+		const text = '---\nbreaks: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.map(i => i.label)).toEqual(['true', 'false']);
+	});
+
+	test('value completions for enum field', () => {
+		const text = '---\ntable-borders: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.map(i => i.label)).toEqual(['horizontal', 'solid', 'none']);
+	});
+
+	test('value completions for font field on macOS', () => {
+		const text = '---\nfont: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.some(i => i.label === 'Georgia')).toBe(true);
+		expect(items.some(i => i.label === 'Baskerville')).toBe(true);
+	});
+
+	test('value completions for font field on Windows', () => {
+		const text = '---\nfont: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'win32');
+		expect(items.some(i => i.label === 'Cambria')).toBe(true);
+		expect(items.some(i => i.label === 'Calibri')).toBe(true);
+	});
+
+	test('value completions for code-font offers mono fonts', () => {
+		const text = '---\ncode-font: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.some(i => i.label === 'Menlo')).toBe(true);
+		expect(items.some(i => i.label === 'Georgia')).toBe(false);
+	});
+
+	test('value completions for font-style field', () => {
+		const text = '---\nheader-font-style: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.some(i => i.label === 'bold')).toBe(true);
+		expect(items.some(i => i.label === 'bold-italic')).toBe(true);
+		expect(items.some(i => i.label === 'normal')).toBe(true);
+	});
+
+	test('value completions for line-spacing', () => {
+		const text = '---\nline-spacing: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.map(i => i.label)).toEqual(['single', '1.5', 'double']);
+	});
+
+	test('no value completions for free-text field', () => {
+		const text = '---\nauthor: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items).toEqual([]);
+	});
+
+	test('no value completions for number-only field', () => {
+		const text = '---\nfont-size: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items).toEqual([]);
+	});
+
+	test('styles sub-property key completions', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('    \n') + 4);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.some(i => i.label === 'font')).toBe(true);
+		expect(items.some(i => i.label === 'font-size')).toBe(true);
+		expect(items.some(i => i.label === 'spacing-before')).toBe(true);
+	});
+
+	test('no completions outside frontmatter', () => {
+		const text = '---\nfont: Georgia\n---\n\nBody text.';
+		const loc = getFrontmatterLocation(text, text.indexOf('Body'));
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items).toEqual([]);
+	});
+
+	test('CSL value completions return items', () => {
+		const text = '---\ncsl: \n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf(': ') + 2);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.length).toBeGreaterThan(0);
+		expect(items.some(i => i.label === 'apa')).toBe(true);
+	});
+
+	test('title key completion available even when already declared (allowsMultiple)', () => {
+		const text = '---\ntitle: First\n\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('\n\n') + 1);
+		const items = getFrontmatterCompletionItems(loc, 'darwin');
+		expect(items.find(i => i.label === 'title')).toBeDefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getFrontmatterHover
+// ---------------------------------------------------------------------------
+
+describe('getFrontmatterHover', () => {
+	test('hover on known key shows description', () => {
+		const text = '---\nfont: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('font') + 2);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeDefined();
+		expect(hover!.markdown).toContain('**font**');
+		expect(hover!.markdown).toContain('Body text font family');
+	});
+
+	test('hover shows aliases', () => {
+		const text = '---\nbibliography: refs.bib\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('bibliography') + 3);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeDefined();
+		expect(hover!.markdown).toContain('`bib`');
+		expect(hover!.markdown).toContain('`bibtex`');
+	});
+
+	test('hover on alias resolves to canonical', () => {
+		const text = '---\nbib: refs.bib\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('bib') + 1);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeDefined();
+		expect(hover!.markdown).toContain('**bibliography**');
+	});
+
+	test('hover on value shows key hover info', () => {
+		const text = '---\nfont: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('Georgia') + 3);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeDefined();
+		expect(hover!.markdown).toContain('**font**');
+	});
+
+	test('hover on unknown key returns undefined', () => {
+		const text = '---\nunknown: value\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('unknown') + 3);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeUndefined();
+	});
+
+	test('hover on styles sub-property', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font-size: 14\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('font-size') + 3);
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeDefined();
+		expect(hover!.markdown).toContain('**font-size**');
+	});
+
+	test('hover outside frontmatter returns undefined', () => {
+		const text = '---\nfont: Georgia\n---\n\nBody.';
+		const loc = getFrontmatterLocation(text, text.indexOf('Body'));
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeUndefined();
+	});
+
+	test('hover on style name returns undefined', () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font: Georgia\n---\n';
+		const loc = getFrontmatterLocation(text, text.indexOf('MyQuote'));
+		const hover = getFrontmatterHover(loc);
+		expect(hover).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateFrontmatter
+// ---------------------------------------------------------------------------
+
+const stubCallbacks: FrontmatterValidationCallbacks = {
+	fileExists: async () => true,
+	isCslAvailable: async () => true,
+	cslSuggestions: () => [],
+};
+
+describe('validateFrontmatter', () => {
+	test('valid frontmatter produces no diagnostics', async () => {
+		const text = '---\nfont: Georgia\nfont-size: 12\nbreaks: true\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('invalid boolean value produces error', async () => {
+		const text = '---\nbreaks: maybe\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+		expect(diags[0].message).toContain('true');
+		expect(diags[0].message).toContain('false');
+	});
+
+	test('invalid enum value produces error', async () => {
+		const text = '---\ntable-borders: dotted\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+		expect(diags[0].message).toContain('horizontal');
+	});
+
+	test('invalid timezone format produces error', async () => {
+		const text = '---\ntimezone: EST\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+		expect(diags[0].message).toContain('+HH:MM');
+	});
+
+	test('valid timezone passes', async () => {
+		const text = '---\ntimezone: +05:30\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('invalid hex color produces error', async () => {
+		const text = '---\ncode-background-color: red\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('valid hex color passes', async () => {
+		const text = '---\ncode-background-color: F0F0F0\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('code-background-color accepts none and transparent', async () => {
+		for (const val of ['none', 'transparent']) {
+			const text = '---\ncode-background-color: ' + val + '\n---\n';
+			const diags = await validateFrontmatter(text, stubCallbacks);
+			expect(diags).toEqual([]);
+		}
+	});
+
+	test('code-font-color does NOT accept none', async () => {
+		const text = '---\ncode-font-color: none\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('invalid font-style produces error', async () => {
+		const text = '---\nheader-font-style: bald\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+		expect(diags[0].message).toContain('bold');
+	});
+
+	test('valid font-style passes', async () => {
+		const text = '---\nheader-font-style: bold-italic\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('invalid line-spacing produces error', async () => {
+		const text = '---\nline-spacing: triple\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('valid line-spacing values pass', async () => {
+		for (const val of ['single', '1.5', 'double', '1.15']) {
+			const text = '---\nline-spacing: ' + val + '\n---\n';
+			const diags = await validateFrontmatter(text, stubCallbacks);
+			expect(diags).toEqual([]);
+		}
+	});
+
+	test('invalid paragraph-indent produces error', async () => {
+		const text = '---\nparagraph-indent: big\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('valid paragraph-indent values pass', async () => {
+		for (const val of ['none', '0', '0.5', '1']) {
+			const text = '---\nparagraph-indent: ' + val + '\n---\n';
+			const diags = await validateFrontmatter(text, stubCallbacks);
+			expect(diags).toEqual([]);
+		}
+	});
+
+	test('invalid col-widths produces error', async () => {
+		const text = '---\ntable-col-widths: abc\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('valid col-widths values pass', async () => {
+		for (const val of ['equal', 'auto', '2 1 1', '[2, 1, 1]']) {
+			const text = '---\ntable-col-widths: ' + val + '\n---\n';
+			const diags = await validateFrontmatter(text, stubCallbacks);
+			expect(diags).toEqual([]);
+		}
+	});
+
+	test('array number field (header-font-size) with inline array passes', async () => {
+		const text = '---\nheader-font-size: [24, 20, 16]\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('array number field with invalid element produces error', async () => {
+		const text = '---\nheader-font-size: [24, abc, 16]\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('duplicate key produces warning', async () => {
+		const text = '---\nfont: Georgia\nfont: Arial\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('warning');
+		expect(diags[0].message).toContain('Duplicate');
+	});
+
+	test('duplicate title does NOT produce warning', async () => {
+		const text = '---\ntitle: First\ntitle: Second\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('duplicate alias produces warning mentioning canonical', async () => {
+		const text = '---\nbibliography: refs.bib\nbib: refs.bib\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('warning');
+		expect(diags[0].message).toContain('bibliography');
+	});
+
+	test('unknown key emits no diagnostic', async () => {
+		const text = '---\nfoo: bar\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('typo key emits information diagnostic', async () => {
+		const text = '---\nfontt: Georgia\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('information');
+		expect(diags[0].message).toContain('font');
+		expect(diags[0].message).toContain('Did you mean');
+	});
+
+	test('typo in styles sub-property emits information diagnostic', async () => {
+		const text = '---\nstyles:\n  MyQuote:\n    fnt-size: 14\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		const info = diags.filter(d => d.severity === 'information');
+		expect(info.length).toBe(1);
+		expect(info[0].message).toContain('Did you mean');
+	});
+
+	test('wrong case key emits case-sensitive information diagnostic', async () => {
+		const text = '---\nTitle: My Doc\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('information');
+		expect(diags[0].message).toContain('case-sensitive');
+		expect(diags[0].message).toContain('`title`');
+	});
+
+	test('wrong case Author emits case-sensitive diagnostic', async () => {
+		const text = '---\nAuthor: Jane\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('information');
+		expect(diags[0].message).toContain('`author`');
+	});
+
+	test('wrong case in styles sub-property emits case-sensitive diagnostic', async () => {
+		const text = '---\nstyles:\n  MyQuote:\n    Font-Size: 14\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		const info = diags.filter(d => d.severity === 'information');
+		expect(info.length).toBe(1);
+		expect(info[0].message).toContain('case-sensitive');
+		expect(info[0].message).toContain('`font-size`');
+	});
+
+	test('CSL not found produces warning', async () => {
+		const text = '---\ncsl: nonexistent-style\n---\n';
+		const diags = await validateFrontmatter(text, {
+			...stubCallbacks,
+			isCslAvailable: async () => false,
+			cslSuggestions: () => ['nature'],
+		});
+		const cslDiag = diags.find(d => d.message.includes('CSL'));
+		expect(cslDiag).toBeDefined();
+		expect(cslDiag!.severity).toBe('warning');
+		expect(cslDiag!.message).toContain('nature');
+	});
+
+	test('bibliography file not found produces warning', async () => {
+		const text = '---\nbibliography: missing.bib\n---\n';
+		const diags = await validateFrontmatter(text, {
+			...stubCallbacks,
+			fileExists: async () => false,
+			sourceDir: '/some/dir',
+		});
+		const bibDiag = diags.find(d => d.message.includes('Bibliography'));
+		expect(bibDiag).toBeDefined();
+		expect(bibDiag!.severity).toBe('warning');
+	});
+
+	test('bibliography file found produces no diagnostic', async () => {
+		const text = '---\nbibliography: refs.bib\n---\n';
+		const diags = await validateFrontmatter(text, {
+			...stubCallbacks,
+			sourceDir: '/some/dir',
+		});
+		expect(diags).toEqual([]);
+	});
+
+	test('invalid styles sub-property value produces error', async () => {
+		const text = '---\nstyles:\n  MyQuote:\n    font-style: bald\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		const errors = diags.filter(d => d.severity === 'error');
+		expect(errors.length).toBe(1);
+		expect(errors[0].message).toContain('font style');
+	});
+
+	test('no frontmatter produces no diagnostics', async () => {
+		const text = 'Just a document.';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags).toEqual([]);
+	});
+
+	test('negative number in font-size produces error', async () => {
+		const text = '---\nfont-size: -5\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+
+	test('non-number in font-size produces error', async () => {
+		const text = '---\nfont-size: large\n---\n';
+		const diags = await validateFrontmatter(text, stubCallbacks);
+		expect(diags.length).toBe(1);
+		expect(diags[0].severity).toBe('error');
+	});
+});
