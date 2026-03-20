@@ -965,6 +965,12 @@ export interface FrontmatterValidationCallbacks {
 	cslSuggestions: (prefix: string) => string[];
 	sourceDir?: string;
 	cslCacheDirs?: string[];
+	/**
+	 * Resolve the bibliography path using full workspace-root fallback logic.
+	 * Returns the absolute path only if the file exists; undefined otherwise.
+	 * Callers treat a truthy return as proof of existence (like `fileExists`),
+	 * so implementations must verify the file is present before returning.
+	 */
 	resolveBibliographyPath?: () => Promise<string | undefined>;
 }
 
