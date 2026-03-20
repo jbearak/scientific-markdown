@@ -659,7 +659,7 @@ function validateOrientationDirectives(doc: TextDocument): void {
 		let message: string;
 		switch (f.kind) {
 			case 'nested':
-				message = 'Nested <!-- ' + f.directiveName + ' --> \u2014 previous <!-- ' + (f.relatedName ?? f.directiveName) + ' --> was never closed.';
+				message = 'Nested <!-- ' + f.directiveName + ' --> \u2014 <!-- ' + (f.relatedName ?? f.directiveName) + ' --> is still active.';
 				break;
 			case 'crossed':
 				message = '<!-- /' + f.directiveName + ' --> does not match the active <!-- ' + f.relatedName + ' --> section.';

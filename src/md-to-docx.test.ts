@@ -3244,6 +3244,67 @@ describe('landscape sections', () => {
       expect(warnings.length).toBe(0);
     });
 
+    it('cross-type nesting (portrait inside landscape) closes landscape and opens portrait', () => {
+      const warnings: string[] = [];
+      const md = '<!-- landscape -->\n\nContent\n\n<!-- portrait -->\n\nMore\n\n<!-- /portrait -->';
+      const tokens = parseMd(md, warnings);
+      // Should produce: landscapeOpen, para, landscapeClose, portraitOpen, para, portraitClose
+      expect(tokens.filter(t => t.landscapeOpen).length).toBe(1);
+      expect(tokens.filter(t => t.landscapeClose).length).toBe(1);
+      expect(tokens.filter(t => t.portraitOpen).length).toBe(1);
+      expect(tokens.filter(t => t.portraitClose).length).toBe(1);
+      // A nested warning should still be emitted
+      expect(warnings.some(w => w.includes('Nested') && w.includes('portrait'))).toBe(true);
+    });
+
+    it('cross-type close (<!-- /landscape --> while portrait active) closes portrait', () => {
+      const warnings: string[] = [];
+      // landscape opens, portrait nested-replaces it, /landscape is a cross-type close
+      const md = '<!-- landscape -->\n\nContent\n\n<!-- portrait -->\n\nMore\n\n<!-- /landscape -->';
+      const tokens = parseMd(md, warnings);
+      // Converter should produce: landscapeOpen, para, landscapeClose, portraitOpen, para, portraitClose
+      // The /landscape close is consumed as a portraitClose because portrait is what's actually active
+      expect(tokens.filter(t => t.landscapeOpen).length).toBe(1);
+      expect(tokens.filter(t => t.landscapeClose).length).toBe(1);
+      expect(tokens.filter(t => t.portraitOpen).length).toBe(1);
+      expect(tokens.filter(t => t.portraitClose).length).toBe(1);
+      // No raw HTML comment should remain for the consumed directives
+      expect(tokens.filter(t => t.runs.length === 1 && t.runs[0].type === 'html_comment').length).toBe(0);
+    });
+
+    it('orphaned close with no active orientation is left as raw comment', () => {
+      const warnings: string[] = [];
+      const md = 'Before\n\n<!-- /landscape -->\n\nAfter';
+      const tokens = parseMd(md, warnings);
+      // The close directive should survive as a raw html_comment paragraph
+      const comments = tokens.filter(t => t.runs.length === 1 && t.runs[0].type === 'html_comment');
+      expect(comments.length).toBe(1);
+      expect(comments[0].runs[0].text).toContain('/landscape');
+      // No sentinel flags should be set
+      expect(tokens.every(t => !t.landscapeClose && !t.landscapeOpen)).toBe(true);
+    });
+
+    it('multiple cross-type transitions produce correct sentinels', () => {
+      const warnings: string[] = [];
+      // landscape → portrait → landscape, each nested-replacing the previous
+      const md = '<!-- landscape -->\n\nA\n\n<!-- portrait -->\n\nB\n\n<!-- landscape -->\n\nC\n\n<!-- /landscape -->';
+      const tokens = parseMd(md, warnings);
+      // Expected sentinels: landscapeOpen, landscapeClose+portraitOpen, portraitClose+landscapeOpen, landscapeClose
+      expect(tokens.filter(t => t.landscapeOpen).length).toBe(2);
+      expect(tokens.filter(t => t.landscapeClose).length).toBe(2);
+      expect(tokens.filter(t => t.portraitOpen).length).toBe(1);
+      expect(tokens.filter(t => t.portraitClose).length).toBe(1);
+      // Two nested warnings (portrait nested in landscape, landscape nested in portrait)
+      const nestedWarnings = warnings.filter(w => w.includes('Nested'));
+      expect(nestedWarnings.length).toBe(2);
+    });
+
+    it('convertMdToDocx propagates orientation warnings with line numbers', async () => {
+      const md = 'Before\n\n<!-- landscape -->\n\nContent';
+      const result = await convertMdToDocx(md);
+      expect(result.warnings.some(w => w.includes('Unclosed') && w.includes('landscape') && w.includes('near line 3'))).toBe(true);
+    });
+
     it('transfers <!-- table-orientation: landscape --> to table token', () => {
       const md = '<!-- table-orientation: landscape -->\n\n| A | B |\n| - | - |\n| 1 | 2 |';
       const tokens = parseMd(md);

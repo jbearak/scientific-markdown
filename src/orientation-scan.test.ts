@@ -33,15 +33,21 @@ describe('scanOrientationDirectives', () => {
   });
 
   it('detects nested cross-type open (portrait inside landscape)', () => {
+    // The scanner keeps the original opener on the stack for accurate diagnostics.
+    // portrait is nested, /landscape still matches the original opener and pops cleanly.
     const text = '<!-- landscape -->\n<!-- portrait -->\n<!-- /landscape -->';
     const findings = scanOrientationDirectives(text);
-    expect(findings.some(f => f.kind === 'nested' && f.directiveName === 'portrait' && f.relatedName === 'landscape')).toBe(true);
+    expect(findings).toEqual([
+      expect.objectContaining({ kind: 'nested', directiveName: 'portrait', relatedName: 'landscape' }),
+    ]);
   });
 
   it('detects crossed close', () => {
     const text = '<!-- landscape -->\n<!-- /portrait -->\n<!-- /landscape -->';
     const findings = scanOrientationDirectives(text);
-    expect(findings.some(f => f.kind === 'crossed' && f.directiveName === 'portrait' && f.relatedName === 'landscape')).toBe(true);
+    expect(findings).toEqual([
+      expect.objectContaining({ kind: 'crossed', directiveName: 'portrait', relatedName: 'landscape' }),
+    ]);
   });
 
   it('skips directives inside fenced code blocks', () => {
@@ -63,12 +69,14 @@ describe('scanOrientationDirectives', () => {
   });
 
   it('enforces single active orientation', () => {
-    // landscape open then portrait open — portrait is nested because landscape is active
+    // landscape open then portrait open — portrait is nested because landscape is active.
+    // The scanner keeps the original opener (landscape), so /portrait is crossed
+    // and /landscape pops cleanly. Only two diagnostics: nested + crossed.
     const text = '<!-- landscape -->\n<!-- portrait -->\n<!-- /portrait -->\n<!-- /landscape -->';
     const findings = scanOrientationDirectives(text);
-    // portrait open is nested, then /portrait is crossed (landscape is still on stack)
-    expect(findings.length).toBeGreaterThanOrEqual(1);
-    expect(findings[0].kind).toBe('nested');
-    expect(findings[0].directiveName).toBe('portrait');
+    expect(findings).toEqual([
+      expect.objectContaining({ kind: 'nested', directiveName: 'portrait', relatedName: 'landscape' }),
+      expect.objectContaining({ kind: 'crossed', directiveName: 'portrait', relatedName: 'landscape' }),
+    ]);
   });
 });

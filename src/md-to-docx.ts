@@ -16,6 +16,10 @@ import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun, type HtmlTable
 export { preprocessGridTables } from './grid-table-preprocess';
 export { extractHtmlTables } from './html-table-parser';
 
+// --- Orientation sentinel regexes (hoisted for cache-friendliness in the token loop) ---
+const ORIENTATION_OPEN_RE = /^<!--\s*(landscape|portrait)\s*-->$/i;
+const ORIENTATION_CLOSE_RE = /^<!--\s*\/(landscape|portrait)\s*-->$/i;
+
 // --- Implementation notes ---
 // - decodeHtmlEntities(): decode &amp; after other named entities to avoid over-decoding
 // - Numeric entities: use String.fromCodePoint() not String.fromCharCode() for
@@ -1447,7 +1451,7 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false, o
         const line = lineNumAt(f.start);
         switch (f.kind) {
           case 'nested':
-            warnings.push('Nested <!-- ' + f.directiveName + ' --> near line ' + line + ' (previous <!-- ' + (f.relatedName ?? f.directiveName) + ' --> near line ' + lineNumAt(f.relatedStart!) + ' was never closed).');
+            warnings.push('Nested <!-- ' + f.directiveName + ' --> near line ' + line + ' (<!-- ' + (f.relatedName ?? f.directiveName) + ' --> opened near line ' + lineNumAt(f.relatedStart!) + ' is still active).');
             break;
           case 'crossed':
             warnings.push('<!-- /' + f.directiveName + ' --> near line ' + line + ' does not match the active <!-- ' + f.relatedName + ' --> section (opened near line ' + lineNumAt(f.relatedStart!) + ').');
@@ -1463,79 +1467,75 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false, o
     }
   }
 
-  // Post-process: convert <!-- landscape --> / <!-- /landscape --> fences into sentinel tokens
+  // Post-process: convert <!-- landscape/portrait --> fences into sentinel tokens.
+  // A single pass with shared state ensures cross-type nesting (e.g. portrait inside
+  // an active landscape section) gracefully closes the previous orientation before
+  // opening the new one, rather than emitting overlapping section breaks.
+  //
+  // NOTE: This pass handles graceful recovery independently from the diagnostic scanner
+  // in orientation-scan.ts. The scanner keeps the original opener on its stack for
+  // accurate diagnostics; this pass tracks activeOrientation for correct sentinel
+  // generation. The two do not need to agree on stack state.
   {
-    let inLandscape = false;
+    let activeOrientation: 'landscape' | 'portrait' | null = null;
     for (let i = 0; i < result.length; i++) {
       if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
       const run = result[i].runs[0];
       if (run.type !== 'html_comment') continue;
       const text = run.text.trim();
-      if (/^<!--\s*landscape\s*-->$/i.test(text)) {
-        if (inLandscape) {
-          // Nested landscape: treat as close + open (warning emitted by pre-scan above)
-          const closeSentinel: MdToken = { type: 'paragraph', runs: [], landscapeClose: true };
-          closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
-          closeSentinel.blankLinesAfter = result[i].blankLinesAfter;
+
+      const openMatch = ORIENTATION_OPEN_RE.exec(text);
+      if (openMatch) {
+        const orientation = openMatch[1].toLowerCase() as 'landscape' | 'portrait';
+        const src = result[i];
+        if (activeOrientation) {
+          // Nested (same-type or cross-type): close active, then open new
+          const closeKey = activeOrientation === 'landscape' ? 'landscapeClose' : 'portraitClose';
+          const openKey = orientation === 'landscape' ? 'landscapeOpen' : 'portraitOpen';
+          const closeSentinel: MdToken = { type: 'paragraph', runs: [], [closeKey]: true };
+          // blankLines attach to the close sentinel; the open sentinel inherits no spacing
+          // because it is synthesized in-place — the source comment only had one position.
+          closeSentinel.blankLinesBefore = src.blankLinesBefore;
+          closeSentinel.blankLinesAfter = src.blankLinesAfter;
           result.splice(i, 1,
             closeSentinel,
-            { type: 'paragraph', runs: [], landscapeOpen: true },
+            { type: 'paragraph', runs: [], [openKey]: true },
           );
           i++; // skip past both sentinels
+          activeOrientation = orientation;
         } else {
-          const sentinel: MdToken = { type: 'paragraph', runs: [], landscapeOpen: true };
-          sentinel.blankLinesBefore = result[i].blankLinesBefore;
-          sentinel.blankLinesAfter = result[i].blankLinesAfter;
+          const openKey = orientation === 'landscape' ? 'landscapeOpen' : 'portraitOpen';
+          const sentinel: MdToken = { type: 'paragraph', runs: [], [openKey]: true };
+          sentinel.blankLinesBefore = src.blankLinesBefore;
+          sentinel.blankLinesAfter = src.blankLinesAfter;
           result.splice(i, 1, sentinel);
-          inLandscape = true;
+          activeOrientation = orientation;
         }
-      } else if (/^<!--\s*\/landscape\s*-->$/i.test(text)) {
-        if (inLandscape) {
-          const sentinel: MdToken = { type: 'paragraph', runs: [], landscapeClose: true };
-          sentinel.blankLinesBefore = result[i].blankLinesBefore;
-          sentinel.blankLinesAfter = result[i].blankLinesAfter;
-          result.splice(i, 1, sentinel);
-          inLandscape = false;
-        }
-        // If not in landscape, leave the comment as-is (user error, but harmless)
+        continue;
       }
-    }
-  }
 
-  // Post-process: convert <!-- portrait --> / <!-- /portrait --> fences into sentinel tokens
-  {
-    let inPortrait = false;
-    for (let i = 0; i < result.length; i++) {
-      if (result[i].type !== 'paragraph' || result[i].runs.length !== 1) continue;
-      const run = result[i].runs[0];
-      if (run.type !== 'html_comment') continue;
-      const text = run.text.trim();
-      if (/^<!--\s*portrait\s*-->$/i.test(text)) {
-        if (inPortrait) {
-          // Nested portrait: treat as close + open (warning emitted by pre-scan above)
-          const closeSentinel: MdToken = { type: 'paragraph', runs: [], portraitClose: true };
-          closeSentinel.blankLinesBefore = result[i].blankLinesBefore;
-          closeSentinel.blankLinesAfter = result[i].blankLinesAfter;
-          result.splice(i, 1,
-            closeSentinel,
-            { type: 'paragraph', runs: [], portraitOpen: true },
-          );
-          i++;
-        } else {
-          const sentinel: MdToken = { type: 'paragraph', runs: [], portraitOpen: true };
+      const closeMatch = ORIENTATION_CLOSE_RE.exec(text);
+      if (closeMatch) {
+        const orientation = closeMatch[1].toLowerCase() as 'landscape' | 'portrait';
+        if (activeOrientation === orientation) {
+          const closeKey = orientation === 'landscape' ? 'landscapeClose' : 'portraitClose';
+          const sentinel: MdToken = { type: 'paragraph', runs: [], [closeKey]: true };
           sentinel.blankLinesBefore = result[i].blankLinesBefore;
           sentinel.blankLinesAfter = result[i].blankLinesAfter;
           result.splice(i, 1, sentinel);
-          inPortrait = true;
-        }
-      } else if (/^<!--\s*\/portrait\s*-->$/i.test(text)) {
-        if (inPortrait) {
-          const sentinel: MdToken = { type: 'paragraph', runs: [], portraitClose: true };
+          activeOrientation = null;
+        } else if (activeOrientation) {
+          // Cross-type close (e.g. /portrait while landscape active): close the active
+          // orientation. The directive name doesn't match, but we close what's actually
+          // open to avoid leaving a dangling section break in the DOCX output.
+          const closeKey = activeOrientation === 'landscape' ? 'landscapeClose' : 'portraitClose';
+          const sentinel: MdToken = { type: 'paragraph', runs: [], [closeKey]: true };
           sentinel.blankLinesBefore = result[i].blankLinesBefore;
           sentinel.blankLinesAfter = result[i].blankLinesAfter;
           result.splice(i, 1, sentinel);
-          inPortrait = false;
+          activeOrientation = null;
         }
+        // If no active orientation, leave the comment as-is (user error, but harmless)
       }
     }
   }

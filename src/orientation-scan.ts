@@ -4,15 +4,15 @@ export interface OrientationDiagnostic {
   kind: 'unclosed' | 'orphaned' | 'nested' | 'crossed';
   /** The directive name that triggered the diagnostic (e.g. 'landscape') */
   directiveName: string;
-  /** Byte offset of the diagnostic directive in the scanned text */
+  /** Character (UTF-16 code unit) offset of the diagnostic directive, suitable for use with LSP positionAt() */
   start: number;
-  /** Byte end offset of the diagnostic directive */
+  /** Character (UTF-16 code unit) end offset of the diagnostic directive */
   end: number;
   /** For nested/crossed: the name of the conflicting opener */
   relatedName?: string;
-  /** For nested/crossed: byte offset of the conflicting opener */
+  /** For nested/crossed: character (UTF-16 code unit) offset of the conflicting opener */
   relatedStart?: number;
-  /** For nested/crossed: byte end offset of the conflicting opener */
+  /** For nested/crossed: character (UTF-16 code unit) end offset of the conflicting opener */
   relatedEnd?: number;
 }
 
@@ -50,7 +50,9 @@ export function scanOrientationDirectives(text: string, codeRegions?: CodeRegion
           relatedStart: existing.start,
           relatedEnd: existing.end,
         });
-        // Don't push — keep original opener so "unclosed" points to the root
+        // Don't push — keep original opener so "unclosed" points to the root.
+        // The converter in md-to-docx.ts handles graceful recovery (close + reopen)
+        // independently; this scanner's job is accurate diagnostics.
       } else {
         openStack.push({ name, start, end });
       }
