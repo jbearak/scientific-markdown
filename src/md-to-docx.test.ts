@@ -4143,4 +4143,31 @@ describe('per-paragraph indent overrides', () => {
     expect(result.markdown).toContain('<!-- style: caption -->\n**Table 1. Text**\n<!-- /style -->');
     expect(result.markdown).not.toContain('**Table 1. Text**\n\n<!-- /style -->');
   });
+
+  it('MD→DOCX→MD round-trips blank line before separate style sentinel', async () => {
+    const md = '---\nstyles:\n  caption: Caption\n---\n\nParagraph text.\n\n<!-- style: caption -->\n**Caption text**\n<!-- /style -->\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    // The blank line before <!-- style: caption --> must survive
+    expect(result.markdown).toContain('Paragraph text.\n\n<!-- style: caption -->');
+  });
+
+  it('MD→DOCX→MD round-trips blank line before style sentinel with hard breaks and images', async () => {
+    const md = '---\nstyles:\n  caption: Caption\n---\n\nParagraph text about age 40.\n\n<!-- style: caption -->\n**Figure 4. Title**\\\n![](image.png){width=624 height=312}\\\n*Notes here.*\n<!-- /style -->\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    expect(result.markdown).toContain('age 40.\n\n<!-- style: caption -->');
+  });
+
+  it('MD→DOCX→MD preserves zero-gap before style sentinel', async () => {
+    const md = '---\nstyles:\n  caption: Caption\n---\n\nParagraph text.\n<!-- style: caption -->\n**Caption text**\n<!-- /style -->\n';
+    const { docx } = await convertMdToDocx(md);
+    const { convertDocx } = await import('./converter');
+    const result = await convertDocx(docx);
+    // Zero gap (no blank line) before the sentinel must be preserved
+    expect(result.markdown).toContain('Paragraph text.\n<!-- style: caption -->');
+    expect(result.markdown).not.toContain('Paragraph text.\n\n<!-- style: caption -->');
+  });
 });
