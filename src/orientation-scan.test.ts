@@ -55,6 +55,11 @@ describe('scanOrientationDirectives', () => {
     expect(scanOrientationDirectives(text)).toEqual([]);
   });
 
+  it('skips directive-like comments inside raw HTML blocks', () => {
+    const text = '<div>\n<!-- landscape -->\n</div>';
+    expect(scanOrientationDirectives(text)).toEqual([]);
+  });
+
   it('returns correct byte offsets', () => {
     const text = 'abc\n<!-- landscape -->';
     const findings = scanOrientationDirectives(text);

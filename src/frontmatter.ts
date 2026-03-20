@@ -131,6 +131,26 @@ export interface Frontmatter {
   bibliographyHangingIndent?: boolean;
 }
 
+function frontmatterBodyStartOffset(markdown: string): number | undefined {
+  const leadingTrimmedLength = markdown.length - markdown.trimStart().length;
+  const trimmed = markdown.slice(leadingTrimmedLength);
+  if (!trimmed.startsWith('---')) return undefined;
+
+  const endMatch = trimmed.substring(3).match(/\n---(?:\r?\n|$)/);
+  if (!endMatch) return undefined;
+  const endIdx = endMatch.index! + 3;
+  const afterDelimiter = trimmed.slice(endIdx + 4);
+  const consumedLeadingNewline = afterDelimiter.match(/^\r?\n/)?.[0].length ?? 0;
+  return leadingTrimmedLength + endIdx + 4 + consumedLeadingNewline;
+}
+
+/** Replace YAML frontmatter characters with spaces while preserving length and newlines. */
+export function maskFrontmatter(markdown: string): string {
+  const bodyStart = frontmatterBodyStartOffset(markdown);
+  if (bodyStart === undefined) return markdown;
+  return markdown.slice(0, bodyStart).replace(/[^\r\n]/g, ' ') + markdown.slice(bodyStart);
+}
+
 /** Parse a col-widths value: "2 1 1", "2,1,1", "[2, 1, 1]", "equal", "auto". */
 export function parseColWidths(raw: string): number[] | 'equal' | 'auto' | undefined {
   const trimmed = raw.trim().toLowerCase();
@@ -176,19 +196,17 @@ export function colWidthsToPct(ratios: number[]): number[] {
  * Returns the parsed metadata and the remaining body text.
  */
 export function parseFrontmatter(markdown: string): { metadata: Frontmatter; body: string; fieldOrder: string[] } {
+  const bodyStart = frontmatterBodyStartOffset(markdown);
+  if (bodyStart === undefined) {
+    return { metadata: {}, body: markdown, fieldOrder: [] };
+  }
   const trimmed = markdown.trimStart();
-  if (!trimmed.startsWith('---')) {
-    return { metadata: {}, body: markdown, fieldOrder: [] };
-  }
 
-  const endMatch = trimmed.substring(3).match(/\n---(?:\r?\n|$)/);
-  if (!endMatch) {
-    return { metadata: {}, body: markdown, fieldOrder: [] };
-  }
+  const endMatch = trimmed.substring(3).match(/\n---(?:\r?\n|$)/)!;
   const endIdx = endMatch.index! + 3;
 
   const yamlBlock = trimmed.slice(3, endIdx).trim();
-  const body = trimmed.slice(endIdx + 4).replace(/^\r?\n/, '');
+  const body = markdown.slice(bodyStart);
 
   const metadata: Frontmatter = {};
   const fieldOrder: string[] = [];

@@ -4,7 +4,7 @@ import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 import { parseBibtex, BibtexEntry } from './bibtex-parser';
-import { parseFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type CustomStyleDef, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
+import { parseFrontmatter, maskFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type CustomStyleDef, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
 import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
@@ -1489,7 +1489,7 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false, o
         const orientation = openMatch[1].toLowerCase() as 'landscape' | 'portrait';
         const src = result[i];
         if (activeOrientation) {
-          // Nested (same-type or cross-type): close active, then open new
+          // Any new open replaces the currently active orientation.
           const closeKey = activeOrientation === 'landscape' ? 'landscapeClose' : 'portraitClose';
           const openKey = orientation === 'landscape' ? 'landscapeOpen' : 'portraitOpen';
           const closeSentinel: MdToken = { type: 'paragraph', runs: [], [closeKey]: true };
@@ -6014,7 +6014,7 @@ export async function convertMdToDocx(
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
   const parseWarnings: string[] = [];
-  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false, markdown);
+  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false, maskFrontmatter(markdown));
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.

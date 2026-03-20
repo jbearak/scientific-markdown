@@ -3244,6 +3244,20 @@ describe('landscape sections', () => {
       expect(warnings.length).toBe(0);
     });
 
+    it('directive-like comments inside raw HTML blocks do not warn or become sentinels', () => {
+      const warnings: string[] = [];
+      const md = '<div>\n<!-- landscape -->\n</div>';
+      const tokens = parseMd(md, warnings);
+      expect(warnings).toEqual([]);
+      expect(tokens.some(t => t.landscapeOpen || t.landscapeClose)).toBe(false);
+      expect(tokens).toEqual([
+        {
+          type: 'paragraph',
+          runs: [{ type: 'text', text: '<div>\n<!-- landscape -->\n</div>' }],
+        },
+      ]);
+    });
+
     it('inline orientation comments do not warn or become sentinels', () => {
       const warnings: string[] = [];
       const md = 'Paragraph <!-- landscape --> text\n\nMore text <!-- /landscape -->';
@@ -3266,16 +3280,17 @@ describe('landscape sections', () => {
       expect(tokens[0].runs[0].text).toContain('<!-- /landscape -->');
     });
 
-    it('cross-type nesting (portrait inside landscape) closes landscape and opens portrait', () => {
+    it('cross-type nesting closes landscape and replaces it with portrait', () => {
       const warnings: string[] = [];
-      const md = '<!-- landscape -->\n\nContent\n\n<!-- portrait -->\n\nMore\n\n<!-- /portrait -->';
+      const md = '<!-- landscape -->\n\nLandscape A\n\n<!-- portrait -->\n\nPortrait B\n\n<!-- /portrait -->\n\nLandscape C\n\n<!-- /landscape -->';
       const tokens = parseMd(md, warnings);
-      // Should produce: landscapeOpen, para, landscapeClose, portraitOpen, para, portraitClose
       expect(tokens.filter(t => t.landscapeOpen).length).toBe(1);
       expect(tokens.filter(t => t.landscapeClose).length).toBe(1);
       expect(tokens.filter(t => t.portraitOpen).length).toBe(1);
       expect(tokens.filter(t => t.portraitClose).length).toBe(1);
-      // A nested warning should still be emitted
+      const comments = tokens.filter(t => t.runs.length === 1 && t.runs[0].type === 'html_comment');
+      expect(comments).toHaveLength(1);
+      expect(comments[0].runs[0].text).toBe('<!-- /landscape -->');
       expect(warnings.some(w => w.includes('Nested') && w.includes('portrait'))).toBe(true);
     });
 
@@ -3306,12 +3321,11 @@ describe('landscape sections', () => {
       expect(tokens.every(t => !t.landscapeClose && !t.landscapeOpen)).toBe(true);
     });
 
-    it('multiple cross-type transitions produce correct sentinels', () => {
+    it('multiple cross-type transitions never restore prior orientations', () => {
       const warnings: string[] = [];
       // landscape → portrait → landscape, each nested-replacing the previous
       const md = '<!-- landscape -->\n\nA\n\n<!-- portrait -->\n\nB\n\n<!-- landscape -->\n\nC\n\n<!-- /landscape -->';
       const tokens = parseMd(md, warnings);
-      // Expected sentinels: landscapeOpen, landscapeClose+portraitOpen, portraitClose+landscapeOpen, landscapeClose
       expect(tokens.filter(t => t.landscapeOpen).length).toBe(2);
       expect(tokens.filter(t => t.landscapeClose).length).toBe(2);
       expect(tokens.filter(t => t.portraitOpen).length).toBe(1);
@@ -3321,10 +3335,33 @@ describe('landscape sections', () => {
       expect(nestedWarnings.length).toBe(2);
     });
 
+    it('does not synthesize a restored outer section after malformed cross-type nesting', () => {
+      const warnings: string[] = [];
+      const md = '<!-- portrait -->\n\nA\n\n<!-- landscape -->\n\nB\n\n<!-- portrait -->\n\nC\n\n<!-- /portrait -->\n\nTail';
+      const tokens = parseMd(md, warnings);
+      expect(tokens.filter(t => t.landscapeOpen).length).toBe(1);
+      expect(tokens.filter(t => t.landscapeClose).length).toBe(1);
+      expect(tokens.filter(t => t.portraitOpen).length).toBe(2);
+      expect(tokens.filter(t => t.portraitClose).length).toBe(2);
+      expect(tokens.filter(t => t.runs.length === 1 && t.runs[0].type === 'html_comment').length).toBe(0);
+      const finalSentinelIndex = tokens.findLastIndex(t => t.portraitClose || t.landscapeClose);
+      expect(finalSentinelIndex).toBe(8);
+      const tailParagraph = tokens[tokens.length - 1];
+      expect(tailParagraph.type).toBe('paragraph');
+      expect(tailParagraph.runs[0].type).toBe('text');
+      expect(tailParagraph.runs[0].text).toBe('Tail');
+    });
+
     it('convertMdToDocx propagates orientation warnings with line numbers', async () => {
       const md = 'Before\n\n<!-- landscape -->\n\nContent';
       const result = await convertMdToDocx(md);
       expect(result.warnings.some(w => w.includes('Unclosed') && w.includes('landscape') && w.includes('near line 3'))).toBe(true);
+    });
+
+    it('convertMdToDocx ignores directive-like comments in YAML frontmatter', async () => {
+      const md = '---\nabstract: |\n  <!-- landscape -->\n---\n\nBody';
+      const result = await convertMdToDocx(md);
+      expect(result.warnings.some(w => w.includes('landscape'))).toBe(false);
     });
 
     it('transfers <!-- table-orientation: landscape --> to table token', () => {

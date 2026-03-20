@@ -72,7 +72,7 @@ import {
 } from './comment-language';
 import { computeBibEntryRanges } from './bib-entry-ranges';
 import { getCslCompletionContext, getCslFieldInfo } from './csl-language';
-import { type Frontmatter, parseFrontmatter } from '../frontmatter';
+import { type Frontmatter, parseFrontmatter, maskFrontmatter } from '../frontmatter';
 import { BUNDLED_STYLE_LABELS, isCslAvailableAsync } from '../csl-loader';
 
 const connection = createConnection(ProposedFeatures.all);
@@ -650,7 +650,7 @@ async function validateCslField(doc: TextDocument): Promise<void> {
 }
 
 function validateOrientationDirectives(doc: TextDocument): void {
-	const text = doc.getText();
+	const text = maskFrontmatter(doc.getText());
 	const codeRegions = computeCodeRegions(text);
 	const findings = scanOrientationDirectives(text, codeRegions);
 	const diagnostics: Diagnostic[] = [];

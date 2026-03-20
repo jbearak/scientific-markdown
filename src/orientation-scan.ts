@@ -1,4 +1,5 @@
 import { type CodeRegion, computeCodeRegions, isInsideCodeRegion } from './code-regions';
+import MarkdownIt from 'markdown-it';
 
 export interface OrientationDiagnostic {
   kind: 'unclosed' | 'orphaned' | 'nested' | 'crossed';
@@ -47,8 +48,54 @@ function isStandaloneDirective(text: string, matchStart: number, matchEnd: numbe
   return true;
 }
 
+const md = new MarkdownIt({ html: true, linkify: true });
+const HTML_COMMENT_ONLY_RE = /^<!--[\s\S]*?-->\s*$/;
+
+function lineStartOffsets(text: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') starts.push(i + 1);
+  }
+  return starts;
+}
+
+function mergeRegions(regions: CodeRegion[]): CodeRegion[] {
+  if (regions.length <= 1) return regions;
+  const sorted = [...regions].sort((a, b) => a.start - b.start);
+  const merged: CodeRegion[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = merged[merged.length - 1];
+    const next = sorted[i];
+    if (next.start <= prev.end) {
+      prev.end = Math.max(prev.end, next.end);
+    } else {
+      merged.push({ start: next.start, end: next.end });
+    }
+  }
+  return merged;
+}
+
+function computeLiteralHtmlBlockRegions(text: string): CodeRegion[] {
+  const lineStarts = lineStartOffsets(text);
+  const lineOffset = (line: number): number => line < lineStarts.length ? lineStarts[line] : text.length;
+  const regions: CodeRegion[] = [];
+  for (const token of md.parse(text, {})) {
+    if (token.type !== 'html_block') continue;
+    if (HTML_COMMENT_ONLY_RE.test(token.content.trim())) continue;
+    if (!token.map) continue;
+    regions.push({
+      start: lineOffset(token.map[0]),
+      end: lineOffset(token.map[1]),
+    });
+  }
+  return regions;
+}
+
 export function scanOrientationDirectives(text: string, codeRegions?: CodeRegion[]): OrientationDiagnostic[] {
-  const regions = codeRegions ?? computeCodeRegions(text);
+  const regions = mergeRegions([
+    ...(codeRegions ?? computeCodeRegions(text)),
+    ...computeLiteralHtmlBlockRegions(text),
+  ]);
   const directiveRe = /<!--\s*(\/?)(landscape|portrait)\s*-->/gi;
   const openStack: { name: string; start: number; end: number }[] = [];
   const results: OrientationDiagnostic[] = [];
