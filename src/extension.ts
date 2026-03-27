@@ -857,6 +857,14 @@ export function activate(context: vscode.ExtensionContext) {
 	if (vscode.window.activeTextEditor) {
 		updateHighlightDecorations(vscode.window.activeTextEditor);
 	}
+	// Refresh markdown preview when external programs modify .md files on disk
+	const previewRefreshWatcher = vscode.workspace.createFileSystemWatcher('**/*.md');
+	const refreshPreview = () => { vscode.commands.executeCommand('markdown.preview.refresh'); };
+	previewRefreshWatcher.onDidChange(refreshPreview);
+	previewRefreshWatcher.onDidCreate(refreshPreview);
+	previewRefreshWatcher.onDidDelete(refreshPreview);
+	context.subscriptions.push(previewRefreshWatcher);
+
 	context.subscriptions.push(
 		vscode.window.onDidChangeActiveTextEditor(editor => {
 			if (editor) { updateHighlightDecorations(editor); }
