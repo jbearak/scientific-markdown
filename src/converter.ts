@@ -2,7 +2,6 @@ import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import { ommlToLatex } from './omml';
 import { resolveMarkdownColor } from './highlight-colors';
-import { wrapColoredHighlight } from './formatting';
 import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths, type CustomStyleDef } from './frontmatter';
 import { gfmAlertTitle, parseGfmAlertMarker, toGfmAlertMarker, type GfmAlertType } from './gfm';
 import { emuToPixels, isSupportedImageFormat, resolveImageFilename } from './image-utils';
@@ -766,7 +765,15 @@ export function parseRunProperties(
   return formatting;
 }
 
-/** Apply formatting delimiters in nesting order */
+/** Apply formatting delimiters in nesting order, keeping edge whitespace outside markers. */
+function wrapMarkdownDelimited(text: string, open: string, close = open, suffix = ''): string {
+  const match = text.match(/^(\s*)(.*?)(\s*)$/s);
+  if (!match) return open + text + close + suffix;
+  const [, leading, core, trailing] = match;
+  if (!core) return text;
+  return leading + open + core + close + suffix + trailing;
+}
+
 export function wrapWithFormatting(text: string, fmt: RunFormatting): string {
   let result = text;
 
@@ -806,15 +813,15 @@ export function wrapWithFormatting(text: string, fmt: RunFormatting): string {
   if (fmt.highlight) {
     const color = fmt.highlightColor ? resolveMarkdownColor(fmt.highlightColor) : undefined;
     if (color && color !== 'yellow') {
-      result = wrapColoredHighlight(result, color).newText;
+      result = wrapMarkdownDelimited(result, '==', '==', '{' + color + '}');
     } else {
-      result = `==${result}==`;
+      result = wrapMarkdownDelimited(result, '==', '==');
     }
   }
   if (fmt.underline) result = `<u>${result}</u>`;
-  if (fmt.strikethrough) result = `~~${result}~~`;
-  if (fmt.italic) result = `*${result}*`;
-  if (fmt.bold) result = `**${result}**`;
+  if (fmt.strikethrough) result = wrapMarkdownDelimited(result, '~~', '~~');
+  if (fmt.italic) result = wrapMarkdownDelimited(result, '*');
+  if (fmt.bold) result = wrapMarkdownDelimited(result, '**');
 
   return result;
 }
@@ -3307,8 +3314,8 @@ function renderInlineRange(
             groupText += wrapWithFormatting(gItem.text, innerFmt);
           }
         }
-        if (item.formatting.italic) groupText = '*' + groupText + '*';
-        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        if (item.formatting.italic) groupText = wrapMarkdownDelimited(groupText, '*');
+        if (item.formatting.bold) groupText = wrapMarkdownDelimited(groupText, '**');
         out += groupText;
         i = groupEnd;
         continue;
@@ -3577,8 +3584,8 @@ function renderInlineRangeWithIds(
             groupText += wrapWithFormatting(gItem.text, innerFmt);
           }
         }
-        if (item.formatting.italic) groupText = '*' + groupText + '*';
-        if (item.formatting.bold) groupText = '**' + groupText + '**';
+        if (item.formatting.italic) groupText = wrapMarkdownDelimited(groupText, '*');
+        if (item.formatting.bold) groupText = wrapMarkdownDelimited(groupText, '**');
         out += groupText;
         i = groupEnd;
         continue;
