@@ -1771,8 +1771,8 @@ describe('wrapWithFormatting', () => {
           };
           
           const [open, close] = delimiters[formatType as keyof typeof delimiters];
-          expect(result.includes(open)).toBe(true);
-          expect(result.includes(close)).toBe(true);
+          expect(result.startsWith(open)).toBe(true);
+          expect(result.endsWith(close)).toBe(true);
         }
       ),
       { numRuns: 100 }
@@ -1862,9 +1862,10 @@ describe('buildMarkdown', () => {
           
           const result = buildMarkdown(content, new Map());
           const expectedText = texts.join('');
+          const expectedRendering = wrapWithFormatting(expectedText, formatting);
           
-          // The result should contain the merged text
-          expect(result).toContain(expectedText);
+          // The result should contain the merged rendering for the combined text.
+          expect(result).toContain(expectedRendering);
           
           // For simple cases, verify no duplicate formatting
           if (Object.values(formatting).filter(Boolean).length === 1) {
