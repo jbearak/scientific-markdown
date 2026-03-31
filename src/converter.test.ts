@@ -39,6 +39,10 @@ const commentsData = new Uint8Array(readFileSync(join(fixturesDir, 'comments.doc
 const expectedMd = readFileSync(join(fixturesDir, 'expected-output.md'), 'utf-8').trimEnd();
 const expectedBib = readFileSync(join(fixturesDir, 'expected-output.bib'), 'utf-8').trimEnd();
 
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 
 describe('extractComments', () => {
   test('extracts all comments with correct metadata', async () => {
@@ -1589,7 +1593,73 @@ describe('extractDocumentContent', () => {
 </w:document>`);
     const buf = await zip.generateAsync({ type: 'uint8array' });
     const result = await convertDocx(buf);
-    expect(result.markdown).toBe('**Bold **Plain\n');
+    expect(result.markdown).toBe('**Bold** Plain\n');
+  });
+
+  test('run boundary hoists trailing whitespace outside italic delimiters', async () => {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>');
+    zip.file('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+    zip.file('word/document.xml', `<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:rPr><w:i/></w:rPr>
+        <w:t>Italic </w:t>
+      </w:r>
+      <w:r><w:t>Plain</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`);
+    const buf = await zip.generateAsync({ type: 'uint8array' });
+    const result = await convertDocx(buf);
+    expect(result.markdown).toBe('*Italic* Plain\n');
+  });
+
+  test('run boundary hoists trailing whitespace outside strikethrough delimiters', async () => {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>');
+    zip.file('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+    zip.file('word/document.xml', `<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:rPr><w:strike/></w:rPr>
+        <w:t>Strike </w:t>
+      </w:r>
+      <w:r><w:t>Plain</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`);
+    const buf = await zip.generateAsync({ type: 'uint8array' });
+    const result = await convertDocx(buf);
+    expect(result.markdown).toBe('~~Strike~~ Plain\n');
+  });
+
+  test('run boundary hoists trailing whitespace outside highlight delimiters', async () => {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>');
+    zip.file('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+    zip.file('word/document.xml', `<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:rPr><w:highlight w:val="green"/></w:rPr>
+        <w:t>Mark </w:t>
+      </w:r>
+      <w:r><w:t>Plain</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`);
+    const buf = await zip.generateAsync({ type: 'uint8array' });
+    const result = await convertDocx(buf);
+    expect(result.markdown).toBe('==Mark=={green} Plain\n');
   });
 });
 
@@ -1664,6 +1734,18 @@ describe('convertDocx (end-to-end)', () => {
 });
 
 describe('wrapWithFormatting', () => {
+  test('moves edge whitespace outside delimiter-based formatting markers', () => {
+    expect(wrapWithFormatting('Bold ', { ...DEFAULT_FORMATTING, bold: true })).toBe('**Bold** ');
+    expect(wrapWithFormatting(' Bold', { ...DEFAULT_FORMATTING, italic: true })).toBe(' *Bold*');
+    expect(wrapWithFormatting(' Bold ', { ...DEFAULT_FORMATTING, bold: true, italic: true })).toBe(' ***Bold*** ');
+    expect(wrapWithFormatting('Strike ', { ...DEFAULT_FORMATTING, strikethrough: true })).toBe('~~Strike~~ ');
+    expect(wrapWithFormatting(' Mark ', { ...DEFAULT_FORMATTING, highlight: true })).toBe(' ==Mark== ');
+    expect(wrapWithFormatting(' Mark ', { ...DEFAULT_FORMATTING, highlight: true, highlightColor: 'green' })).toBe(' ==Mark=={green} ');
+    expect(wrapWithFormatting('   ', { ...DEFAULT_FORMATTING, bold: true })).toBe('   ');
+    expect(wrapWithFormatting('   ', { ...DEFAULT_FORMATTING, strikethrough: true })).toBe('   ');
+    expect(wrapWithFormatting('   ', { ...DEFAULT_FORMATTING, highlight: true, highlightColor: 'green' })).toBe('   ');
+  });
+
   // Property 1: Formatting wrapping produces correct delimiters
   test('property: single formatting flag produces correct delimiters', () => {
     fc.assert(
@@ -1675,6 +1757,11 @@ describe('wrapWithFormatting', () => {
           (fmt as any)[formatType] = true;
 
           const result = wrapWithFormatting(text, fmt);
+
+          if ((formatType === 'bold' || formatType === 'italic' || formatType === 'strikethrough' || formatType === 'highlight') && text.trim().length === 0) {
+            expect(result).toBe(text);
+            return;
+          }
 
           const delimiters = {
             bold: ['**', '**'],
@@ -1688,8 +1775,13 @@ describe('wrapWithFormatting', () => {
           };
           
           const [open, close] = delimiters[formatType as keyof typeof delimiters];
-          expect(result.startsWith(open)).toBe(true);
-          expect(result.endsWith(close)).toBe(true);
+          if (formatType === 'bold' || formatType === 'italic' || formatType === 'strikethrough' || formatType === 'highlight') {
+            expect(result).toMatch(new RegExp(`^\\s*${escapeForRegex(open)}`));
+            expect(result).toMatch(new RegExp(`${escapeForRegex(close)}\\s*$`));
+          } else {
+            expect(result.startsWith(open)).toBe(true);
+            expect(result.endsWith(close)).toBe(true);
+          }
         }
       ),
       { numRuns: 100 }
@@ -1714,6 +1806,18 @@ describe('wrapWithFormatting', () => {
         (text, fmt) => {
           const result = wrapWithFormatting(text, fmt);
 
+          if (
+            !fmt.code
+            && text.trim().length === 0
+            && (fmt.bold || fmt.italic || fmt.strikethrough || fmt.highlight)
+            && !fmt.underline
+            && !fmt.superscript
+            && !fmt.subscript
+          ) {
+            expect(result).toBe(text);
+            return;
+          }
+
           // When code is true, all other formatting is stripped — only backtick fence
           if (fmt.code) {
             expect(result).toMatch(/^`/);
@@ -1721,24 +1825,51 @@ describe('wrapWithFormatting', () => {
             return;
           }
 
-          // Check nesting order: bold (outermost) → italic → strikethrough → underline → highlight → super/subscript
-          const patterns = [];
-          if (fmt.bold) patterns.push('\\*\\*');
-          if (fmt.italic) patterns.push('\\*');
-          if (fmt.strikethrough) patterns.push('~~');
-          if (fmt.underline) patterns.push('<u>');
-          if (fmt.highlight) patterns.push('==');
-          // Superscript takes precedence over subscript
-          if (fmt.superscript) {
-            patterns.push('<sup>');
-          } else if (fmt.subscript) {
-            patterns.push('<sub>');
+          // Check nesting order without assuming wrappers begin at column 0,
+          // because delimiter-based formatting hoists edge whitespace outward.
+          const openTokens = [];
+          const closeTokens = [];
+          if (fmt.bold && result.includes('**')) {
+            openTokens.push('**');
+            closeTokens.unshift('**');
           }
-          
-          // Build expected opening pattern
-          const openPattern = patterns.join('');
-          const regex = new RegExp(`^${openPattern}`);
-          expect(result).toMatch(regex);
+          if (fmt.italic && result.includes('*')) {
+            openTokens.push('*');
+            closeTokens.unshift('*');
+          }
+          if (fmt.strikethrough && result.includes('~~')) {
+            openTokens.push('~~');
+            closeTokens.unshift('~~');
+          }
+          if (fmt.underline && result.includes('<u>')) {
+            openTokens.push('<u>');
+            closeTokens.unshift('</u>');
+          }
+          if (fmt.highlight && result.includes('==')) {
+            openTokens.push('==');
+            closeTokens.unshift('==');
+          }
+          if (fmt.superscript && result.includes('<sup>')) {
+            openTokens.push('<sup>');
+            closeTokens.unshift('</sup>');
+          } else if (fmt.subscript && result.includes('<sub>')) {
+            openTokens.push('<sub>');
+            closeTokens.unshift('</sub>');
+          }
+
+          let fromStart = 0;
+          for (const token of openTokens) {
+            const index = result.indexOf(token, fromStart);
+            expect(index).toBeGreaterThanOrEqual(0);
+            fromStart = index + token.length;
+          }
+
+          let closeSearchFrom = fromStart;
+          for (const token of closeTokens) {
+            const index = result.indexOf(token, closeSearchFrom);
+            expect(index).toBeGreaterThanOrEqual(0);
+            closeSearchFrom = index + token.length;
+          }
         }
       ),
       { numRuns: 100 }
@@ -1774,9 +1905,10 @@ describe('buildMarkdown', () => {
           
           const result = buildMarkdown(content, new Map());
           const expectedText = texts.join('');
+          const expectedRendering = wrapWithFormatting(expectedText, formatting);
           
-          // The result should contain the merged text
-          expect(result).toContain(expectedText);
+          // The result should contain the merged rendering for the combined text.
+          expect(result).toContain(expectedRendering);
           
           // For simple cases, verify no duplicate formatting
           if (Object.values(formatting).filter(Boolean).length === 1) {
@@ -1959,7 +2091,7 @@ describe('buildMarkdown', () => {
 
     const result = buildMarkdown(content, comments, { alwaysUseCommentIds: true });
     // The highlight wraps both runs that have it, producing two ==...== regions
-    expect(result).toContain('==before ==');
+    expect(result).toContain('==before== ');
     expect(result).toContain('==overlap==');
     // Comment boundary markers are present
     expect(result).toContain('{#1}');
