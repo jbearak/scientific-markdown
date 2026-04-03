@@ -1,0 +1,222 @@
+import { describe, it, expect } from 'bun:test';
+import * as XLSX from 'xlsx';
+import { parseXlsx } from './xlsx-parser';
+
+/** Build an XLSX buffer from a 2D array of cell values. */
+function buildXlsx(data: string[][], opts?: {
+  sheetName?: string;
+  merges?: XLSX.Range[];
+  extraSheets?: Array<{ name: string; data: string[][] }>;
+  definedNames?: Array<{ name: string; ref: string; sheet: string }>;
+}): Uint8Array {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  if (opts?.merges) {
+    ws['!merges'] = opts.merges;
+  }
+  XLSX.utils.book_append_sheet(wb, ws, opts?.sheetName ?? 'Sheet1');
+  if (opts?.extraSheets) {
+    for (const extra of opts.extraSheets) {
+      const extraWs = XLSX.utils.aoa_to_sheet(extra.data);
+      XLSX.utils.book_append_sheet(wb, extraWs, extra.name);
+    }
+  }
+  if (opts?.definedNames) {
+    wb.Workbook = wb.Workbook || {};
+    wb.Workbook.Names = opts.definedNames.map(dn => ({
+      Name: dn.name,
+      Ref: `'${dn.sheet}'!${dn.ref}`,
+    }));
+  }
+  const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  return new Uint8Array(buf);
+}
+
+describe('parseXlsx', () => {
+  it('parses a simple table from the first sheet', () => {
+    const data = [
+      ['Name', 'Age'],
+      ['Alice', '30'],
+      ['Bob', '25'],
+    ];
+    const buf = buildXlsx(data);
+    const meta = parseXlsx(buf, { headers: 1 });
+
+    expect(meta.rows.length).toBe(3);
+    expect(meta.rows[0].header).toBe(true);
+    expect(meta.rows[1].header).toBe(false);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('Name');
+    expect(meta.rows[0].cells[1].runs[0].text).toBe('Age');
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('Alice');
+  });
+
+  it('selects a sheet by name', () => {
+    const buf = buildXlsx([['A']], {
+      sheetName: 'First',
+      extraSheets: [{ name: 'Second', data: [['B'], ['C']] }],
+    });
+    const meta = parseXlsx(buf, { sheet: 'Second', headers: 1 });
+
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('B');
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('C');
+  });
+
+  it('selects a sheet by 1-based index', () => {
+    const buf = buildXlsx([['A']], {
+      sheetName: 'First',
+      extraSheets: [{ name: 'Second', data: [['B']] }],
+    });
+    const meta = parseXlsx(buf, { sheet: '2', headers: 0 });
+
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('B');
+  });
+
+  it('auto-detects the bounding rectangle when no range specified', () => {
+    // Create a sheet with data not starting at A1
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([]);
+    // Place data at C3:D4
+    XLSX.utils.sheet_add_aoa(ws, [['X', 'Y'], ['1', '2']], { origin: 'C3' });
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const buf = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+
+    const meta = parseXlsx(buf, { headers: 1 });
+    expect(meta.rows.length).toBe(2);
+    expect(meta.rows[0].cells.length).toBe(2);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('X');
+  });
+
+  it('respects an explicit cell range', () => {
+    const data = [
+      ['A', 'B', 'C'],
+      ['1', '2', '3'],
+      ['4', '5', '6'],
+      ['7', '8', '9'],
+    ];
+    const buf = buildXlsx(data);
+    const meta = parseXlsx(buf, { range: 'B2:C3', headers: 0 });
+
+    expect(meta.rows.length).toBe(2);
+    expect(meta.rows[0].cells.length).toBe(2);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('2');
+    expect(meta.rows[0].cells[1].runs[0].text).toBe('3');
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('5');
+  });
+
+  it('resolves a named range', () => {
+    const data = [
+      ['A', 'B', 'C'],
+      ['1', '2', '3'],
+      ['4', '5', '6'],
+    ];
+    const buf = buildXlsx(data, {
+      definedNames: [{ name: 'MyRange', ref: '$B$1:$C$2', sheet: 'Sheet1' }],
+    });
+    const meta = parseXlsx(buf, { range: 'MyRange', headers: 1 });
+
+    expect(meta.rows.length).toBe(2);
+    expect(meta.rows[0].header).toBe(true);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('B');
+    expect(meta.rows[0].cells[1].runs[0].text).toBe('C');
+  });
+
+  it('handles merged cells with colspan', () => {
+    const data = [
+      ['Merged', '', 'C'],
+      ['1', '2', '3'],
+    ];
+    const buf = buildXlsx(data, {
+      merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }], // A1:B1 merged
+    });
+    const meta = parseXlsx(buf, { headers: 1 });
+
+    expect(meta.rows[0].cells[0].colspan).toBe(2);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('Merged');
+    // The merged cell should only produce one cell in the row, not two
+    // Total cells in header row: the merged cell + C = 2 logical cells
+    expect(meta.rows[0].cells.length).toBe(2);
+  });
+
+  it('handles merged cells with rowspan', () => {
+    const data = [
+      ['Header', 'Value'],
+      ['Span', '1'],
+      ['', '2'],
+    ];
+    const buf = buildXlsx(data, {
+      merges: [{ s: { r: 1, c: 0 }, e: { r: 2, c: 0 } }], // A2:A3 merged
+    });
+    const meta = parseXlsx(buf, { headers: 1 });
+
+    expect(meta.rows[1].cells[0].rowspan).toBe(2);
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('Span');
+    // Row 3 should not have the merged cell
+    expect(meta.rows[2].cells.length).toBe(1); // only the Value column
+  });
+
+  it('handles merged cells with both colspan and rowspan', () => {
+    const data = [
+      ['Merged', '', 'C'],
+      ['', '', 'D'],
+      ['E', 'F', 'G'],
+    ];
+    const buf = buildXlsx(data, {
+      merges: [{ s: { r: 0, c: 0 }, e: { r: 1, c: 1 } }], // A1:B2 merged
+    });
+    const meta = parseXlsx(buf, { headers: 0 });
+
+    expect(meta.rows[0].cells[0].colspan).toBe(2);
+    expect(meta.rows[0].cells[0].rowspan).toBe(2);
+  });
+
+  it('defaults to headers=1 when not specified', () => {
+    const data = [
+      ['Name', 'Age'],
+      ['Alice', '30'],
+    ];
+    const buf = buildXlsx(data);
+    const meta = parseXlsx(buf);
+
+    expect(meta.rows[0].header).toBe(true);
+    expect(meta.rows[1].header).toBe(false);
+  });
+
+  it('throws for non-existent sheet name', () => {
+    const buf = buildXlsx([['A']]);
+    expect(() => parseXlsx(buf, { sheet: 'NonExistent' })).toThrow();
+  });
+
+  it('throws for out-of-range sheet index', () => {
+    const buf = buildXlsx([['A']]);
+    expect(() => parseXlsx(buf, { sheet: '99' })).toThrow();
+  });
+
+  it('throws for non-existent named range', () => {
+    const buf = buildXlsx([['A']]);
+    expect(() => parseXlsx(buf, { range: 'DoesNotExist' })).toThrow();
+  });
+
+  it('handles numeric cell values', () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([['Count'], [42], [3.14]]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const buf = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+
+    const meta = parseXlsx(buf, { headers: 1 });
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('42');
+    expect(meta.rows[2].cells[0].runs[0].text).toBe('3.14');
+  });
+
+  it('handles empty cells as empty text', () => {
+    const data = [
+      ['A', 'B'],
+      ['', '1'],
+      ['2', ''],
+    ];
+    const buf = buildXlsx(data);
+    const meta = parseXlsx(buf, { headers: 1 });
+
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('');
+    expect(meta.rows[2].cells[1].runs[0].text).toBe('');
+  });
+});
