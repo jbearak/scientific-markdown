@@ -30,8 +30,8 @@ function resolveDir(subdir: string): string {
   // When running via bun test, __dirname is the src/ folder
   const fromSrc = join(__dirname, subdir);
   if (existsSync(fromSrc)) return fromSrc;
-  // When running compiled (out/csl-loader.js), go up to project root
-  const fromOut = join(dirname(__dirname), 'src', subdir);
+  // When running compiled (out/src/csl-loader.js), go up to project root
+  const fromOut = join(dirname(dirname(__dirname)), 'src', subdir);
   if (existsSync(fromOut)) return fromOut;
   return fromSrc; // fallback
 }

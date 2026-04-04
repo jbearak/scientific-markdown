@@ -7,18 +7,23 @@
       "ES2022"
     ],
     "sourceMap": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
+  "include": [
+    "src/**/*.ts",
+    "sight/src/dta-parser/**/*.ts"
+  ],
   "exclude": [
     "node_modules",
     ".vscode-test",
     "src/test",
     "**/*.test.ts",
     "test",
-    "scripts"
+    "scripts",
+    "sight"
   ]
 }
