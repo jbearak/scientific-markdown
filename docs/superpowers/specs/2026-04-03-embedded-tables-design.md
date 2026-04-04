@@ -8,13 +8,13 @@ Users need to embed tables from external files (.md, .csv, .tsv, .xlsx) into Man
 
 A single HTML comment directive:
 
-```
+```markdown
 <!-- embed: <path> [sheet=<name>] [range=<ref>] [headers=<n>] -->
 ```
 
 All values, including the file path, support optional single or double quotes to allow spaces:
 
-```
+```markdown
 <!-- embed: "my data/results.xlsx" sheet='Sheet One' range=A1:F20 headers=2 -->
 ```
 
@@ -38,7 +38,7 @@ Only the path parameter is accepted. The embedded file is expected to contain ta
 
 Existing table directives work with embeds, placed before the embed comment:
 
-```
+```markdown
 <!-- table-font-size: 9 -->
 <!-- table-orientation: landscape -->
 <!-- embed: data/results.csv headers=1 -->
@@ -159,7 +159,7 @@ When md-to-docx resolves an embed directive, the resulting Word table is indisti
 ### During docx-to-md (`converter.ts`):
 
 - Extract the mapping via `extractIdMappingFromCustomXml(data, 'MANUSCRIPT_EMBED_DIRECTIVES')`
-- When rendering a table whose ordinal has an embed directive entry, emit the directive text instead of rendering the table as markdown
+- When rendering a table whose ordinal has an embed directive entry, emit the directive text instead of rendering the table as Markdown
 - Table directives (font-size, orientation, etc.) are still stored in their own custom properties and emitted as preceding comments, same as today
 
 ### Edge case
@@ -174,7 +174,7 @@ The embed preprocessor runs first in the preprocessing chain. For the preview, t
 
 **Preprocessing chain:**
 
-```
+```text
 preprocessEmbedsWithMap(src, resolver)
   → preprocessGridTablesWithMap
   → wrapBareLatexEnvironmentsWithMap

@@ -4065,6 +4065,39 @@ function buildTableDirectivePrefix(
   return { fontPrefix, commentUnsafeFont };
 }
 
+const STRUCTURAL_SENTINEL_RE = /^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i;
+const HTML_COMMENT_RE = /^<!--[\s\S]*?-->$/;
+
+/**
+ * Insert a directive prefix + body into the output array, hoisting the prefix
+ * above any immediately-preceding HTML comment entries so that table directives
+ * appear above user sentinel comments (preserving original document order).
+ */
+function pushWithHoistedPrefix(output: string[], directivePrefix: string, body: string): void {
+  if (!directivePrefix) {
+    output.push(body);
+    return;
+  }
+  let scanIdx = output.length;
+  while (scanIdx > 0) {
+    const prev = output[scanIdx - 1];
+    const trimmedPrev = prev.trim();
+    if (STRUCTURAL_SENTINEL_RE.test(trimmedPrev)) break;
+    if (HTML_COMMENT_RE.test(trimmedPrev)) { scanIdx--; continue; }
+    if (/^\s*$/.test(prev) && scanIdx >= 2 && HTML_COMMENT_RE.test(output[scanIdx - 2].trim())
+        && !STRUCTURAL_SENTINEL_RE.test(output[scanIdx - 2].trim())) {
+      scanIdx--; continue;
+    }
+    break;
+  }
+  const commentBlock = output.splice(scanIdx);
+  const userComments = commentBlock.filter(e => !/^\s*$/.test(e));
+  const combined = directivePrefix.replace(/\n+$/, '')
+    + (userComments.length > 0 ? '\n' + userComments.join('\n') : '');
+  output.push(combined);
+  output.push('\n' + body);
+}
+
 function renderTableOrFallback(
   item: { rows: TableRow[] },
   comments: Map<string, Comment>,
@@ -5278,7 +5311,7 @@ export function buildMarkdown(
       const embedDirective = renderOpts?.embedDirectiveMapping?.get(String(tableIndex));
       if (embedDirective) {
         const { fontPrefix: embedPrefix } = buildTableDirectivePrefix(renderOpts, tableIndex);
-        output.push(embedPrefix + embedDirective);
+        pushWithHoistedPrefix(output, embedPrefix, embedDirective);
         tableIndex++;
         lastListType = undefined;
         lastListLevel = undefined;
@@ -5293,36 +5326,7 @@ export function buildMarkdown(
       }
       const storedFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));
       const tableResult = renderTableOrFallback(item, comments, options, renderOpts, storedFormat, tableIndex);
-      // Insert directive prefix before any immediately-preceding HTML comment entries
-      // so that directives appear above user sentinel comments (preserving original order).
-      if (tableResult.directivePrefix) {
-        // Scan backwards past HTML comments and their inter-comment separators,
-        // but stop at (preserve) the separator between non-comment content and
-        // the first comment — that separator was computed from gap metadata.
-        let scanIdx = output.length;
-        while (scanIdx > 0) {
-          const prev = output[scanIdx - 1];
-          const trimmedPrev = prev.trim();
-          // Never hoist past structural sentinel comments
-          if (/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(trimmedPrev)) break;
-          if (/^<!--[\s\S]*?-->$/.test(trimmedPrev)) { scanIdx--; continue; }
-          // Whitespace separator: skip only if it sits between two comments
-          if (/^\s*$/.test(prev) && scanIdx >= 2 && /^<!--[\s\S]*?-->$/.test(output[scanIdx - 2].trim())
-              && !/^<!--\s*(?:\/?(?:landscape|portrait|references|bibliography|style)\b.*?)\s*-->$/i.test(output[scanIdx - 2].trim())) {
-            scanIdx--; continue;
-          }
-          break;
-        }
-        // Splice out the comment entries (and any inter-comment seps + trailing table sep)
-        const commentBlock = output.splice(scanIdx);
-        const userComments = commentBlock.filter(e => !/^\s*$/.test(e));
-        const combined = tableResult.directivePrefix.replace(/\n+$/, '')
-          + (userComments.length > 0 ? '\n' + userComments.join('\n') : '');
-        output.push(combined);
-        output.push('\n' + tableResult.body);
-      } else {
-        output.push(tableResult.body);
-      }
+      pushWithHoistedPrefix(output, tableResult.directivePrefix, tableResult.body);
       tableIndex++;
       lastListType = undefined;
       lastListLevel = undefined;
