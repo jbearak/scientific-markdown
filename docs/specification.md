@@ -4,7 +4,7 @@ Manuscript Markdown extends standard Markdown with CriticMarkup annotations, Pan
 
 ## YAML Frontmatter
 
-Manuscript Markdown files may begin with a YAML frontmatter block delimited by `---`. The `title` field stores the document title:
+Manuscript Markdown files may begin with a [YAML](https://yaml.org) frontmatter block delimited by `---`. The `title` field stores the document title:
 
 ```yaml
 ---
