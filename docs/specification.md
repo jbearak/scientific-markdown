@@ -268,7 +268,7 @@ For a single table, use the `data-orientation` attribute or a comment directive:
 
 Embed tables from external files using an HTML comment directive:
 
-```
+```markdown
 <!-- embed: <path> [sheet=<name>] [range=<ref>] [headers=<n>] -->
 ```
 

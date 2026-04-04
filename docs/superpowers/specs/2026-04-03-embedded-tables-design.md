@@ -66,7 +66,7 @@ Embed resolution follows the established grid table pattern: a preprocessor runs
 
 ### `src/embed-preprocess.ts`
 
-**Core function:** `preprocessEmbeds(markdown: string, resolver: EmbedResolver): string`
+**Core function:** `preprocessEmbeds(markdown: string, resolver: EmbedResolver, documentPath: string): string`
 
 - Scans for `<!-- embed: ... -->` comments, skipping fenced code blocks
 - Calls the resolver to read and parse the external file

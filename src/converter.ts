@@ -5267,7 +5267,11 @@ export function buildMarkdown(
         lastListLevel = undefined;
         listTypeByLevel.clear();
         lastAlertParagraphKey = undefined;
-        incomingSep = '\n\n';
+        pendingAlertPrefixStrip = undefined;
+        pendingAlertInlinePrefixForHardBreak = undefined;
+        lastBlockquoteAlertType = undefined;
+        lastBlockquoteLevel = undefined;
+        i++;
         continue;
       }
       const storedFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));

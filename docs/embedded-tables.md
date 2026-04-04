@@ -96,7 +96,7 @@ Available directives: `table-font-size`, `table-font`, `table-orientation`, `tab
 
 ## Round-Trip Behavior
 
-When you export to Word, embed directives are expanded into full tables — the resulting DOCX contains the actual table data, not a reference to an external file. The original directive is preserved internally so that re-importing the DOCX recovers the embed reference rather than inlining the table as markdown.
+When you export to Word, embed directives are expanded into full tables — the resulting DOCX contains the actual table data, not a reference to an external file. The original directive is preserved internally so that re-importing the DOCX recovers the embed reference rather than inlining the table as Markdown.
 
 If the external file changes between export and re-import, the next export picks up the updated data. The embedded file is always the source of truth.
 

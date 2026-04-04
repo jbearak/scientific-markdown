@@ -1,6 +1,5 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
 import { computeCodeRegions, overlapsCodeRegion } from '../code-regions';
 import { scanOrientationDirectives } from '../orientation-scan';
 import { parseEmbedDirective } from '../embed-preprocess';
@@ -689,7 +688,8 @@ function validateEmbedDirectives(doc: TextDocument): void {
 	const lines = text.split('\n');
 	const codeRegions = computeCodeRegions(text);
 	const diagnostics: Diagnostic[] = [];
-	const docPath = fileURLToPath(doc.uri);
+	const docPath = uriToFsPath(doc.uri);
+	if (!docPath) return;
 	const docDir = path.dirname(docPath);
 
 	let offset = 0;
@@ -721,7 +721,7 @@ function validateEmbedDirectives(doc: TextDocument): void {
 						// For XLSX, validate sheet and range params
 						if (ext === '.xlsx' && (directive.sheet || directive.range)) {
 							try {
-								const XLSX = require('xlsx');
+								const XLSX = require('@e965/xlsx');
 								const data = new Uint8Array(require('fs').readFileSync(absPath));
 								const wb = XLSX.read(data, { type: 'array' });
 

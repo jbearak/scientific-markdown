@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import fc from 'fast-check';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import { parseXlsx } from './xlsx-parser';
 
 /** Build a simple XLSX from a 2D string array. */

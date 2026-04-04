@@ -303,7 +303,7 @@ Markdown→DOCX export accepts pipe tables, grid tables, and HTML tables (with `
 Append to that same bullet:
 
 ```
-. Embed directives (`<!-- embed: path -->`) are expanded into full tables on export; the original directive is stored as a `MANUSCRIPT_EMBED_DIRECTIVES` custom property so that re-importing the DOCX recovers the embed reference. See [Embedded Tables](embedded-tables.md)
+. Embed directives (`<!-- embed: path -->`) are expanded into full tables on export; the original directive is stored in DOCX custom properties under the `MANUSCRIPT_EMBED_DIRECTIVES_` prefix so that re-importing the DOCX recovers the embed reference. See [Embedded Tables](embedded-tables.md)
 ```
 
 - [ ] **Step 2: Commit**

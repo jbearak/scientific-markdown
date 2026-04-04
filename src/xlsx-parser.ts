@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import type { HtmlTableMeta, HtmlTableRow, HtmlTableCell, HtmlTableRun } from './html-table-parser';
 
 function escapeHtml(text: string): string {

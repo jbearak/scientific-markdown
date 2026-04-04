@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import { parseXlsx } from './xlsx-parser';
 
 /** Build an XLSX buffer from a 2D array of cell values. */

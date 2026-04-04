@@ -246,9 +246,9 @@ export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolve
       embedDirectives.push(trimmed);
       let expanded = resolveEmbed(directive, resolver, documentPath);
 
-      // Tag the first <table in the expanded content with data-embed-idx for round-trip tracking.
-      // For .md embeds, table directives may precede the <table> tag.
-      expanded = expanded.replace(/<table(?=[\s>])/, '<table data-embed-idx="' + embedIdx + '"');
+      // Tag all <table> elements in the expanded content with data-embed-idx for round-trip tracking.
+      // .md embeds may produce multiple tables; all must map back to the same directive.
+      expanded = expanded.replace(/<table(?=[\s>])/g, '<table data-embed-idx="' + embedIdx + '"');
       embedIdx++;
 
       // Ensure blank line before
@@ -372,9 +372,31 @@ function extractTableBlocks(content: string): TableBlock[] {
   const lines = content.split('\n');
   const blocks: TableBlock[] = [];
   let pendingDirectives: string[] = [];
+  let fenceChar: '`' | '~' | null = null;
+  let fenceLen = 0;
   let i = 0;
 
   while (i < lines.length) {
+    // Track fenced code blocks — skip lines inside fences
+    const fenceMatch = lines[i].match(/^ {0,3}([`~]{3,})/);
+    if (fenceMatch) {
+      const run = fenceMatch[1];
+      const runChar = run[0] as '`' | '~';
+      if (!fenceChar) {
+        fenceChar = runChar;
+        fenceLen = run.length;
+      } else if (runChar === fenceChar && run.length >= fenceLen) {
+        fenceChar = null;
+        fenceLen = 0;
+      }
+      i++;
+      continue;
+    }
+    if (fenceChar) {
+      i++;
+      continue;
+    }
+
     const trimmed = lines[i].trim();
 
     // Skip blank lines between directives and tables
