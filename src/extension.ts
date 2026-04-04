@@ -1434,6 +1434,7 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 	const config = vscode.workspace.getConfiguration('manuscriptMarkdown');
 	const blockquoteStyle = config.get<'Quote' | 'IntenseQuote' | 'GitHub'>('blockquoteStyle', 'GitHub');
 	const colors = normalizeColorScheme(config.get<string>('colors') ?? '') ?? 'guttmacher';
+	const maxDtaFileSize = config.get<number>('embedDtaMaxFileSize', 10_485_760);
 	const result = await convertMdToDocx(input.markdown, {
 		bibtex: input.bibtex,
 		authorName: authorName ?? undefined,
@@ -1444,6 +1445,7 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 		colors,
 		documentPath: input.basePath + '.md',
 		embedResolver,
+		maxDtaFileSize,
 		onStyleNotFound: async (styleName: string) => {
 			const choice = await vscode.window.showWarningMessage(
 				`CSL style "${styleName}" is not bundled. Download it from the CSL repository? Without it, citations will use plain-text fallback formatting.`,

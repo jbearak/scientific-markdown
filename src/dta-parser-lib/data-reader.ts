@@ -20,6 +20,7 @@ import type {
     Row,
     RowCell,
 } from './types';
+import { is_legacy_format } from './types';
 
 // The <data> tag that precedes observation bytes
 const DATA_TAG = '<data>';
@@ -228,9 +229,13 @@ export function read_rows_from_buffer(
     const view = new DataView(buffer);
     const bytes = new Uint8Array(buffer);
 
-    // Data starts after the <data> tag
+    // Legacy formats (113–115) report section_offsets.data at the
+    // first observation byte; modern formats include a <data> tag.
+    const my_tag_length = is_legacy_format(
+        metadata.format_version
+    ) ? 0 : DATA_TAG_LENGTH;
     const my_data_start =
-        metadata.section_offsets.data + DATA_TAG_LENGTH;
+        metadata.section_offsets.data + my_tag_length;
 
     return read_rows_from_view(
         view,
