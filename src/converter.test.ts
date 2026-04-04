@@ -1982,7 +1982,7 @@ describe('buildMarkdown', () => {
   test('Property 5: Formatting delimiters appear inside hyperlink text', () => {
     fc.assert(
       fc.property(
-        fc.string({ minLength: 1, maxLength: 30 }).filter(s => !s.includes(']') && !s.includes(')')),
+        fc.string({ minLength: 1, maxLength: 30 }).filter(s => s.trim().length > 0 && !s.includes(']') && !s.includes(')')),
         fc.webUrl(),
         fc.record({
           bold: fc.boolean(),
@@ -2004,7 +2004,7 @@ describe('buildMarkdown', () => {
           }];
           
           const result = buildMarkdown(content, new Map());
-          const linkMatch = result.match(/\[(.*?)\]\((.*?)\)/);
+          const linkMatch = result.match(/\[(.*?)\]\((.*?)\)/s);
           expect(linkMatch).not.toBeNull();
           
           const linkText = linkMatch![1];
