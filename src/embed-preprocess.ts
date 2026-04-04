@@ -71,9 +71,8 @@ export function parseEmbedDirective(comment: string): EmbedDirective | null {
         result.range = val;
         break;
       case 'headers': {
-        const parsed = parseInt(val, 10);
-        if (Number.isFinite(parsed) && parsed >= 0) {
-          result.headers = parsed;
+        if (/^\d+$/.test(val)) {
+          result.headers = Number(val);
         }
         break;
       }
@@ -186,7 +185,7 @@ function renderRuns(runs: HtmlTableRun[]): string {
     if (run.type === 'hardbreak' || run.type === 'softbreak') {
       html += '<br>';
     } else {
-      html += run.text;
+      html += escapeHtml(run.text);
     }
   }
   return html;
@@ -400,6 +399,7 @@ function extractTableBlocks(content: string): TableBlock[] {
       if (!fenceChar) {
         fenceChar = runChar;
         fenceLen = run.length;
+        pendingDirectives = [];
       } else if (runChar === fenceChar && run.length >= fenceLen
         && lines[i].slice(fenceMatch.index! + run.length).trim() === '') {
         fenceChar = null;
@@ -634,6 +634,14 @@ function buildMapFromLines(origLines: string[], outLines: string[]): LineMap {
     if (!foundAnchor) break;
   }
 
-  if (segments.length === 0) return LineMap.identity();
+  if (segments.length === 0) {
+    // No unchanged anchors found — anchor all output lines to the first
+    // non-empty original line (typically the embed directive itself).
+    let anchorLine = 0;
+    for (let k = 0; k < origLines.length; k++) {
+      if (origLines[k].trim() !== '') { anchorLine = k; break; }
+    }
+    return LineMap.fromSegments([{ preprocessedStart: 0, originalStart: anchorLine, length: outLines.length }]);
+  }
   return LineMap.fromSegments(segments);
 }

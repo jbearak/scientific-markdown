@@ -6056,6 +6056,14 @@ export async function convertMdToDocx(
     const embedResult = preprocessEmbedsTracked(bodyWithoutFootnotes, options.embedResolver, options.documentPath);
     bodyForParsing = embedResult.output;
     embedDirectives = embedResult.embedDirectives;
+    // Also expand embeds inside footnote/endnote definitions
+    for (const [label, noteBody] of footnoteDefs) {
+      const noteResult = preprocessEmbedsTracked(noteBody, options.embedResolver, options.documentPath);
+      if (noteResult.output !== noteBody) {
+        footnoteDefs.set(label, noteResult.output);
+        embedDirectives.push(...noteResult.embedDirectives);
+      }
+    }
   }
 
   const tokens = parseMd(bodyForParsing, parseWarnings, frontmatter.breaks ?? false, maskFrontmatter(markdown));

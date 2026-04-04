@@ -23,7 +23,7 @@ export interface EmbedPathRange {
  *   [2] single-quoted path  OR
  *   [3] unquoted path
  */
-const PATH_RE = /<!--\s*embed:\s*(?:"([^"]+)"|'([^']+)'|(\S+))/;
+const PATH_RE = /<!--\s*embed:\s*(?:"([^"]+)"|'([^']+)'|(\S+?))\s*(?:-->|[\s])/;
 
 /**
  * Scan document text and return the location of each embed-directive file path.
