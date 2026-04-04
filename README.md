@@ -62,6 +62,7 @@ manuscript-markdown paper.md      # Markdown → DOCX
 
 - **Rich Text Support**: Markdown formatting toolbar for bold, italic, lists, headings, code, links, and tables
 - **Preview**: Real-time syntax highlighting and Markdown preview rendering
+- **Embedded Tables**: Embed tables from external .csv, .tsv, .xlsx, and .md files with a [single directive](docs/embedded-tables.md)
 
 ### Document Conversion
 
@@ -83,6 +84,7 @@ manuscript-markdown paper.md      # Markdown → DOCX
 - [CriticMarkup Syntax](docs/criticmarkup.md)
 - [Language Server](docs/language-server.md)
 - [DOCX Converter](docs/converter.md)
+- [Embedded Tables](docs/embedded-tables.md)
 - [LaTeX Equations](docs/latex-equations.md)
 - [Zotero Citation Roundtrip](docs/zotero-roundtrip.md)
 - [Configuration](docs/configuration.md)
