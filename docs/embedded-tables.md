@@ -1,6 +1,6 @@
 # Embedded Tables
 
-Tables can be written directly in your document as pipe tables, grid tables, or HTML tables. When your data lives in an external file — a spreadsheet, a CSV export, or a shared markdown file — you can embed it instead using a single directive. The embedded table behaves identically to an inline table for formatting, preview, and Word export.
+Tables can be written directly in your document as pipe tables, [grid tables](specification.md#grid-tables), or HTML tables. When your data lives in an external file — a spreadsheet, a CSV export, or a shared markdown file — you can embed it instead using a single directive. The embedded table behaves identically to an inline table for formatting, preview, and Word export.
 
 ## Syntax
 
@@ -82,7 +82,7 @@ This renders as a normal table in both the preview and Word output. If you updat
 
 ## Using Table Directives with Embeds
 
-Existing per-table directives work with embedded tables. Place them before the embed comment, the same way you would before an inline table:
+Document-wide table defaults set in [frontmatter](specification.md#yaml-frontmatter) (`table-font`, `table-font-size`, `table-col-widths`, `table-borders`) apply to embedded tables automatically — no per-table directive needed. To override a default for a specific embed, place a directive before the embed comment, the same way you would before an inline table:
 
 ```markdown
 <!-- table-font-size: 9 -->
@@ -91,7 +91,7 @@ Existing per-table directives work with embedded tables. Place them before the e
 <!-- embed: data/results.csv -->
 ```
 
-Available directives: `table-font-size`, `table-font`, `table-orientation`, `table-col-widths`. The last of these takes space-separated ratios (e.g. `2 1 1 1`); if there are fewer values than columns, the last value repeats — so `2 1` is equivalent to `2 1 1 1` for a four-column table. See [Specification](specification.md) for details on each directive.
+Available directives: `table-font-size`, `table-font`, `table-orientation`, `table-col-widths`. The last of these takes space-separated ratios (e.g. `2 1 1 1`); if there are fewer values than columns, the last value repeats — so `2 1` is equivalent to `2 1 1 1` for a four-column table. See the [Tables](specification.md#tables) section of the Specification for details on each directive.
 
 ## Round-Trip Behavior
 

@@ -129,7 +129,23 @@ code-font-size: 10
 ---
 ```
 
-### Table Font Configuration
+### Tables
+
+Manuscript Markdown provides four per-table directives and one frontmatter-only property for controlling table appearance. Set document-wide defaults in frontmatter, then override individual tables as needed.
+
+| Setting | Frontmatter | Comment directive | `data-` attribute | Notes |
+|---------|:-----------:|:-----------------:|:-----------------:|-------|
+| `table-font` | ✓ | ✓ | `data-font` | Falls back to `font` |
+| `table-font-size` | ✓ | ✓ | `data-font-size` | Auto-shrink: body size − 2pt |
+| `table-col-widths` | ✓ | ✓ | `data-col-widths` | `auto`, `equal`, or ratios |
+| `table-orientation` | — | ✓ | `data-orientation` | Per-table only; see [Page Orientation Sections](#page-orientation-sections) |
+| `table-borders` | ✓ | — | — | Frontmatter only |
+
+Per-table directives override frontmatter defaults for that table only. For pipe and grid tables, place an HTML comment before the table (`<!-- table-font-size: 9 -->`). For HTML tables, use `data-` attributes on the `<table>` element (`data-font-size="9"`). Multiple directives can precede the same table.
+
+Priority (highest to lowest): per-table override → frontmatter default → built-in default.
+
+#### Table Font Configuration
 
 The `table-font` and `table-font-size` frontmatter fields control table typography independently of body text.
 
@@ -158,7 +174,7 @@ The `table-font` and `table-font-size` frontmatter fields control table typograp
 
 Per-table overrides are preserved through DOCX round-trips: comment directives and data attributes are re-emitted on conversion back to Markdown.
 
-### Table Column Widths
+#### Table Column Widths
 
 The `table-col-widths` frontmatter field controls column width ratios for all tables in the document.
 
@@ -264,7 +280,7 @@ For a single table, use the `data-orientation` attribute or a comment directive:
 - **Nested fences**: An opening fence inside an already-open block of the same type is treated as a close followed by an open (a section break) and produces a warning.
 - **Consecutive fences**: Transitions between orientation sections (or consecutive sections of the same type) do not produce blank intermediate pages. For example, `<!-- /landscape --><!-- portrait -->` transitions directly without an empty page in between.
 
-### Embedded Tables
+#### Embedded Tables
 
 Embed tables from external files using an HTML comment directive:
 
