@@ -87,7 +87,7 @@ Existing per-table directives work with embedded tables. Place them before the e
 
 ```markdown
 <!-- table-font-size: 9 -->
-<!-- table-font: Arial -->
+<!-- table-font: Helvetica -->
 <!-- table-col-widths: 2 1 1 1 -->
 <!-- embed: data/results.csv -->
 ```
