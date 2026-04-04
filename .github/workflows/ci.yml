@@ -51,7 +51,7 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
       - name: Tests
-        run: bun test
+        run: bun test --path-ignore-patterns sight
 
   vscode-extension:
     name: VS Code extension

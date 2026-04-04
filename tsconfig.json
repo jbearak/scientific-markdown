@@ -14,8 +14,7 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
-    "src/**/*.ts",
-    "sight/src/dta-parser/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
@@ -23,7 +22,6 @@
     "src/test",
     "**/*.test.ts",
     "test",
-    "scripts",
-    "sight"
+    "scripts"
   ]
 }
