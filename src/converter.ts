@@ -5337,11 +5337,35 @@ export function buildMarkdown(
         pushWithHoistedPrefix(output, embedPrefix, embedDirective);
         tableIndex++;
         i++;
-        // Skip subsequent tables from the same embed occurrence (same raw stored value)
-        while (i < mergedContent.length && mergedContent[i].type === 'table'
-          && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === rawEmbedValue) {
-          tableIndex++;
-          i++;
+        // Skip subsequent tables from the same embed occurrence (same raw stored value).
+        // Tolerate intervening empty paragraphs that Word may insert between tables.
+        while (i < mergedContent.length) {
+          const cur = mergedContent[i];
+          if (cur.type === 'table'
+            && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === rawEmbedValue) {
+            tableIndex++;
+            i++;
+          } else if (cur.type === 'para' && isPlainEmptyParagraph(cur)
+            && !paragraphHasContent(mergedContent, i)) {
+            // Peek ahead: only skip the empty paragraph if a table from the
+            // same embed follows (avoid swallowing trailing blank lines).
+            let peek = i + 1;
+            while (peek < mergedContent.length && mergedContent[peek].type === 'para'
+              && isPlainEmptyParagraph(mergedContent[peek] as Extract<ContentItem, { type: 'para' }>)
+              && !paragraphHasContent(mergedContent, peek)) {
+              peek++;
+            }
+            if (peek < mergedContent.length && mergedContent[peek].type === 'table'
+              && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === rawEmbedValue) {
+              // Skip empty paragraphs up to and including the next embed table
+              i = peek;
+              // The table itself will be consumed on the next loop iteration
+            } else {
+              break;
+            }
+          } else {
+            break;
+          }
         }
         lastListType = undefined;
         lastListLevel = undefined;

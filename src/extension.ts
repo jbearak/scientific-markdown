@@ -65,15 +65,22 @@ let previewMd: any;
 
 // Embed resolver for reading external files referenced by embed directives.
 // Shared by both the preview plugin and md-to-docx conversion.
-const embedCache = new Map<string, { content: Uint8Array; mtime: number }>();
+const EMBED_STAT_TTL_MS = 1500; // skip re-stat within this window
+const embedCache = new Map<string, { content: Uint8Array; mtime: number; checkedAt: number }>();
 const embedResolver: EmbedResolver = {
 	readFile(absolutePath: string): Uint8Array | null {
 		try {
-			const stat = fs.statSync(absolutePath);
+			const now = Date.now();
 			const cached = embedCache.get(absolutePath);
-			if (cached && cached.mtime === stat.mtimeMs) return cached.content;
+			// Within the TTL window, return cached content without hitting the filesystem.
+			if (cached && (now - cached.checkedAt) < EMBED_STAT_TTL_MS) return cached.content;
+			const stat = fs.statSync(absolutePath);
+			if (cached && cached.mtime === stat.mtimeMs) {
+				cached.checkedAt = now;
+				return cached.content;
+			}
 			const content = new Uint8Array(fs.readFileSync(absolutePath));
-			embedCache.set(absolutePath, { content, mtime: stat.mtimeMs });
+			embedCache.set(absolutePath, { content, mtime: stat.mtimeMs, checkedAt: now });
 			return content;
 		} catch {
 			return null;
@@ -911,7 +918,12 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.onDidChangeActiveTextEditor(editor => {
 			if (editor) { updateHighlightDecorations(editor); }
-			// Update embed resolver document path for preview preprocessing
+			// Update embed resolver document path for preview preprocessing.
+			// NOTE: This tracks the active editor, not the previewed document,
+			// because VS Code's markdown preview API does not expose which document
+			// is being rendered. In split-view scenarios where the active editor
+			// differs from the preview target, relative embed paths may resolve
+			// against the wrong base directory.
 			if (editor?.document.languageId === 'markdown' && previewMd) {
 				previewMd.manuscriptDocumentPath = editor.document.uri.fsPath;
 			}
