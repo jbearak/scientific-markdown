@@ -504,7 +504,7 @@ The `breaks: true` frontmatter setting changes the default behavior so that bare
 
 ## Tables
 
-Manuscript Markdown supports three table formats. The DOCX converter chooses the simplest format that can represent each table's content.
+Manuscript Markdown supports three inline table formats, plus embedding from external files. The DOCX converter chooses the simplest inline format that can represent each table's content.
 
 ### Pipe Tables
 
@@ -579,6 +579,10 @@ When converting from DOCX to Markdown, the converter selects the simplest format
 1. **Pipe table** — used when all cells are single-line and the table fits within the configured line width
 2. **Grid table** — used when the original table was grid format and cells require multi-line content
 3. **HTML table** — fallback for tables with colspan, rowspan, multi-paragraph cells, or that exceed the configured line width
+
+### Embedded Tables
+
+Tables can also be embedded from external `.csv`, `.tsv`, `.xlsx`, and `.md` files using the `<!-- embed: -->` directive. Embedded tables support the same formatting directives as inline tables and are expanded into full tables on Word export. See [Embedded Tables](embedded-tables.md) for syntax, parameters, and examples.
 
 ## Citations
 
