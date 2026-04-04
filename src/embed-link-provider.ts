@@ -48,11 +48,10 @@ export function findEmbedPathRanges(text: string): EmbedPathRange[] {
           // Determine which capture group matched
           const pathText = m[1] ?? m[2] ?? m[3];
           if (pathText) {
-            // m.index is the start of the full match in the line.
-            // The path text is inside the match — find its position.
-            const fullMatch = m[0];
-            const pathInMatch = fullMatch.lastIndexOf(pathText);
-            const startCol = m.index! + pathInMatch;
+            // The path is always a suffix of m[0] (possibly followed by a
+            // closing quote).  lastIndexOf reliably finds the rightmost
+            // occurrence, which is the actual path position.
+            const startCol = m.index! + m[0].lastIndexOf(pathText);
             const endCol = startCol + pathText.length;
             results.push({ path: directive.path, line: i, startCol, endCol });
           }

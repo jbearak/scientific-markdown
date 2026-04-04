@@ -87,4 +87,12 @@ describe('findEmbedPathRanges', () => {
     expect(ranges[0].path).toBe('data/table.csv');
     expect(text.slice(ranges[0].startCol, ranges[0].endCol)).toBe('data/table.csv');
   });
+
+  it('handles path that is a substring of the prefix', () => {
+    const text = '<!-- embed: embed/file.csv -->';
+    const ranges = findEmbedPathRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].path).toBe('embed/file.csv');
+    expect(text.slice(ranges[0].startCol, ranges[0].endCol)).toBe('embed/file.csv');
+  });
 });
