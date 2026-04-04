@@ -264,6 +264,26 @@ For a single table, use the `data-orientation` attribute or a comment directive:
 - **Nested fences**: An opening fence inside an already-open block of the same type is treated as a close followed by an open (a section break) and produces a warning.
 - **Consecutive fences**: Transitions between orientation sections (or consecutive sections of the same type) do not produce blank intermediate pages. For example, `<!-- /landscape --><!-- portrait -->` transitions directly without an empty page in between.
 
+### Embedded Tables
+
+Embed tables from external files using an HTML comment directive:
+
+```
+<!-- embed: <path> [sheet=<name>] [range=<ref>] [headers=<n>] -->
+```
+
+File paths are resolved relative to the markdown file. Values support optional single or double quotes for paths with spaces.
+
+| Param | Applies to | Default | Description |
+|-------|-----------|---------|-------------|
+| `sheet` | .xlsx | First sheet | Sheet name or 1-based index |
+| `range` | .xlsx | Auto-detect bounding rectangle | Cell range (e.g. `A1:F20`) or named range |
+| `headers` | .csv, .tsv, .xlsx | `1` | Number of header rows |
+
+Supported file types: `.csv`, `.tsv`, `.xlsx`, and `.md` (tables only). Table directives (`table-font-size`, `table-font`, `table-orientation`, `table-col-widths`) placed before the embed comment apply to the resulting table, same as with inline tables.
+
+See [Embedded Tables](embedded-tables.md) for file-type details, a worked example, error diagnostics, and round-trip behavior.
+
 ### Code Block Styling Example
 
 ```yaml
