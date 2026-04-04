@@ -1,0 +1,3 @@
+[submodule "sight"]
+	path = sight
+	url = git@github.com:jbearak/sight.git
