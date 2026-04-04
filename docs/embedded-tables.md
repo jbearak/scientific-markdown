@@ -71,11 +71,10 @@ Response time is acceptable,80%,12%,8%
 I would recommend the product,74%,16%,10%
 ```
 
-To embed it in your document as a landscape table with a smaller font:
+To embed it in your document with a smaller font:
 
 ```markdown
 <!-- table-font-size: 9 -->
-<!-- table-orientation: landscape -->
 <!-- embed: data/survey-results.csv -->
 ```
 
@@ -113,6 +112,77 @@ If something goes wrong with an embed, you'll see feedback in two places: an err
 | Invalid parameter syntax | Error | `invalid embed parameter: <detail>` |
 | File produces no table rows | Warning | `<path> produced an empty table` |
 | Embedded .md has non-table content | Info | `non-table content in <path> was ignored` |
+
+## Page Orientation and Isolation
+
+When a table needs more horizontal space than a portrait page allows, or when you want a table (with its title and notes) on its own page, use orientation fences.
+
+### Landscape pages for wide tables
+
+Wrap the table and any surrounding text (title, notes) in `<!-- landscape -->` / `<!-- /landscape -->` fences. Everything between the fences is rendered on landscape-oriented pages in the Word output:
+
+```markdown
+<!-- landscape -->
+
+Table 3. Full Regression Results
+
+<!-- table-font-size: 9 -->
+<!-- embed: data/regression.csv -->
+
+Note: Standard errors in parentheses. * p < 0.05, ** p < 0.01.
+
+<!-- /landscape -->
+```
+
+### Isolating tables on their own pages
+
+Use `<!-- portrait -->` / `<!-- /portrait -->` fences to place a table on its own portrait page with explicit section breaks before and after:
+
+```markdown
+<!-- portrait -->
+
+Table 2. Survey Demographics
+
+<!-- embed: data/demographics.xlsx sheet=Summary -->
+
+<!-- /portrait -->
+```
+
+This is useful when you want a table to start on a fresh page without affecting the flow of surrounding text, or when grouping several related tables together:
+
+```markdown
+<!-- portrait -->
+
+Table 4. Treatment Group A
+
+<!-- embed: data/results.xlsx sheet=GroupA -->
+
+Table 5. Treatment Group B
+
+<!-- embed: data/results.xlsx sheet=GroupB -->
+
+<!-- /portrait -->
+```
+
+See [Specification: Page Orientation Sections](specification.md#page-orientation-sections) for full details on orientation fences.
+
+## Custom Styles for Table Titles and Notes
+
+If your document defines custom styles in the frontmatter, you can apply them to table titles and notes using `<!-- style: name -->` / `<!-- /style -->` fencing. Style directives work anywhere in the document — the example below happens to use them inside an orientation fence, but they are equally valid outside one:
+
+```markdown
+<!-- style: table-title -->
+Table 6. Descriptive Statistics by Region
+<!-- /style -->
+
+<!-- embed: data/descriptive-stats.csv -->
+
+<!-- style: table-note -->
+Note: All values are population-weighted. Source: 2024 Census Bureau estimates.
+<!-- /style -->
+```
+
+This requires defining the styles in your frontmatter — see [Specification: Custom Styles](specification.md#custom-styles) for syntax and available properties.
 
 ## Frontmatter Defaults
 
