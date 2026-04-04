@@ -1,5 +1,6 @@
 import { parseCsv, csvToHtmlTableMeta } from './csv-parser';
 import { parseXlsx } from './xlsx-parser';
+import { parseDta } from './dta-parser';
 import type { HtmlTableMeta, HtmlTableRun } from './html-table-parser';
 import { LineMap, type LineMapSegment } from './preview/line-map';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
@@ -312,6 +313,8 @@ function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, docume
         return resolveXlsx(data, directive);
       case '.md':
         return resolveMd(data);
+      case '.dta':
+        return parseDta(data, directive);
       default:
         return '<p><strong>Error: unsupported embed format: ' + escapeHtml(ext) + '</strong></p>';
     }
