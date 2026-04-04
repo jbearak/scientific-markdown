@@ -775,6 +775,12 @@
           "type": "boolean",
           "default": false,
           "description": "Include markdown usages in Find All References when invoked from a markdown file. Off by default because VS Code's built-in Markdown Language Features extension already reports these; enabling this may produce duplicate entries."
+        },
+        "manuscriptMarkdown.embedDtaMaxFileSize": {
+          "type": "integer",
+          "default": 10485760,
+          "minimum": 1,
+          "description": "Maximum .dta file size in bytes for embed directives. Files larger than this are rejected with an error. Default: 10 MB (10485760 bytes)."
         }
       }
     }

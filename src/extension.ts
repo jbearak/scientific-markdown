@@ -976,6 +976,10 @@ export function activate(context: vscode.ExtensionContext) {
 			previewMd = md;
 			md.manuscriptColors = getConfiguredColorScheme();
 			md.manuscriptEmbedResolver = embedResolver;
+			const maxDtaFileSize = vscode.workspace
+				.getConfiguration('manuscriptMarkdown')
+				.get<number>('embedDtaMaxFileSize', 10_485_760);
+			md.manuscriptEmbedOptions = { maxDtaFileSize };
 			// Set initial document path from active editor
 			const activeDoc = vscode.window.activeTextEditor?.document;
 			if (activeDoc?.languageId === 'markdown') {
