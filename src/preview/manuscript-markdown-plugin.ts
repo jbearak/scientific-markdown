@@ -1089,6 +1089,13 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     state.tokens.unshift(token);
   });
 
+  // Inject <style> block for missing-value colorization in embedded .dta tables
+  md.core.ruler.push('manuscript_missing_value_style', (state: any) => {
+    const token = new state.Token('manuscript_style', '', 0);
+    token.content = '<style>\n.mm-missing-value { color: var(--vscode-editorError-foreground); }\n</style>\n';
+    state.tokens.unshift(token);
+  });
+
   // Register grid table block rule before html_block so the placeholder comment
   // is consumed before markdown-it's html_block rule can swallow it (VS Code's
   // preview enables html: true).
