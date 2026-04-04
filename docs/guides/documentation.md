@@ -63,6 +63,15 @@ Create tables using standard Markdown syntax. For complex tables (merged cells),
 | Code    | Yes     |
 ```
 
+When your data lives in an external file, embed it instead of copying it into your document:
+
+```markdown
+<!-- table-font-size: 9 -->
+<!-- embed: data/metrics.csv -->
+```
+
+This embeds the CSV as a table, with all the same formatting and export support as an inline table. Supported formats: `.csv`, `.tsv`, `.xlsx`, and `.md`. See [Embedded Tables](../embedded-tables.md) for the full syntax reference.
+
 ## Tips
 
 - **Word Count**: Keep an eye on the status bar for document length.
