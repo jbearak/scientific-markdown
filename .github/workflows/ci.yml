@@ -44,14 +44,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: true
       - name: Setup
         uses: ./.github/actions/setup
       - name: Typecheck
         run: bun run typecheck
       - name: Tests
-        run: bun test --path-ignore-patterns sight
+        run: bun test
 
   vscode-extension:
     name: VS Code extension
@@ -60,8 +58,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: true
       - name: Setup
         uses: ./.github/actions/setup
       - name: Build extension
@@ -99,8 +95,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: true
       - name: Setup
         uses: ./.github/actions/setup
       - name: Build current platform binary

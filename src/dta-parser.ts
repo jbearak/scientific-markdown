@@ -7,22 +7,22 @@
 // synchronous.
 // -----------------------------------------------------------
 
-import { parse_metadata } from '../sight/src/dta-parser/header';
-import { parse_legacy_metadata } from '../sight/src/dta-parser/legacy-header';
-import { read_rows_from_buffer } from '../sight/src/dta-parser/data-reader';
-import { build_gso_index, resolve_strl } from '../sight/src/dta-parser/strl-reader';
-import { parse_value_labels } from '../sight/src/dta-parser/value-labels';
-import { apply_display_format } from '../sight/src/dta-parser/display-format';
+import { parse_metadata } from './dta-parser-lib/header';
+import { parse_legacy_metadata } from './dta-parser-lib/legacy-header';
+import { read_rows_from_buffer } from './dta-parser-lib/data-reader';
+import { build_gso_index, resolve_strl } from './dta-parser-lib/strl-reader';
+import { parse_value_labels } from './dta-parser-lib/value-labels';
+import { apply_display_format } from './dta-parser-lib/display-format';
 import {
   is_missing_value_object,
   missing_type_to_label_key,
-} from '../sight/src/dta-parser/missing-values';
-import { is_legacy_format } from '../sight/src/dta-parser/types';
+} from './dta-parser-lib/missing-values';
+import { is_legacy_format } from './dta-parser-lib/types';
 import type {
   DtaMetadata,
   VariableInfo,
   RowCell,
-} from '../sight/src/dta-parser/types';
+} from './dta-parser-lib/types';
 import type { EmbedDirective } from './embed-preprocess';
 
 const DEFAULT_MAX_DTA_FILE_SIZE = 10_485_760; // 10 MB

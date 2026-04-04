@@ -2682,6 +2682,8 @@ export interface MdToDocxOptions {
   documentPath?: string;
   /** Resolver for reading embedded files (CSV, TSV, XLSX, MD). */
   embedResolver?: import('./embed-preprocess').EmbedResolver;
+  /** Maximum .dta file size in bytes (default 10 MB). */
+  maxDtaFileSize?: number;
 }
 
 export interface MdToDocxResult {
@@ -6053,12 +6055,13 @@ export async function convertMdToDocx(
   let embedDirectives: string[] = [];
   let bodyForParsing = bodyWithoutFootnotes;
   if (options?.embedResolver && options?.documentPath) {
-    const embedResult = preprocessEmbedsTracked(bodyWithoutFootnotes, options.embedResolver, options.documentPath);
+    const embedOpts = options.maxDtaFileSize != null ? { maxDtaFileSize: options.maxDtaFileSize } : undefined;
+    const embedResult = preprocessEmbedsTracked(bodyWithoutFootnotes, options.embedResolver, options.documentPath, 0, embedOpts);
     bodyForParsing = embedResult.output;
     embedDirectives = embedResult.embedDirectives;
     // Also expand embeds inside footnote/endnote definitions
     for (const [label, noteBody] of footnoteDefs) {
-      const noteResult = preprocessEmbedsTracked(noteBody, options.embedResolver, options.documentPath, embedDirectives.length);
+      const noteResult = preprocessEmbedsTracked(noteBody, options.embedResolver, options.documentPath, embedDirectives.length, embedOpts);
       if (noteResult.output !== noteBody) {
         footnoteDefs.set(label, noteResult.output);
         embedDirectives.push(...noteResult.embedDirectives);

@@ -19,10 +19,6 @@ venv/**
 .pytest_cache/**
 .hypothesis/**
 
-# Submodule (compiled JS in out/sight/ is included via imports)
-sight/**
-.gitmodules
-
 # Git
 .git/**
 .gitignore
@@ -35,7 +31,6 @@ MANUAL_TEST_*.md
 TABLE_REFLOW_IMPLEMENTATION.md
 
 # Config files
-bunfig.toml
 .kiro/**
 .claude/**
 .vscode/**

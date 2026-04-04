@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import JSZip from 'jszip';
 import { parseDta } from './dta-parser';
+import { convertMdToDocx } from './md-to-docx';
+import type { EmbedResolver } from './embed-preprocess';
 
 const FIXTURE_PATH = join(__dirname, '..', 'test', 'fixtures', 'tables', 'embed.dta');
 const FIXTURE_DATA = new Uint8Array(readFileSync(FIXTURE_PATH));
@@ -55,5 +58,20 @@ describe('parseDta', () => {
   it('rejects files exceeding the size limit', () => {
     const html = parseDta(FIXTURE_DATA, { path: 'embed.dta' }, 1);
     expect(html).toContain('exceeds maximum size');
+  });
+
+  it('exports missing values as plain text in DOCX (no styling artifacts)', async () => {
+    const md = '---\ntitle: Test\n---\n\n<!-- embed: data.dta -->\n';
+    const resolver: EmbedResolver = {
+      readFile: () => FIXTURE_DATA,
+      resolveRelative: (_base, rel) => rel,
+    };
+    const { docx } = await convertMdToDocx(md, { embedResolver: resolver, documentPath: '/doc/test.md' });
+    const zip = await JSZip.loadAsync(docx);
+    const xml = await zip.file('word/document.xml')!.async('string');
+    // "Refused" is the value label for the .a missing value
+    expect(xml).toContain('Refused');
+    // No mm-missing-value class or span artifacts in DOCX
+    expect(xml).not.toContain('mm-missing-value');
   });
 });

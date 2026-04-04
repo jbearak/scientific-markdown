@@ -688,6 +688,15 @@ export function activate(context: vscode.ExtensionContext) {
 				syncPreviewColors(scheme);
 				vscode.commands.executeCommand('markdown.preview.refresh');
 			}
+			if (e.affectsConfiguration('manuscriptMarkdown.embedDtaMaxFileSize')) {
+				if (previewMd) {
+					const maxDtaFileSize = vscode.workspace
+						.getConfiguration('manuscriptMarkdown')
+						.get<number>('embedDtaMaxFileSize', 10_485_760);
+					previewMd.manuscriptEmbedOptions = { maxDtaFileSize };
+					vscode.commands.executeCommand('markdown.preview.refresh');
+				}
+			}
 		})
 	);
 
@@ -1007,7 +1016,7 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 	if (languageClient) {
 		return;
 	}
-	const serverModule = context.asAbsolutePath(path.join('out', 'src', 'lsp', 'server.js'));
+	const serverModule = context.asAbsolutePath(path.join('out', 'lsp', 'server.js'));
 	const serverOptions: ServerOptions = {
 		run: { module: serverModule, transport: TransportKind.ipc },
 		debug: {
