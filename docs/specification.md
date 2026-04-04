@@ -1,6 +1,6 @@
 # Manuscript Markdown Specification
 
-Manuscript Markdown extends standard Markdown with CriticMarkup annotations, Pandoc citation syntax, and custom extensions for manuscript editing.
+Manuscript Markdown extends standard Markdown with CriticMarkup annotations, citations, footnotes, and custom extensions for manuscript editing.
 
 ## YAML Frontmatter
 
@@ -470,7 +470,7 @@ Manuscript Markdown supports CommonMark plus the implemented [GitHub Flavored Ma
 - **Links**: `[text](url)` plus autolink literals (bare URLs/emails)
 - **Code blocks**: fenced with triple backticks. Optional language annotation (e.g., `` ```stata ``) is preserved on round-trip via the `MANUSCRIPT_CODE_BLOCK_LANGS` custom property in the DOCX. In Word, code blocks use the "Code Block" paragraph style (Consolas, shaded background). Consecutive code blocks are separated by an empty paragraph to prevent merging.
 - **Blockquotes**: `> quoted text`
-- **Tables**: simple tables are emitted as pipe tables (pipe-delimited with alignment support). Tables that contain colspans, rowspans, multi-paragraph cells, or that exceed the configured line width fall back to indented HTML. The line-width threshold is controlled by the `pipe-table-max-line-width` frontmatter field, the VS Code `pipeTableMaxLineWidth` setting, or the CLI `--pipe-table-max-line-width` flag. Tables support per-table font overrides via comment directives (`<!-- table-font-size: N -->`) and HTML data attributes (`data-font-size`, `data-font`); see [Table Font Configuration](#table-font-configuration). Pandoc-style grid tables are also supported for multi-line cells (see below).
+- **Tables**: pipe tables, grid tables, and HTML tables. See [Tables](#tables) for syntax, examples, and comparison.
 
 ### Line Breaks
 
@@ -502,22 +502,28 @@ The `breaks: true` frontmatter setting changes the default behavior so that bare
 - **Intentional HTML exceptions**: HTML comments (`<!-- ... -->`) and supported inline HTML formatting tags used by this project (for example `<u>`, `<sup>`, `<sub>`) remain supported.
 - **Alerts** use GitHub's blockquote-based syntax with `> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, and `> [!CAUTION]` markers on the first line. Alert content follows on subsequent `>` lines. Alerts are displayed with colored left borders and type-specific header icons in preview and are preserved through DOCX round-trip.
 
-## Pandoc Extensions
+## Tables
 
-### Citations
+Manuscript Markdown supports three table formats. The DOCX converter chooses the simplest format that can represent each table's content.
 
-Pandoc-style citations using BibTeX keys:
+### Pipe Tables
 
-- Single citation: `[@smith2020]`
-- With locator: `[@smith2020, p. 20]`
-- Multiple citations: `[@smith2020; @jones2021]`
-- Suppress author: `[-@smith2020]`
+The most common format — simple, compact tables using pipe delimiters with optional column alignment:
 
-Citations reference entries in a companion `.bib` file (see [BibTeX Companion File](#bibtex-companion-file) below).
+```markdown
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a    |   b    |     c |
+| d    |   e    |     f |
+```
+
+Pipe tables support column alignment via `:` in the separator row but do not support multi-line cells, colspan, or rowspan. Tables support per-table font and column-width overrides via comment directives (`<!-- table-font-size: N -->`) and HTML data attributes (`data-font-size`, `data-font`); see [Table Font Configuration](#table-font-configuration).
+
+The line-width threshold for pipe tables is controlled by the `pipe-table-max-line-width` frontmatter field, the VS Code `pipeTableMaxLineWidth` setting, or the CLI `--pipe-table-max-line-width` flag.
 
 ### Grid Tables
 
-Pandoc-style grid tables support multi-line cells that pipe tables cannot represent:
+Grid tables use [Pandoc grid table syntax](https://pandoc.org/MANUAL.html#extension-grid_tables) and support multi-line cells that pipe tables cannot represent:
 
 ```
 +----------+----------+
@@ -536,11 +542,82 @@ Pandoc-style grid tables support multi-line cells that pipe tables cannot repres
 - Grid tables do not support colspan or rowspan (use HTML tables for spans)
 - On round-trip, grid tables are stored with `sourceFormat: 'grid'` metadata so the format is preserved
 
-When a table with multi-line cells cannot be represented as a pipe table, the converter checks the stored format and emits a grid table if the original was grid, otherwise falls back to HTML.
+The line-width threshold for grid tables is controlled by the `grid-table-max-line-width` frontmatter field (defaults to `pipe-table-max-line-width`).
 
-### Footnotes
+### HTML Tables
 
-Standard Pandoc/PHP Markdown Extra footnote syntax:
+HTML tables support the full range of table features including colspan, rowspan, and multi-paragraph cells:
+
+```html
+<table>
+  <tr>
+    <th colspan="2">Merged Header</th>
+  </tr>
+  <tr>
+    <td>Cell 1</td>
+    <td rowspan="2">Tall cell</td>
+  </tr>
+  <tr>
+    <td>Cell 3</td>
+  </tr>
+</table>
+```
+
+Per-table overrides use `data-` attributes directly on the `<table>` element (`data-font-size`, `data-font`, `data-col-widths`, `data-orientation`):
+
+```html
+<table data-font-size="9" data-col-widths="2,1,1">
+  <tr><th>Wide Column</th><th>A</th><th>B</th></tr>
+  <tr><td>data</td><td>1</td><td>2</td></tr>
+</table>
+```
+
+### Format Selection on DOCX→MD Conversion
+
+When converting from DOCX to Markdown, the converter selects the simplest format that preserves the table's content:
+
+1. **Pipe table** — used when all cells are single-line and the table fits within the configured line width
+2. **Grid table** — used when the original table was grid format and cells require multi-line content
+3. **HTML table** — fallback for tables with colspan, rowspan, multi-paragraph cells, or that exceed the configured line width
+
+## Citations
+
+Manuscript Markdown uses [Pandoc citation syntax](https://pandoc.org/MANUAL.html#citations) with BibTeX keys:
+
+- Single citation: `[@smith2020]`
+- With locator: `[@smith2020, p. 20]`
+- Multiple citations: `[@smith2020; @jones2021]`
+- Suppress author: `[-@smith2020]`
+
+Citations reference entries in a companion `.bib` file (see [BibTeX Companion File](#bibtex-companion-file) below).
+
+### BibTeX Companion File
+
+By default, citations reference a companion `.bib` file with the same base name as the Markdown file (e.g., `paper.md` uses `paper.bib`). You can override this by specifying a `bibliography` field in the YAML frontmatter:
+
+```yaml
+---
+bibliography: shared/references.bib
+---
+```
+
+The `.bib` extension is optional (`bibliography: shared/references` also works). Relative paths resolve from the `.md` file directory first, then the workspace root. Paths starting with `/` resolve from the workspace root first, then as absolute OS paths.
+
+Each entry contains standard BibTeX fields:
+
+- `author`, `title`, `journal`/`booktitle`, `year`, `volume`, `number`, `pages`
+- `doi`, `url`, `publisher`, `edition`, `abstract`
+
+When exported from Zotero via DOCX import, entries also include identity fields for roundtrip reconstruction:
+
+- `zotero-key` — the Zotero item key
+- `zotero-uri` — the Zotero item URI
+
+These fields allow the Markdown-to-DOCX exporter to reconstruct Zotero field codes in the output document. See [Zotero Citation Roundtrip](zotero-roundtrip.md) for details.
+
+## Footnotes
+
+Manuscript Markdown uses [Pandoc footnote syntax](https://pandoc.org/MANUAL.html#footnotes):
 
 - **Reference** (inline): `[^1]` or `[^my-note]` (named labels supported)
 - **Definition** (block, at end of document): `[^1]: Footnote text.`
@@ -567,30 +644,6 @@ notes: endnotes
 On DOCX import, the `notes` field is auto-detected from whether `word/footnotes.xml` or `word/endnotes.xml` exists. It is only emitted in frontmatter when endnotes are detected (since footnotes is the default).
 
 Named labels (e.g., `[^my-note]`) are preserved through DOCX round-trips via a `MANUSCRIPT_FOOTNOTE_IDS` mapping stored in `docProps/custom.xml`.
-
-### BibTeX Companion File
-
-By default, citations reference a companion `.bib` file with the same base name as the Markdown file (e.g., `paper.md` uses `paper.bib`). You can override this by specifying a `bibliography` field in the YAML frontmatter:
-
-```yaml
----
-bibliography: shared/references.bib
----
-```
-
-The `.bib` extension is optional (`bibliography: shared/references` also works). Relative paths resolve from the `.md` file directory first, then the workspace root. Paths starting with `/` resolve from the workspace root first, then as absolute OS paths.
-
-Each entry contains standard BibTeX fields:
-
-- `author`, `title`, `journal`/`booktitle`, `year`, `volume`, `number`, `pages`
-- `doi`, `url`, `publisher`, `edition`, `abstract`
-
-When exported from Zotero via DOCX import, entries also include identity fields for roundtrip reconstruction:
-
-- `zotero-key` — the Zotero item key
-- `zotero-uri` — the Zotero item URI
-
-These fields allow the Markdown-to-DOCX exporter to reconstruct Zotero field codes in the output document. See [Zotero Citation Roundtrip](zotero-roundtrip.md) for details.
 
 ## LaTeX Equations
 
