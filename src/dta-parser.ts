@@ -51,9 +51,9 @@ export function parseDta(
   maxFileSize: number = DEFAULT_MAX_DTA_FILE_SIZE
 ): string {
   if (data.byteLength > maxFileSize) {
-    const my_limit_mb = (maxFileSize / 1_048_576).toFixed(1);
+    const limitMb = (maxFileSize / 1_048_576).toFixed(1);
     return '<p><strong>Error: .dta file exceeds maximum'
-      + ' size (' + my_limit_mb + ' MB)</strong></p>';
+      + ' size (' + limitMb + ' MB)</strong></p>';
   }
 
   const buffer = data.buffer.slice(
@@ -62,14 +62,15 @@ export function parseDta(
   ) as ArrayBuffer;
 
   // --- Parse metadata ---
-  const my_first_byte = data[0];
-  const my_is_legacy =
-    my_first_byte === 113
-    || my_first_byte === 114
-    || my_first_byte === 115;
+  // Stata format versions 113-115 are legacy
+  const firstByte = data[0];
+  const isLegacy =
+    firstByte === 113
+    || firstByte === 114
+    || firstByte === 115;
 
   let metadata: DtaMetadata;
-  if (my_is_legacy) {
+  if (isLegacy) {
     metadata = parse_legacy_metadata(
       buffer, data.byteLength
     );
@@ -78,167 +79,153 @@ export function parseDta(
   }
 
   // --- Read all observation rows ---
-  const the_rows = read_rows_from_buffer(
+  const rows = read_rows_from_buffer(
     buffer, metadata, 0, metadata.nobs
   );
 
   // --- Resolve strL variables ---
-  const my_has_strl = metadata.variables.some(
+  const hasStrl = metadata.variables.some(
     v => v.type === 'strL'
   );
-  if (my_has_strl) {
-    const my_gso_index = build_gso_index(buffer, metadata);
-    const my_data_tag_len =
+  if (hasStrl) {
+    const gsoIndex = build_gso_index(buffer, metadata);
+    const dataTagLen =
       is_legacy_format(metadata.format_version) ? 0 : 6;
 
-    for (let r = 0; r < the_rows.length; r++) {
+    for (let r = 0; r < rows.length; r++) {
       for (let c = 0; c < metadata.nvar; c++) {
-        const my_variable = metadata.variables[c];
-        if (my_variable.type !== 'strL') continue;
+        const variable = metadata.variables[c];
+        if (variable.type !== 'strL') continue;
 
-        const my_pointer_offset =
+        const pointerOffset =
           metadata.section_offsets.data
-          + my_data_tag_len
+          + dataTagLen
           + r * metadata.obs_length
-          + my_variable.byte_offset;
+          + variable.byte_offset;
 
-        const my_resolved = resolve_strl(
-          buffer, metadata, my_gso_index,
-          my_pointer_offset
+        const resolved = resolve_strl(
+          buffer, metadata, gsoIndex, pointerOffset
         );
-        if (my_resolved !== null) {
-          the_rows[r][c] = my_resolved;
+        if (resolved !== null) {
+          rows[r][c] = resolved;
         }
       }
     }
   }
 
   // --- Parse value label tables ---
-  const my_value_label_tables = parse_value_labels(
+  const valueLabelTables = parse_value_labels(
     buffer, metadata
   );
 
   // --- Determine header and body rows ---
-  const the_variables = metadata.variables;
-  const my_header_count = directive.headers;
+  const variables = metadata.variables;
+  const headerCount = directive.headers;
 
-  let the_header_rows: string[][];
-  let my_body_start_idx: number;
+  let headerRows: string[][];
+  let bodyStartIdx: number;
 
-  if (
-    my_header_count !== undefined
-    && my_header_count > 0
-  ) {
+  if (headerCount !== undefined && headerCount > 0) {
     // Use first N data rows as headers
-    the_header_rows = [];
-    const my_limit = Math.min(
-      my_header_count, the_rows.length
-    );
-    for (let r = 0; r < my_limit; r++) {
-      the_header_rows.push(
-        the_rows[r].map((my_cell, c) =>
-          formatCell(
-            my_cell,
-            the_variables[c],
-            my_value_label_tables
-          )
+    headerRows = [];
+    const limit = Math.min(headerCount, rows.length);
+    for (let r = 0; r < limit; r++) {
+      headerRows.push(
+        rows[r].map((cell, c) =>
+          formatCell(cell, variables[c], valueLabelTables)
         )
       );
     }
-    my_body_start_idx = my_header_count;
+    bodyStartIdx = headerCount;
   } else {
     // Default: variable names as header
-    the_header_rows = [
-      the_variables.map(v => escapeHtml(v.name))
+    headerRows = [
+      variables.map(v => escapeHtml(v.name))
     ];
-    my_body_start_idx = 0;
+    bodyStartIdx = 0;
   }
 
   // Build body rows
-  const the_body_rows: string[][] = [];
-  for (let r = my_body_start_idx; r < the_rows.length; r++) {
-    the_body_rows.push(
-      the_rows[r].map((my_cell, c) =>
-        formatCell(
-          my_cell,
-          the_variables[c],
-          my_value_label_tables
-        )
+  const bodyRows: string[][] = [];
+  for (let r = bodyStartIdx; r < rows.length; r++) {
+    bodyRows.push(
+      rows[r].map((cell, c) =>
+        formatCell(cell, variables[c], valueLabelTables)
       )
     );
   }
 
   // --- Render HTML table ---
-  const the_parts: string[] = [];
-  the_parts.push('<table>');
+  const parts: string[] = [];
+  parts.push('<table>');
 
-  if (the_header_rows.length > 0) {
-    the_parts.push('<thead>');
-    for (const my_row of the_header_rows) {
-      the_parts.push('<tr>');
-      for (const my_cell of my_row) {
-        the_parts.push('<th>' + my_cell + '</th>');
+  if (headerRows.length > 0) {
+    parts.push('<thead>');
+    for (const row of headerRows) {
+      parts.push('<tr>');
+      for (const cell of row) {
+        parts.push('<th>' + cell + '</th>');
       }
-      the_parts.push('</tr>');
+      parts.push('</tr>');
     }
-    the_parts.push('</thead>');
+    parts.push('</thead>');
   }
 
-  if (the_body_rows.length > 0) {
-    the_parts.push('<tbody>');
-    for (const my_row of the_body_rows) {
-      the_parts.push('<tr>');
-      for (const my_cell of my_row) {
-        the_parts.push('<td>' + my_cell + '</td>');
+  if (bodyRows.length > 0) {
+    parts.push('<tbody>');
+    for (const row of bodyRows) {
+      parts.push('<tr>');
+      for (const cell of row) {
+        parts.push('<td>' + cell + '</td>');
       }
-      the_parts.push('</tr>');
+      parts.push('</tr>');
     }
-    the_parts.push('</tbody>');
+    parts.push('</tbody>');
   }
 
-  the_parts.push('</table>');
-  return the_parts.join('');
+  parts.push('</table>');
+  return parts.join('');
 }
 
 function formatCell(
   cell: RowCell,
   variable: VariableInfo,
-  value_label_tables: Map<string, Map<number, string>>
+  valueLabelTables: Map<string, Map<number, string>>
 ): string {
-  const my_label_table = variable.value_label_name
-    ? value_label_tables.get(variable.value_label_name)
+  const labelTable = variable.value_label_name
+    ? valueLabelTables.get(variable.value_label_name)
     : undefined;
 
   // Missing values
   if (is_missing_value_object(cell)) {
-    let my_display: string;
-    if (my_label_table) {
-      const my_label_key = missing_type_to_label_key(
+    let display: string;
+    if (labelTable) {
+      const labelKey = missing_type_to_label_key(
         cell.missing_type
       );
-      const my_label = my_label_table.get(my_label_key);
-      my_display = my_label ?? cell.missing_type;
+      const label = labelTable.get(labelKey);
+      display = label ?? cell.missing_type;
     } else {
-      my_display = cell.missing_type;
+      display = cell.missing_type;
     }
     return '<span class="mm-missing-value">'
-      + escapeHtml(my_display) + '</span>';
+      + escapeHtml(display) + '</span>';
   }
 
   // Value label lookup (numeric values only)
-  if (typeof cell === 'number' && my_label_table) {
-    const my_label = my_label_table.get(cell);
-    if (my_label !== undefined) {
-      return escapeHtml(my_label);
+  if (typeof cell === 'number' && labelTable) {
+    const label = labelTable.get(cell);
+    if (label !== undefined) {
+      return escapeHtml(label);
     }
   }
 
   // Display format
   if (typeof cell === 'number') {
-    const my_formatted = apply_display_format(
+    const formatted = apply_display_format(
       cell, variable.format
     );
-    return escapeHtml(my_formatted ?? String(cell));
+    return escapeHtml(formatted ?? String(cell));
   }
 
   // String values
