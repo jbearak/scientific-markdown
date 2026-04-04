@@ -848,7 +848,7 @@ describe('Integration: tables.docx fixture', () => {
   beforeAll(async () => {
     const { docx, warnings } = await convertMdToDocx(tablesSourceMd);
     expect(warnings).toEqual([]);
-    tablesData = new Uint8Array(docx);
+    tablesData = docx;
   });
 
   test('converts tables.docx and produces three tables (simple one as pipe, complex as HTML)', async () => {
