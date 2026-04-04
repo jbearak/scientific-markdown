@@ -5549,8 +5549,22 @@ export function buildMarkdown(
                 && noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === noteRawEmbedValue) {
                 tableIndex++;
                 bi++;
-              } else if (next.type === 'para') {
-                bi++;
+              } else if (next.type === 'para' && isPlainEmptyParagraph(next)
+                && !paragraphHasContent(bodyMerged, bi)) {
+                // Only skip plain empty spacer paragraphs when they sit
+                // between tables from the same embed occurrence.
+                let peek = bi + 1;
+                while (peek < bodyMerged.length && bodyMerged[peek].type === 'para'
+                  && isPlainEmptyParagraph(bodyMerged[peek] as Extract<ContentItem, { type: 'para' }>)
+                  && !paragraphHasContent(bodyMerged, peek)) {
+                  peek++;
+                }
+                if (peek < bodyMerged.length && bodyMerged[peek].type === 'table'
+                  && noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === noteRawEmbedValue) {
+                  bi = peek;
+                } else {
+                  break;
+                }
               } else if (next.type === 'text' && !next.text?.trim()) {
                 bi++;
               } else {
