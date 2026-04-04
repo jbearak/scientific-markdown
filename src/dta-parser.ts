@@ -125,7 +125,7 @@ export function parseDta(
   let headerRows: string[][];
   let bodyStartIdx: number;
 
-  if (headerCount !== undefined && headerCount > 0) {
+  if (headerCount !== undefined) {
     // Use first N data rows as headers
     headerRows = [];
     const limit = Math.min(headerCount, rows.length);

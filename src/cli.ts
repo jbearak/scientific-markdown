@@ -170,7 +170,10 @@ Options:
 }
 
 function showVersion() {
-  const { version } = require('../package.json');
+  // From src/cli.ts: ../package.json; from out/src/cli.js: ../../package.json
+  let pkg;
+  try { pkg = require('../package.json'); } catch { pkg = require('../../package.json'); }
+  const { version } = pkg;
   console.log(version);
 }
 

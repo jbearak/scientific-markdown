@@ -63,17 +63,17 @@ Only table content (pipe tables, grid tables, HTML tables) and table directives 
 
 Embed a Stata dataset:
 
-~~~markdown
+```markdown
 <!-- embed: data/auto.dta -->
-~~~
+```
 
 By default, **variable names** become the header row. Value labels and display formats are always applied — if a variable has an associated value label table, labels are shown instead of raw numeric codes.
 
 To use data rows as headers instead of variable names, set `headers`:
 
-~~~markdown
+```markdown
 <!-- embed: data/auto.dta headers=1 -->
-~~~
+```
 
 This replaces the variable name header with the first data row (or first N rows when `headers=N`).
 

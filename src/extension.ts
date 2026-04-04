@@ -955,7 +955,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// File watcher to invalidate embed cache
-	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md}');
+	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md,dta}');
 	embedWatcher.onDidChange(uri => {
 		embedCache.delete(uri.fsPath);
 		void vscode.commands.executeCommand('markdown.preview.refresh');
@@ -1007,7 +1007,7 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 	if (languageClient) {
 		return;
 	}
-	const serverModule = context.asAbsolutePath(path.join('out', 'lsp', 'server.js'));
+	const serverModule = context.asAbsolutePath(path.join('out', 'src', 'lsp', 'server.js'));
 	const serverOptions: ServerOptions = {
 		run: { module: serverModule, transport: TransportKind.ipc },
 		debug: {
