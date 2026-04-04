@@ -8,15 +8,10 @@ import { parseCsv, csvToHtmlTableMeta } from './csv-parser';
  * and parsed back to the same array.
  */
 
-/** Serialize a 2D array to CSV format. */
+/** Serialize a 2D array to CSV format. Always quote to ensure round-trip fidelity. */
 function toCsv(rows: string[][], delimiter: string): string {
   return rows.map(row =>
-    row.map(cell => {
-      if (cell.includes(delimiter) || cell.includes('"') || cell.includes('\n') || cell.includes('\r')) {
-        return '"' + cell.replace(/"/g, '""') + '"';
-      }
-      return cell;
-    }).join(delimiter)
+    row.map(cell => '"' + cell.replace(/"/g, '""') + '"').join(delimiter)
   ).join('\n');
 }
 

@@ -186,7 +186,7 @@ describe('Feature: embedded-tables, Property 4: blank lines around expanded tabl
         const result = preprocessEmbeds(input, resolver, '/doc/file.md');
         const lines = result.split('\n');
 
-        const tableStart = lines.findIndex(l => l.includes('<table'));
+        const tableStart = lines.findIndex(l => l.startsWith('<table'));
         const tableEnd = lines.findIndex(l => l.includes('</table>'));
 
         if (tableStart > 0) {

@@ -15,6 +15,7 @@ import { convertMdToDocx } from './md-to-docx';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseFrontmatter, hasCitations, normalizeColorScheme, type ColorScheme } from './frontmatter';
+import type { EmbedResolver } from './embed-preprocess';
 import { BUNDLED_STYLE_LABELS } from './csl-loader';
 import { getCompletionContextAtOffset } from './lsp/citekey-language';
 import { getCslCompletionContext, shouldAutoTriggerSuggestFromChanges } from './lsp/csl-language';
@@ -60,6 +61,27 @@ let languageClient: LanguageClient | undefined;
 let languageClientDisposables: vscode.Disposable[] = [];
 let cslCacheDir: string = '';
 let previewMd: any;
+
+// Embed resolver for reading external files referenced by embed directives.
+// Shared by both the preview plugin and md-to-docx conversion.
+const embedCache = new Map<string, { content: Uint8Array; mtime: number }>();
+const embedResolver: EmbedResolver = {
+	readFile(absolutePath: string): Uint8Array | null {
+		try {
+			const stat = fs.statSync(absolutePath);
+			const cached = embedCache.get(absolutePath);
+			if (cached && cached.mtime === stat.mtimeMs) return cached.content;
+			const content = new Uint8Array(fs.readFileSync(absolutePath));
+			embedCache.set(absolutePath, { content, mtime: stat.mtimeMs });
+			return content;
+		} catch {
+			return null;
+		}
+	},
+	resolveRelative(basePath: string, relativePath: string): string {
+		return path.resolve(path.dirname(basePath), relativePath);
+	},
+};
 function syncPreviewColors(scheme: ColorScheme) {
 	if (previewMd) previewMd.manuscriptColors = scheme;
 }
@@ -868,6 +890,10 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.onDidChangeActiveTextEditor(editor => {
 			if (editor) { updateHighlightDecorations(editor); }
+			// Update embed resolver document path for preview preprocessing
+			if (editor?.document.languageId === 'markdown' && previewMd) {
+				previewMd.manuscriptDocumentPath = editor.document.uri.fsPath;
+			}
 		}),
 		vscode.workspace.onDidChangeTextDocument(e => {
 			const editor = vscode.window.activeTextEditor;
@@ -895,11 +921,23 @@ export function activate(context: vscode.ExtensionContext) {
 		);
 	}
 
+	// File watcher to invalidate embed cache
+	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md}');
+	embedWatcher.onDidChange(uri => embedCache.delete(uri.fsPath));
+	embedWatcher.onDidDelete(uri => embedCache.delete(uri.fsPath));
+	context.subscriptions.push(embedWatcher);
+
 	// Return markdown-it plugin for preview integration
 	return {
 		extendMarkdownIt(md: any) {
 			previewMd = md;
 			md.manuscriptColors = getConfiguredColorScheme();
+			md.manuscriptEmbedResolver = embedResolver;
+			// Set initial document path from active editor
+			const activeDoc = vscode.window.activeTextEditor?.document;
+			if (activeDoc?.languageId === 'markdown') {
+				md.manuscriptDocumentPath = activeDoc.uri.fsPath;
+			}
 			return md.use(manuscriptMarkdownPlugin);
 		}
 	};
@@ -1348,6 +1386,8 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 		sourceDir,
 		blockquoteStyle,
 		colors,
+		documentPath: input.basePath + '.md',
+		embedResolver,
 		onStyleNotFound: async (styleName: string) => {
 			const choice = await vscode.window.showWarningMessage(
 				`CSL style "${styleName}" is not bundled. Download it from the CSL repository? Without it, citations will use plain-text fallback formatting.`,

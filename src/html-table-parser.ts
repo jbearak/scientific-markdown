@@ -28,6 +28,7 @@ export interface HtmlTableMeta {
   font?: string;       // from data-font attribute
   orientation?: 'landscape' | 'portrait'; // from data-orientation attribute
   colWidths?: number[] | 'equal' | 'auto'; // from data-col-widths attribute
+  embedIdx?: number;   // from data-embed-idx attribute (set by embed preprocessing)
 }
 
 /** Parse data-col-widths attribute value (inline to avoid circular dependency with frontmatter.ts). */
@@ -82,6 +83,12 @@ export function extractHtmlTables(html: string): HtmlTableMeta[] {
       if (colWidthsVal) {
         const parsed = parseColWidthsAttr(colWidthsVal);
         if (parsed) meta.colWidths = parsed;
+      }
+      // data-embed-idx: integer index set by embed preprocessing for round-trip
+      const embedIdxMatch = attrs.match(/data-embed-idx\s*=\s*["']?(\d+)["']?/i);
+      if (embedIdxMatch) {
+        const idx = parseInt(embedIdxMatch[1], 10);
+        if (Number.isFinite(idx)) meta.embedIdx = idx;
       }
       tables.push(meta);
     }

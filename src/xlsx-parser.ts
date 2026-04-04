@@ -1,0 +1,136 @@
+import * as XLSX from 'xlsx';
+import type { HtmlTableMeta, HtmlTableRow, HtmlTableCell, HtmlTableRun } from './html-table-parser';
+
+export interface XlsxParseOptions {
+  sheet?: string;   // sheet name or 1-based index
+  range?: string;   // cell range (A1:F20) or named range
+  headers?: number; // number of header rows (default 1)
+}
+
+/**
+ * Parse an XLSX buffer into HtmlTableMeta.
+ *
+ * Sheet resolution: 1-based index if numeric, name match otherwise, first sheet if omitted.
+ * Range resolution: explicit cell ref, named range, or auto-detect bounding rectangle.
+ * Merged cells produce colspan/rowspan on the top-left cell.
+ */
+export function parseXlsx(data: Uint8Array, options?: XlsxParseOptions): HtmlTableMeta {
+  const wb = XLSX.read(data, { type: 'array' });
+  const headerCount = options?.headers ?? 1;
+
+  // --- Sheet resolution ---
+  const ws = resolveSheet(wb, options?.sheet);
+
+  // --- Range resolution ---
+  const rangeRef = resolveRange(wb, ws, options?.range);
+
+  // --- Parse cells within range ---
+  const range = XLSX.utils.decode_range(rangeRef);
+  const merges = ws['!merges'] || [];
+
+  // Build a set of cells that are "covered" by a merge (not the top-left origin)
+  const coveredCells = new Set<string>();
+  const mergeMap = new Map<string, { colspan: number; rowspan: number }>();
+
+  for (const merge of merges) {
+    const colspan = merge.e.c - merge.s.c + 1;
+    const rowspan = merge.e.r - merge.s.r + 1;
+    const originKey = XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
+    if (colspan > 1 || rowspan > 1) {
+      mergeMap.set(originKey, {
+        colspan: colspan > 1 ? colspan : undefined!,
+        rowspan: rowspan > 1 ? rowspan : undefined!,
+      });
+    }
+    for (let r = merge.s.r; r <= merge.e.r; r++) {
+      for (let c = merge.s.c; c <= merge.e.c; c++) {
+        if (r === merge.s.r && c === merge.s.c) continue;
+        coveredCells.add(XLSX.utils.encode_cell({ r, c }));
+      }
+    }
+  }
+
+  const rows: HtmlTableRow[] = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const cells: HtmlTableCell[] = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (coveredCells.has(cellRef)) continue;
+
+      const cell = ws[cellRef];
+      const text = cell ? String(cell.v ?? '') : '';
+      const runs: HtmlTableRun[] = [{ type: 'text', text }];
+      const tableCell: HtmlTableCell = { runs };
+
+      const mergeInfo = mergeMap.get(cellRef);
+      if (mergeInfo) {
+        if (mergeInfo.colspan) tableCell.colspan = mergeInfo.colspan;
+        if (mergeInfo.rowspan) tableCell.rowspan = mergeInfo.rowspan;
+      }
+
+      cells.push(tableCell);
+    }
+
+    const rowIdx = r - range.s.r;
+    rows.push({ cells, header: rowIdx < headerCount });
+  }
+
+  return { rows };
+}
+
+function resolveSheet(wb: XLSX.WorkBook, sheet?: string): XLSX.WorkSheet {
+  if (sheet === undefined) {
+    return wb.Sheets[wb.SheetNames[0]];
+  }
+
+  // Try as 1-based index
+  const idx = Number(sheet);
+  if (Number.isInteger(idx) && idx >= 1) {
+    if (idx > wb.SheetNames.length) {
+      throw new Error('Sheet index ' + idx + ' out of range (workbook has ' + wb.SheetNames.length + ' sheets)');
+    }
+    return wb.Sheets[wb.SheetNames[idx - 1]];
+  }
+
+  // Try as name
+  const ws = wb.Sheets[sheet];
+  if (!ws) {
+    throw new Error('Sheet "' + sheet + '" not found in workbook');
+  }
+  return ws;
+}
+
+function resolveRange(wb: XLSX.WorkBook, ws: XLSX.WorkSheet, range?: string): string {
+  if (!range) {
+    // Auto-detect bounding rectangle by scanning actual cell keys
+    let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
+    for (const key of Object.keys(ws)) {
+      if (key.startsWith('!')) continue;
+      const cell = XLSX.utils.decode_cell(key);
+      if (cell.r < minR) minR = cell.r;
+      if (cell.r > maxR) maxR = cell.r;
+      if (cell.c < minC) minC = cell.c;
+      if (cell.c > maxC) maxC = cell.c;
+    }
+    if (maxR < 0) throw new Error('Sheet is empty');
+    return XLSX.utils.encode_range({ s: { r: minR, c: minC }, e: { r: maxR, c: maxC } });
+  }
+
+  // Check if it's a cell reference (contains a colon with letter-number patterns)
+  if (/^[A-Z]+\d+:[A-Z]+\d+$/i.test(range.replace(/\$/g, ''))) {
+    return range;
+  }
+
+  // Try as named range
+  const names = wb.Workbook?.Names;
+  if (names) {
+    const found = names.find(n => n.Name === range);
+    if (found && found.Ref) {
+      // Ref format: 'SheetName'!$A$1:$B$2 or SheetName!A1:B2
+      const refPart = found.Ref.replace(/^.*!/, '').replace(/\$/g, '');
+      return refPart;
+    }
+  }
+
+  throw new Error('Named range "' + range + '" not found in workbook');
+}

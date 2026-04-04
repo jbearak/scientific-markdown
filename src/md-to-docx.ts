@@ -11,6 +11,7 @@ import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAl
 import { scanOrientationDirectives } from './orientation-scan';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
+import { preprocessEmbedsTracked } from './embed-preprocess';
 import { LATENT_STYLES } from './latent-styles';
 import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun, type HtmlTableMeta } from './html-table-parser';
 export { preprocessGridTables } from './grid-table-preprocess';
@@ -110,6 +111,7 @@ export interface MdToken {
   customStyleOpen?: string;   // sentinel: start of custom style block (style name)
   customStyleClose?: true;    // sentinel: end of custom style block
   indentOverride?: 'indent' | 'no-indent'; // per-paragraph indent override from <!-- indent --> / <!-- no-indent -->
+  embedIdx?: number;          // index into embed directives array, for round-trip recovery
 }
 
 export interface MdTableCell {
@@ -1220,6 +1222,15 @@ export function portraitBreakProps(portraitBreakOrdinals: Set<number>): CustomPr
   return chunkCustomProps('MANUSCRIPT_PORTRAIT_BREAKS_', JSON.stringify([...portraitBreakOrdinals]));
 }
 
+export function embedDirectiveProps(mapping: Map<number, string>): CustomPropEntry[] {
+  if (mapping.size === 0) return [];
+  const obj: Record<string, string> = {};
+  for (const [idx, directive] of mapping) {
+    obj[String(idx)] = directive;
+  }
+  return chunkCustomProps('MANUSCRIPT_EMBED_DIRECTIVES_', JSON.stringify(obj));
+}
+
 export function pipeTableAlignedProps(aligned: Map<number, boolean>): CustomPropEntry[] {
   if (aligned.size === 0) return [];
   const mapping: Record<string, string> = {};
@@ -2049,6 +2060,7 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
                 if (meta.font) tableToken.tableFont = meta.font;
                 if (meta.orientation) tableToken.tableOrientation = meta.orientation;
                 if (meta.colWidths) tableToken.tableColWidths = meta.colWidths;
+                if (meta.embedIdx !== undefined) tableToken.embedIdx = meta.embedIdx;
                 result.push(tableToken);
               }
             }
@@ -2657,6 +2669,10 @@ export interface MdToDocxOptions {
   blockquoteStyle?: 'Quote' | 'IntenseQuote' | 'GitHub';
   /** Color scheme for alert callouts. */
   colors?: ColorScheme;
+  /** Absolute path to the source markdown file (for resolving embed directives). */
+  documentPath?: string;
+  /** Resolver for reading embedded files (CSV, TSV, XLSX, MD). */
+  embedResolver?: import('./embed-preprocess').EmbedResolver;
 }
 
 export interface MdToDocxResult {
@@ -2802,6 +2818,8 @@ export interface DocxGenState {
   bodyParagraphIndex: number;      // counter for body paragraphs (for indent override tracking)
   listIndentOverrides: Map<number, 'indent' | 'no-indent'>; // list block index → override
   listBlockIndex: number;          // counter for list blocks (consecutive groups of list_items)
+  embedDirectiveMap: Map<number, string>; // table index → original embed directive text
+  embedDirectives: string[]; // ordered list of embed directive texts from preprocessing
 }
 
 interface CommentEntry {
@@ -5918,6 +5936,10 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       } else {
         body += generateTable(token, state, options, bibEntries, citeprocEngine);
       }
+      // Record embed directive for round-trip if this table came from an embed
+      if (token.embedIdx !== undefined && token.embedIdx < state.embedDirectives.length) {
+        state.embedDirectiveMap.set(state.tableIndex, state.embedDirectives[token.embedIdx]);
+      }
       state.tableIndex++;
     } else {
       state.afterHeading = prevToken?.type === 'heading' || (!prevToken && state.afterHeading);
@@ -6014,7 +6036,16 @@ export async function convertMdToDocx(
   // Extract footnote definitions before markdown parsing
   const { cleaned: bodyWithoutFootnotes, definitions: footnoteDefs } = extractFootnoteDefinitions(bodyStripped);
   const parseWarnings: string[] = [];
-  const tokens = parseMd(bodyWithoutFootnotes, parseWarnings, frontmatter.breaks ?? false, maskFrontmatter(markdown));
+  // Preprocess embeds before tokenization so embedded files resolve to HTML tables.
+  let embedDirectives: string[] = [];
+  let bodyForParsing = bodyWithoutFootnotes;
+  if (options?.embedResolver && options?.documentPath) {
+    const embedResult = preprocessEmbedsTracked(bodyWithoutFootnotes, options.embedResolver, options.documentPath);
+    bodyForParsing = embedResult.output;
+    embedDirectives = embedResult.embedDirectives;
+  }
+
+  const tokens = parseMd(bodyForParsing, parseWarnings, frontmatter.breaks ?? false, maskFrontmatter(markdown));
 
   // Compute inter-blockquote-group gap metadata from the original markdown
   // source and annotate tokens with sequential group indices.
@@ -6222,6 +6253,8 @@ export async function convertMdToDocx(
     bodyParagraphIndex: 0,
     listIndentOverrides: new Map(),
     listBlockIndex: 0,
+    embedDirectiveMap: new Map(),
+    embedDirectives,
   };
 
   // Compute indent mode: when line-spacing is non-single, auto-enable first-line indent
@@ -6571,6 +6604,7 @@ export async function convertMdToDocx(
   if (frontmatter.tableColWidths) {
     customProps.push({ name: 'MANUSCRIPT_DEFAULT_TABLE_COL_WIDTHS', value: defaultColWidthsStr! });
   }
+  customProps.push(...embedDirectiveProps(state.embedDirectiveMap));
   customProps.push(...landscapeTableProps(state.landscapeTables));
   customProps.push(...portraitTableProps(state.portraitTables));
   customProps.push(...portraitBreakProps(state.portraitBreakOrdinals));

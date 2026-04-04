@@ -129,7 +129,7 @@ describe('preprocessEmbeds', () => {
     const input = '# Title\n\n<!-- embed: data.csv -->\n\nMore text';
     const result = preprocessEmbeds(input, resolver, '/doc/file.md');
 
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
     expect(result).toContain('Alice');
     expect(result).toContain('Bob');
     expect(result).not.toContain('<!-- embed:');
@@ -145,7 +145,7 @@ describe('preprocessEmbeds', () => {
     const input = '<!-- embed: data.tsv -->';
     const result = preprocessEmbeds(input, resolver, '/doc/file.md');
 
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
     expect(result).toContain('Alice');
   });
 
@@ -156,7 +156,7 @@ describe('preprocessEmbeds', () => {
     const input = '<!-- embed: table.md -->';
     const result = preprocessEmbeds(input, resolver, '/doc/file.md');
 
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
     // Non-table content should be dropped
     expect(result).not.toContain('Some text');
     expect(result).not.toContain('More text');
@@ -170,7 +170,7 @@ describe('preprocessEmbeds', () => {
     const result = preprocessEmbeds(input, resolver, '/doc/file.md');
 
     expect(result).toContain('table-font-size: 9');
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
   });
 
   it('respects the headers parameter for CSV', () => {
@@ -229,7 +229,7 @@ describe('preprocessEmbeds', () => {
     const lines = result.split('\n');
 
     // Find the table start
-    const tableIdx = lines.findIndex(l => l.includes('<table>'));
+    const tableIdx = lines.findIndex(l => l.includes('<table'));
     expect(tableIdx).toBeGreaterThan(0);
     // Line before table should be blank
     expect(lines[tableIdx - 1].trim()).toBe('');
@@ -248,7 +248,7 @@ describe('preprocessEmbeds', () => {
     const input = '<!-- embed: "my data/table.csv" -->';
     const result = preprocessEmbeds(input, resolver, '/doc/file.md');
 
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
   });
 
   it('handles CSV with headers=0 (no header rows)', () => {
@@ -269,6 +269,6 @@ describe('preprocessEmbeds', () => {
     const input = '<!-- embed: data/table.csv -->';
     const result = preprocessEmbeds(input, resolver, '/project/docs/file.md');
 
-    expect(result).toContain('<table>');
+    expect(result).toContain('<table');
   });
 });

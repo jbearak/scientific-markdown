@@ -810,6 +810,7 @@
     "markdown-it": "^14.1.0",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
-    "vscode-languageserver-textdocument": "^1.0.12"
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "xlsx": "^0.18.5"
   }
 }
