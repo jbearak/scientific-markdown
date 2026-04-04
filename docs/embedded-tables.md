@@ -20,7 +20,7 @@ File paths are resolved relative to the markdown file containing the directive. 
 |-------|-----------|---------|-------------|
 | `sheet` | .xlsx | First sheet | Sheet name or 1-based index |
 | `range` | .xlsx | Auto-detect bounding rectangle | Cell range (e.g. `A1:F20`) or named range |
-| `headers` | .csv, .tsv, .xlsx | `1` | Number of header rows |
+| `headers` | .csv, .tsv, .xlsx, .dta | `1` (.csv/.tsv/.xlsx) or variable names (.dta) | Number of header rows. For .dta files, replaces variable names. |
 
 ## File Types
 
@@ -58,6 +58,30 @@ Embed tables from another markdown file:
 ```
 
 Only table content (pipe tables, grid tables, HTML tables) and table directives (`table-font-size`, `table-font`, `table-orientation`, `table-col-widths`) are included from the embedded file. Non-table content is silently ignored, with an informational diagnostic in the editor. Cell content is rendered as plain Markdown only — Manuscript-specific syntax such as CriticMarkup, citations, and math is not processed within embedded `.md` tables.
+
+### Stata dataset (.dta)
+
+Embed a Stata dataset:
+
+~~~markdown
+<!-- embed: data/auto.dta -->
+~~~
+
+By default, **variable names** become the header row. Value labels and display formats are always applied — if a variable has an associated value label table, labels are shown instead of raw numeric codes.
+
+To use data rows as headers instead of variable names, set `headers`:
+
+~~~markdown
+<!-- embed: data/auto.dta headers=1 -->
+~~~
+
+This replaces the variable name header with the first data row (or first N rows when `headers=N`).
+
+**Missing values** (`.`, `.a`–`.z`) are displayed using their value label if one exists, or the raw missing code otherwise. In the VS Code preview, missing values are colorized using the editor's error color (typically red) to make them visually distinct. In Word export, missing values appear as plain text.
+
+**File size limit:** To prevent accidentally embedding very large datasets, files larger than 10 MB are rejected by default. Adjust this limit with the `manuscriptMarkdown.embedDtaMaxFileSize` setting (value in bytes).
+
+Supported Stata formats: Stata 8+ (file formats 113–115 and 117–119).
 
 ## Example
 
@@ -112,6 +136,8 @@ If something goes wrong with an embed, you'll see feedback in two places: an err
 | Invalid parameter syntax | Error | `invalid embed parameter: <detail>` |
 | File produces no table rows | Warning | `<path> produced an empty table` |
 | Embedded .md has non-table content | Info | `non-table content in <path> was ignored` |
+| .dta file exceeds size limit | Error | `.dta file exceeds maximum size (<limit>)` |
+| Unsupported .dta format version | Error | `unsupported .dta format` |
 
 ## Page Orientation and Isolation
 

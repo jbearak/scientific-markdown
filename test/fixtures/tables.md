@@ -50,3 +50,7 @@
 ### Markdown file
 
 <!-- embed: tables/embed.md -->
+
+### Stata dataset
+
+<!-- embed: tables/embed.dta -->
