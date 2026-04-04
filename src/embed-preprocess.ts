@@ -2,6 +2,8 @@ import { parseCsv, csvToHtmlTableMeta } from './csv-parser';
 import { parseXlsx } from './xlsx-parser';
 import type { HtmlTableMeta, HtmlTableRun } from './html-table-parser';
 import { LineMap, type LineMapSegment } from './preview/line-map';
+import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
+import MarkdownIt from 'markdown-it';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -325,66 +327,202 @@ function resolveXlsx(data: Uint8Array, directive: EmbedDirective): string {
   return renderHtmlTable(meta);
 }
 
+/**
+ * Resolve an embedded .md file by extracting table blocks (pipe, grid, HTML)
+ * with their preceding table directives, converting all tables to HTML format
+ * so they can be tagged with data-embed-idx for round-trip tracking.
+ *
+ * Returns a string of directive comments and HTML tables.
+ */
 function resolveMd(data: Uint8Array): string {
   const content = new TextDecoder().decode(data);
-  const lines = content.split('\n');
-  const extracted: string[] = [];
-  let inTable = false;
 
-  for (let i = 0; i < lines.length; i++) {
+  // Phase 1: Extract table blocks and their preceding directives.
+  // A "block" is a sequence of: optional directives, optional blank lines,
+  // then a table (pipe, grid, or HTML). Non-table content is discarded.
+  const blocks = extractTableBlocks(content);
+  if (blocks.length === 0) return '';
+
+  // Phase 2: Convert each block's table content to HTML.
+  const outputParts: string[] = [];
+  for (const block of blocks) {
+    // Emit directives as-is
+    if (block.directives.length > 0) {
+      outputParts.push(block.directives.join('\n'));
+    }
+    // Convert the table content to HTML
+    const html = tableContentToHtml(block.tableLines.join('\n'));
+    if (html) {
+      outputParts.push(html);
+    }
+  }
+
+  return outputParts.join('\n\n');
+}
+
+interface TableBlock {
+  directives: string[];
+  tableLines: string[];
+}
+
+/**
+ * Scan markdown content and extract table blocks with their preceding directives.
+ */
+function extractTableBlocks(content: string): TableBlock[] {
+  const lines = content.split('\n');
+  const blocks: TableBlock[] = [];
+  let pendingDirectives: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
     const trimmed = lines[i].trim();
 
-    // Blank lines are neutral — keep them in extracted if we're accumulating
-    // directives or tables, don't trigger directive cleanup
+    // Skip blank lines between directives and tables
     if (trimmed === '') {
-      extracted.push(lines[i]);
+      i++;
       continue;
     }
 
-    // Table directives preceding a table
+    // Collect table directives
     if (TABLE_DIRECTIVE_RE.test(trimmed)) {
-      // Look ahead for a table — collect directive and keep going
-      extracted.push(lines[i]);
+      pendingDirectives.push(lines[i]);
+      i++;
       continue;
     }
 
     // HTML table block
     if (trimmed.startsWith('<table') || trimmed === '<table>') {
-      inTable = true;
-      extracted.push(lines[i]);
-      if (trimmed.includes('</table>')) {
-        inTable = false;
+      const tableLines: string[] = [];
+      while (i < lines.length) {
+        tableLines.push(lines[i]);
+        if (lines[i].trim().includes('</table>')) {
+          i++;
+          break;
+        }
+        i++;
       }
-      continue;
-    }
-    if (inTable) {
-      extracted.push(lines[i]);
-      if (trimmed.includes('</table>')) {
-        inTable = false;
-      }
+      blocks.push({ directives: pendingDirectives, tableLines });
+      pendingDirectives = [];
       continue;
     }
 
-    // Pipe table: line starting with |
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      extracted.push(lines[i]);
-      continue;
-    }
-
-    // Grid table separator
+    // Grid table (starts with +---+)
     if (/^\+[-=]+(\+[-=]+)*\+$/.test(trimmed)) {
-      extracted.push(lines[i]);
+      const tableLines: string[] = [];
+      while (i < lines.length) {
+        const t = lines[i].trim();
+        if (/^\+[-=]+(\+[-=]+)*\+$/.test(t) || (t.startsWith('|') && t.endsWith('|'))) {
+          tableLines.push(lines[i]);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (tableLines.length >= 3) {
+        blocks.push({ directives: pendingDirectives, tableLines });
+        pendingDirectives = [];
+      }
       continue;
     }
 
-    // If we were collecting directives but hit non-table content, drop the directives
-    // by removing trailing directive lines from extracted
-    while (extracted.length > 0 && TABLE_DIRECTIVE_RE.test(extracted[extracted.length - 1].trim())) {
-      extracted.pop();
+    // Pipe table (starts and ends with |)
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const tableLines: string[] = [];
+      while (i < lines.length) {
+        const t = lines[i].trim();
+        if (t.startsWith('|') && t.endsWith('|')) {
+          tableLines.push(lines[i]);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (tableLines.length >= 2) {
+        blocks.push({ directives: pendingDirectives, tableLines });
+        pendingDirectives = [];
+      }
+      continue;
     }
+
+    // Non-table content — discard any pending directives
+    pendingDirectives = [];
+    i++;
   }
 
-  return extracted.join('\n');
+  return blocks;
+}
+
+/**
+ * Convert table content (pipe, grid, or HTML) to an HTML <table> string.
+ * Uses preprocessGridTables + markdown-it to handle all formats uniformly.
+ */
+function tableContentToHtml(tableContent: string): string | null {
+  // If already HTML, return as-is
+  if (tableContent.trim().startsWith('<table')) {
+    return tableContent.trim();
+  }
+
+  // Run through grid table preprocessor (converts grid tables to placeholders)
+  let processed = preprocessGridTables(tableContent);
+
+  // Check if a grid table placeholder was generated
+  const placeholderMatch = processed.match(new RegExp(GRID_TABLE_PLACEHOLDER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([A-Za-z0-9+/=]+)\\s*-->'));
+  if (placeholderMatch) {
+    // Decode the grid table data and render to HTML
+    const json = Buffer.from(placeholderMatch[1], 'base64').toString('utf-8');
+    const data: GridTableData = JSON.parse(json);
+    return gridTableDataToHtml(data);
+  }
+
+  // Must be a pipe table — render via markdown-it
+  const md = new MarkdownIt({ html: true });
+  const html = md.render(processed);
+
+  // Extract <table>...</table> from the rendered HTML
+  const tableMatch = html.match(/<table>[\s\S]*?<\/table>/i);
+  return tableMatch ? tableMatch[0] : null;
+}
+
+/**
+ * Convert GridTableData to an HTML <table> string.
+ */
+function gridTableDataToHtml(data: GridTableData): string {
+  const headerRows = data.rows.filter(r => r.header);
+  const bodyRows = data.rows.filter(r => !r.header);
+
+  let html = '<table>';
+
+  if (headerRows.length > 0) {
+    html += '<thead>';
+    for (const row of headerRows) {
+      html += '<tr>';
+      for (const cell of row.cells) {
+        const escaped = cell.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Multi-line cells: convert newlines to <br>
+        const formatted = escaped.replace(/\n/g, '<br>');
+        html += '<th>' + formatted + '</th>';
+      }
+      html += '</tr>';
+    }
+    html += '</thead>';
+  }
+
+  if (bodyRows.length > 0) {
+    html += '<tbody>';
+    for (const row of bodyRows) {
+      html += '<tr>';
+      for (const cell of row.cells) {
+        const escaped = cell.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const formatted = escaped.replace(/\n/g, '<br>');
+        html += '<td>' + formatted + '</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody>';
+  }
+
+  html += '</table>';
+  return html;
 }
 
 // ---------------------------------------------------------------------------

@@ -224,3 +224,67 @@ describe('Feature: embedded-tables, Property 5: missing files produce error plac
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Property 6: .md embeds always produce HTML tables regardless of source format.
+// ---------------------------------------------------------------------------
+
+describe('Feature: embedded-tables, Property 6: .md embeds produce HTML tables', () => {
+  // Generator: pipe table with random column count and row count
+  const wordArb = fc.array(fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz0123456789'.split('')), { minLength: 1, maxLength: 10 }).map(a => a.join(''));
+  const pipeTableArb = fc.integer({ min: 1, max: 4 }).chain(numCols => {
+    const headerRow = fc.array(wordArb, { minLength: numCols, maxLength: numCols })
+      .map(cells => '| ' + cells.join(' | ') + ' |');
+    const separatorRow = fc.constant('|' + Array(numCols).fill('---').join('|') + '|');
+    const dataRow = fc.array(wordArb, { minLength: numCols, maxLength: numCols })
+      .map(cells => '| ' + cells.join(' | ') + ' |');
+    return fc.tuple(headerRow, separatorRow, fc.array(dataRow, { minLength: 1, maxLength: 4 }))
+      .map(([header, sep, rows]) => [header, sep, ...rows].join('\n'));
+  });
+
+  it('.md pipe table embeds always produce HTML <table> output', () => {
+    fc.assert(
+      fc.property(pipeTableArb, (tableContent) => {
+        const resolver: EmbedResolver = {
+          readFile() { return new TextEncoder().encode(tableContent); },
+          resolveRelative(_base: string, rel: string) { return '/' + rel; },
+        };
+        const result = preprocessEmbeds('<!-- embed: table.md -->', resolver, '/doc/file.md');
+        expect(result).toContain('<table');
+        expect(result).toContain('</table>');
+        expect(result).toContain('data-embed-idx=');
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  // Generator: grid table
+  const gridTableArb = fc.integer({ min: 1, max: 3 }).chain(numCols => {
+    const colWidth = 5;
+    const separator = '+' + Array(numCols).fill('-'.repeat(colWidth)).join('+') + '+';
+    const headerSep = '+' + Array(numCols).fill('='.repeat(colWidth)).join('+') + '+';
+    const cellArb = fc.array(fc.constantFrom(...'abcdefghij'.split('')), { minLength: 1, maxLength: colWidth - 2 }).map(a => a.join(''));
+    const rowArb = fc.array(cellArb, { minLength: numCols, maxLength: numCols })
+      .map(cells => '| ' + cells.map((c: string) => c.padEnd(colWidth - 2)).join(' | ') + ' |');
+    return fc.tuple(rowArb, fc.array(rowArb, { minLength: 1, maxLength: 3 }))
+      .map(([headerRow, bodyRows]) =>
+        [separator, headerRow, headerSep, ...bodyRows.flatMap(r => [r, separator])].join('\n')
+      );
+  });
+
+  it('.md grid table embeds always produce HTML <table> output', () => {
+    fc.assert(
+      fc.property(gridTableArb, (tableContent) => {
+        const resolver: EmbedResolver = {
+          readFile() { return new TextEncoder().encode(tableContent); },
+          resolveRelative(_base: string, rel: string) { return '/' + rel; },
+        };
+        const result = preprocessEmbeds('<!-- embed: table.md -->', resolver, '/doc/file.md');
+        expect(result).toContain('<table');
+        expect(result).toContain('</table>');
+        expect(result).toContain('data-embed-idx=');
+      }),
+      { numRuns: 100 },
+    );
+  });
+});

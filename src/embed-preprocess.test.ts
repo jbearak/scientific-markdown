@@ -272,3 +272,174 @@ describe('preprocessEmbeds', () => {
     expect(result).toContain('<table');
   });
 });
+
+// ---------------------------------------------------------------------------
+// .md embeds — pipe, grid, and HTML table formats
+// ---------------------------------------------------------------------------
+
+describe('preprocessEmbeds — .md embed formats', () => {
+  it('converts an embedded pipe table to HTML', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).toContain('<th>');
+    expect(result).toContain('Alice');
+    expect(result).toContain('Bob');
+    expect(result).not.toContain('|');
+  });
+
+  it('converts an embedded grid table to HTML', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '+------+-----+\n| Name | Age |\n+======+=====+\n| Alice| 30  |\n+------+-----+',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).toContain('<thead>');
+    expect(result).toContain('Name');
+    expect(result).toContain('Alice');
+    expect(result).not.toContain('+---');
+  });
+
+  it('passes through an embedded HTML table', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '<table><tr><th>X</th><th>Y</th></tr><tr><td>1</td><td>2</td></tr></table>',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).toContain('</table>');
+    expect(result).toContain('<th>X</th>');
+    expect(result).toContain('<td>1</td>');
+  });
+
+  it('preserves table directives before a pipe table in .md', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '<!-- table-font-size: 10 -->\n<!-- table-orientation: landscape -->\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('table-font-size: 10');
+    expect(result).toContain('table-orientation: landscape');
+    expect(result).toContain('<table');
+    expect(result).toContain('<th>');
+  });
+
+  it('preserves table directives before a grid table in .md', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '<!-- table-font: Arial -->\n\n+---+---+\n| a | b |\n+===+===+\n| 1 | 2 |\n+---+---+',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('table-font: Arial');
+    expect(result).toContain('<table');
+  });
+
+  it('discards non-table content from .md embeds', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '# Heading\n\nSome paragraph text.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nMore text after.',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).not.toContain('Heading');
+    expect(result).not.toContain('paragraph');
+    expect(result).not.toContain('More text');
+  });
+
+  it('discards directives not followed by a table', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '<!-- table-font-size: 9 -->\n\nJust a paragraph, no table.\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    // The directive before the paragraph should be discarded
+    // Only the pipe table should survive
+    expect(result).toContain('<table');
+    expect(result).not.toContain('table-font-size');
+    expect(result).not.toContain('paragraph');
+  });
+
+  it('handles multiple tables in a single .md embed', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '| A | B |\n|---|---|\n| 1 | 2 |\n\n| C | D |\n|---|---|\n| 3 | 4 |',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    // Both tables should be present as HTML
+    const tableCount = (result.match(/<table/g) || []).length;
+    expect(tableCount).toBe(2);
+  });
+
+  it('handles a grid table with multiline cells in .md', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '+--------+--------+\n| Header | Header |\n+========+========+\n| line1  | x      |\n| line2  |        |\n+--------+--------+',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).toContain('line1');
+    expect(result).toContain('line2');
+    // Multiline cell content should have <br>
+    expect(result).toContain('<br>');
+  });
+
+  it('returns empty for .md with no tables', () => {
+    const resolver = makeTestResolver({
+      '/doc/notatble.md': '# Just a heading\n\nSome text.\n',
+    });
+    const input = 'Before\n<!-- embed: notatble.md -->\nAfter';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    // No table content, so the embed produces nothing meaningful
+    expect(result).not.toContain('<table');
+    expect(result).toContain('Before');
+    expect(result).toContain('After');
+  });
+
+  it('tags pipe table .md embeds with data-embed-idx', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '| A | B |\n|---|---|\n| 1 | 2 |',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('data-embed-idx="0"');
+  });
+
+  it('tags grid table .md embeds with data-embed-idx', () => {
+    const resolver = makeTestResolver({
+      '/doc/table.md': '+---+---+\n| a | b |\n+===+===+\n| 1 | 2 |\n+---+---+',
+    });
+    const input = '<!-- embed: table.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('data-embed-idx="0"');
+  });
+
+  it('assigns sequential data-embed-idx across mixed embed types', () => {
+    const resolver = makeTestResolver({
+      '/doc/a.csv': 'x,y\n1,2',
+      '/doc/b.md': '| A | B |\n|---|---|\n| 3 | 4 |',
+      '/doc/c.md': '+---+---+\n| p | q |\n+===+===+\n| 5 | 6 |\n+---+---+',
+    });
+    const input = '<!-- embed: a.csv -->\n\n<!-- embed: b.md -->\n\n<!-- embed: c.md -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('data-embed-idx="0"');
+    expect(result).toContain('data-embed-idx="1"');
+    expect(result).toContain('data-embed-idx="2"');
+  });
+});
