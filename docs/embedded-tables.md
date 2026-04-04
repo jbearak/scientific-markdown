@@ -33,7 +33,7 @@ Embed a comma-separated or tab-separated file:
 <!-- embed: data/results.tsv headers=2 -->
 ```
 
-CSV/TSV parsing follows RFC 4180: quoted fields may contain embedded newlines and the delimiter character, and `""` within a quoted field produces a literal `"`. The `headers` parameter controls how many rows are treated as header rows (default: 1).
+CSV/TSV parsing follows [RFC 4180](https://www.rfc-editor.org/rfc/rfc4180): quoted fields may contain embedded newlines and the delimiter character, and `""` within a quoted field produces a literal `"`. The `headers` parameter controls how many rows are treated as header rows (default: 1).
 
 ### XLSX
 
