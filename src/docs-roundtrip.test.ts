@@ -271,6 +271,35 @@ describe('docs round-trip: md -> docx -> md', () => {
   }
 });
 
+describe('tables.md exact fidelity: pipe and grid tables round-trip byte-for-byte', () => {
+  const tablesMd = readFileSync(join(repoRoot, 'test/fixtures/tables.md'), 'utf-8');
+
+  // Extract sections by heading
+  const sections = tablesMd.split(/^(?=## )/m);
+  const pipeSection = sections.find(s => s.startsWith('## Pipe Table'))!;
+  const gridSection = sections.find(s => s.startsWith('## Grid Table'))!;
+
+  it('pipe table separator and column widths survive round-trip exactly', async () => {
+    const docx = await convertMdToDocx(tablesMd);
+    expect(docx.warnings).toEqual([]);
+    const rt = await convertDocx(docx.docx);
+
+    const rtSections = rt.markdown.split(/^(?=## )/m);
+    const rtPipeSection = rtSections.find(s => s.startsWith('## Pipe Table'))!;
+    expect(rtPipeSection).toBe(pipeSection);
+  }, 30_000);
+
+  it('grid table column widths survive round-trip exactly', async () => {
+    const docx = await convertMdToDocx(tablesMd);
+    expect(docx.warnings).toEqual([]);
+    const rt = await convertDocx(docx.docx);
+
+    const rtSections = rt.markdown.split(/^(?=## )/m);
+    const rtGridSection = rtSections.find(s => s.startsWith('## Grid Table'))!;
+    expect(rtGridSection).toBe(gridSection);
+  }, 30_000);
+});
+
 describe('CriticMarkup round-trip: md -> docx -> md', () => {
   // Only addition, deletion, and substitution faithfully round-trip as CriticMarkup.
   // Highlights lose curly braces ({==...==} → ==...==) and standalone comments

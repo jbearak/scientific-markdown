@@ -1130,6 +1130,10 @@ export async function extractPipeTableAlignedMapping(data: Uint8Array | JSZip): 
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_PIPE_TABLE_ALIGNED');
 }
 
+export async function extractGridSourceColWidthsMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
+  return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_GRID_SOURCE_COL_WIDTHS');
+}
+
 export async function extractTableFontSizeMapping(data: Uint8Array | JSZip): Promise<Map<string, string> | null> {
   return extractIdMappingFromCustomXml(data, 'MANUSCRIPT_TABLE_FONT_SIZES');
 }
@@ -3657,7 +3661,7 @@ function renderHtmlTable(table: { rows: TableRow[] }, comments: Map<string, Comm
   return lines.join('\n');
 }
 
-type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; noteImageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; pipeTableAlignedMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; tableColWidthsMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number>; embedDirectiveMapping?: Map<string, string> };
+type RenderOpts = { alwaysUseCommentIds?: boolean; commentIdRemap?: Map<string, string>; forceIdCommentIds?: Set<string>; emittedIdCommentBodies?: Set<string>; noteLabels?: Map<string, string>; imageFormatMapping?: Map<string, string>; noteImageFormatMapping?: Map<string, string>; tableFormatMapping?: Map<string, string>; pipeTableAlignedMapping?: Map<string, string>; gridSourceColWidthsMapping?: Map<string, string>; tableFontSizeMapping?: Map<string, string>; tableFontMapping?: Map<string, string>; tableColWidthsMapping?: Map<string, string>; landscapeTableIndices?: Set<number>; portraitTableIndices?: Set<number>; embedDirectiveMapping?: Map<string, string> };
 
 // East Asian Wide / Fullwidth code-point ranges (UAX #11).  Characters in
 // these ranges occupy two terminal columns; everything else is treated as
@@ -3819,7 +3823,7 @@ function tryRenderPipeTable(table: { rows: TableRow[] }, maxLineWidth: number, c
   if (colWidths) {
     let sep = '|';
     for (let ci = 0; ci < numCols; ci++) {
-      sep += ' ' + '-'.repeat(colWidths[ci]) + ' |';
+      sep += '-'.repeat(colWidths[ci] + 2) + '|';
     }
     lines.push(sep);
   } else {
@@ -3894,6 +3898,7 @@ function tryRenderGridTable(
   comments: Map<string, Comment>,
   renderOpts?: RenderOpts,
   maxLineWidth?: number,
+  sourceColWidths?: number[],
 ): string | null {
   if (maxLineWidth !== undefined && maxLineWidth <= 0) return null;
   const rows = table.rows;
@@ -3952,8 +3957,16 @@ function tryRenderGridTable(
     rendered.push(rowCells);
   }
 
-  // Compute column widths (minimum 3 for separator dashes)
+  // Compute column widths (minimum 3 for separator dashes, or source widths if available).
+  // sourceColWidths are inner widths (between +...+), which include 2 padding spaces;
+  // colWidths here are content widths (the renderer adds padding), so subtract 2.
   const colWidths: number[] = Array(numCols).fill(3);
+  if (sourceColWidths && sourceColWidths.length === numCols) {
+    for (let c = 0; c < numCols; c++) {
+      const contentWidth = sourceColWidths[c] - 2;
+      if (contentWidth > colWidths[c]) colWidths[c] = contentWidth;
+    }
+  }
   for (const rowCells of rendered) {
     for (let c = 0; c < numCols; c++) {
       for (const line of rowCells[c].lines) {
@@ -4126,9 +4139,12 @@ function renderTableOrFallback(
   if (storedFormat === 'html' || forceHtmlTable) {
     return rHtml(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
   }
+  // Parse stored grid source column widths for this table
+  const gridSrcWidthsStr = tableIndex !== undefined ? renderOpts?.gridSourceColWidthsMapping?.get(String(tableIndex)) : undefined;
+  const gridSrcWidths = gridSrcWidthsStr ? gridSrcWidthsStr.split(',').map(Number) : undefined;
   // If original was grid, try grid then fall back to HTML (skip pipe, skip width check to preserve format)
   if (storedFormat === 'grid') {
-    const gridResult = tryRenderGridTable(item, comments, renderOpts);
+    const gridResult = tryRenderGridTable(item, comments, renderOpts, undefined, gridSrcWidths);
     if (gridResult !== null) return r(gridResult);
     return rHtml(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
   }
@@ -4141,7 +4157,7 @@ function renderTableOrFallback(
   }
   // For tables without a stored format, try grid before falling back to HTML
   if (storedFormat !== 'pipe') {
-    const gridResult = tryRenderGridTable(item, comments, renderOpts, options?.gridTableMaxLineWidth);
+    const gridResult = tryRenderGridTable(item, comments, renderOpts, options?.gridTableMaxLineWidth, gridSrcWidths);
     if (gridResult !== null) return r(gridResult);
   }
   return rHtml(renderHtmlTable(item, comments, options?.tableIndent, renderOpts, htmlFontAttrs));
@@ -4483,7 +4499,7 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; noteImageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null; embedDirectiveMapping?: Map<string, string> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; noteImageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; gridSourceColWidthsMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null; embedDirectiveMapping?: Map<string, string> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -4601,6 +4617,7 @@ export function buildMarkdown(
     noteImageFormatMapping: options?.noteImageFormatMapping ?? undefined,
     tableFormatMapping: options?.tableFormatMapping ?? undefined,
     pipeTableAlignedMapping: options?.pipeTableAlignedMapping ?? undefined,
+    gridSourceColWidthsMapping: options?.gridSourceColWidthsMapping ?? undefined,
     tableFontSizeMapping: options?.tableFontSizeMapping ?? undefined,
     tableFontMapping: options?.tableFontMapping ?? undefined,
     tableColWidthsMapping: options?.tableColWidthsMapping ?? undefined,
@@ -5992,7 +6009,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides, embedDirectiveMapping] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, gridSourceColWidthsMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides, embedDirectiveMapping] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -6011,6 +6028,7 @@ export async function convertDocx(
     extractNoteImageFormatMapping(zip),
     extractTableFormatMapping(zip),
     extractPipeTableAlignedMapping(zip),
+    extractGridSourceColWidthsMapping(zip),
     extractTableFontSizeMapping(zip),
     extractTableFontMapping(zip),
     extractTableColWidthsMapping(zip),
@@ -6282,6 +6300,7 @@ export async function convertDocx(
     noteImageFormatMapping,
     tableFormatMapping,
     pipeTableAlignedMapping,
+    gridSourceColWidthsMapping,
     tableFontSizeMapping,
     tableFontMapping,
     tableColWidthsMapping,

@@ -106,7 +106,7 @@ export interface MdToken {
   portraitClose?: true;     // sentinel: end of portrait section
   tableOrientation?: 'landscape' | 'portrait'; // table-only orientation from data-orientation
   tableColWidths?: number[] | 'equal' | 'auto'; // per-table column width ratios
-  gridSourceColWidths?: number[]; // column char-widths inferred from +---+---+ source; used for Word Online layout only, never persisted
+  gridSourceColWidths?: number[]; // column char-widths inferred from +---+---+ source; persisted for round-trip fidelity and Word Online layout
   bibliographyMarker?: true;  // sentinel: <!-- references --> / <!-- bibliography --> placement marker
   customStyleOpen?: string;   // sentinel: start of custom style block (style name)
   customStyleClose?: true;    // sentinel: end of custom style block
@@ -1229,6 +1229,15 @@ export function embedDirectiveProps(mapping: Map<number, string>): CustomPropEnt
     obj[String(idx)] = directive;
   }
   return chunkCustomProps('MANUSCRIPT_EMBED_DIRECTIVES_', JSON.stringify(obj));
+}
+
+export function gridSourceColWidthsProps(mapping: Map<number, number[]>): CustomPropEntry[] {
+  if (mapping.size === 0) return [];
+  const obj: Record<string, string> = {};
+  for (const [idx, widths] of mapping) {
+    obj[String(idx)] = widths.join(',');
+  }
+  return chunkCustomProps('MANUSCRIPT_GRID_SOURCE_COL_WIDTHS_', JSON.stringify(obj));
 }
 
 export function pipeTableAlignedProps(aligned: Map<number, boolean>): CustomPropEntry[] {
@@ -2801,6 +2810,7 @@ export interface DocxGenState {
   portraitBreakOrdinals: Set<number>; // ordinals of portrait-fence close section breaks
   templateSectPr?: string;      // trailing <w:sectPr> from template document.xml
   pipeTableAligned: Map<number, boolean>; // table index -> whether pipe table was column-aligned
+  gridSourceColWidths: Map<number, number[]>; // table index -> original grid table column char-widths
   sentinelGaps: Record<string, number>; // before-gap for landscape/portrait sentinels (e.g. "pc0" → blankLinesBefore for first portrait_close)
   activeCustomStyle?: string; // currently active <!-- style: X --> block name
   customStyles?: Record<string, CustomStyleDef>; // declared styles for indent inheritance/overrides
@@ -5908,6 +5918,9 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       if (token.pipeAligned) {
         state.pipeTableAligned.set(state.tableIndex, true);
       }
+      if (token.gridSourceColWidths) {
+        state.gridSourceColWidths.set(state.tableIndex, token.gridSourceColWidths);
+      }
       if (token.tableFontSize !== undefined) {
         state.tableFontSizes.set(state.tableIndex, token.tableFontSize);
       }
@@ -6225,6 +6238,7 @@ export async function convertMdToDocx(
     tableFonts: new Map(),
     tableColWidths: new Map(),
     pipeTableAligned: new Map(),
+    gridSourceColWidths: new Map(),
     fontOverrides,
     listIndent: detectListIndent(bodyWithoutFootnotes),
     consecutiveReplyParaIds: new Set(),
@@ -6369,6 +6383,7 @@ export async function convertMdToDocx(
         if (t.type === 'table') {
           if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
+          if (t.gridSourceColWidths) state.gridSourceColWidths.set(state.tableIndex, t.gridSourceColWidths);
           if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
           if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           if (t.tableColWidths) {
@@ -6388,6 +6403,7 @@ export async function convertMdToDocx(
         if (t.type === 'table') {
           if (t.sourceFormat) state.tableFormats.set(state.tableIndex, t.sourceFormat);
           if (t.pipeAligned) state.pipeTableAligned.set(state.tableIndex, true);
+          if (t.gridSourceColWidths) state.gridSourceColWidths.set(state.tableIndex, t.gridSourceColWidths);
           if (t.tableFontSize !== undefined) state.tableFontSizes.set(state.tableIndex, t.tableFontSize);
           if (t.tableFont) state.tableFonts.set(state.tableIndex, t.tableFont);
           if (t.tableColWidths) {
@@ -6595,6 +6611,7 @@ export async function convertMdToDocx(
   customProps.push(...noteImageFormatProps(state.noteImageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
   customProps.push(...pipeTableAlignedProps(state.pipeTableAligned));
+  customProps.push(...gridSourceColWidthsProps(state.gridSourceColWidths));
   customProps.push(...tableFontSizeProps(state.tableFontSizes, fontOverrides?.tableSizeHp));
   customProps.push(...tableFontProps(state.tableFonts, fontOverrides?.tableFont));
   const defaultColWidthsStr = fontOverrides?.tableColWidths

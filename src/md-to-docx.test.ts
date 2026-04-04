@@ -83,6 +83,7 @@ function makeState(): DocxGenState {
     portraitBreakOrdinals: new Set(),
     blockquotePreContentBlankLines: new Map(),
     pipeTableAligned: new Map(),
+    gridSourceColWidths: new Map(),
     sentinelGaps: {},
     customStyles: undefined,
     activeListStartOverrides: new Map(),
@@ -98,6 +99,8 @@ function makeState(): DocxGenState {
     bodyParagraphIndex: 0,
     listIndentOverrides: new Map(),
     listBlockIndex: 0,
+    embedDirectiveMap: new Map(),
+    embedDirectives: [],
   };
 }
 
