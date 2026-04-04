@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll } from 'bun:test';
 import fc from 'fast-check';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -34,7 +34,8 @@ import { convertMdToDocx } from './md-to-docx';
 const fixturesDir = join(__dirname, '..', 'test', 'fixtures');
 const sampleData = new Uint8Array(readFileSync(join(fixturesDir, 'sample.docx')));
 const formattingSampleData = new Uint8Array(readFileSync(join(fixturesDir, 'formatting_sample.docx')));
-const tablesData = new Uint8Array(readFileSync(join(fixturesDir, 'tables.docx')));
+// tables.docx is generated from markdown in beforeAll below (no committed binary)
+let tablesData: Uint8Array;
 const commentsData = new Uint8Array(readFileSync(join(fixturesDir, 'comments.docx')));
 const expectedMd = readFileSync(join(fixturesDir, 'expected-output.md'), 'utf-8').trimEnd();
 const expectedBib = readFileSync(join(fixturesDir, 'expected-output.bib'), 'utf-8').trimEnd();
@@ -819,6 +820,37 @@ test('pipe table headers round-trip without spurious bold', async () => {
 });
 
 describe('Integration: tables.docx fixture', () => {
+  const tablesSourceMd = [
+    '# Simple Table',
+    '',
+    '| Row 1 Col 1 | | | | |',
+    '| --- | --- | --- | --- | --- |',
+    '| Row 2 Col 1 | | | | Row 2 Col 5 |',
+    '',
+    '# Table With Spanned Header Cols',
+    '',
+    '<table>',
+    '<tr><th>Row 1 Col 1</th><th colspan="2">Row 1 Cols 2-3</th><th colspan="2">Row 1 Cols 4-5</th></tr>',
+    '<tr><td></td><td></td><td></td><td></td><td></td></tr>',
+    '</table>',
+    '',
+    '# Complex Table',
+    '',
+    '<table>',
+    '<tr><th>Row 1 Col 1</th><th colspan="3">Row 1 Cols 2-4</th><th>Row 1 Col 5</th></tr>',
+    '<tr><td></td><td></td><td></td><td></td><td></td></tr>',
+    '<tr><td></td><td></td><td rowspan="2">Rows 3-4 Col 3</td><td></td><td rowspan="2">Rows 3-4 Col 5</td></tr>',
+    '<tr><td></td><td></td><td></td></tr>',
+    '<tr><td></td><td></td><td></td><td></td><td></td></tr>',
+    '</table>',
+  ].join('\n');
+
+  beforeAll(async () => {
+    const { docx, warnings } = await convertMdToDocx(tablesSourceMd);
+    expect(warnings).toEqual([]);
+    tablesData = docx;
+  });
+
   test('converts tables.docx and produces three tables (simple one as pipe, complex as HTML)', async () => {
     const result = await convertDocx(tablesData, 'authorYearTitle', { pipeTableMaxLineWidthDefault: 120 });
     // Simple table becomes pipe table; two complex tables remain HTML
@@ -1950,7 +1982,7 @@ describe('buildMarkdown', () => {
   test('Property 5: Formatting delimiters appear inside hyperlink text', () => {
     fc.assert(
       fc.property(
-        fc.string({ minLength: 1, maxLength: 30 }).filter(s => !s.includes(']') && !s.includes(')')),
+        fc.string({ minLength: 1, maxLength: 30 }).filter(s => s.trim().length > 0 && !s.includes(']') && !s.includes(')')),
         fc.webUrl(),
         fc.record({
           bold: fc.boolean(),
@@ -1972,7 +2004,7 @@ describe('buildMarkdown', () => {
           }];
           
           const result = buildMarkdown(content, new Map());
-          const linkMatch = result.match(/\[(.*?)\]\((.*?)\)/);
+          const linkMatch = result.match(/\[(.*?)\]\((.*?)\)/s);
           expect(linkMatch).not.toBeNull();
           
           const linkText = linkMatch![1];

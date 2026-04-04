@@ -15,6 +15,7 @@ import { convertMdToDocx } from './md-to-docx';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseFrontmatter, hasCitations, normalizeColorScheme, type ColorScheme } from './frontmatter';
+import type { EmbedResolver } from './embed-preprocess';
 import { BUNDLED_STYLE_LABELS } from './csl-loader';
 import { getCompletionContextAtOffset } from './lsp/citekey-language';
 import { getCslCompletionContext, shouldAutoTriggerSuggestFromChanges } from './lsp/csl-language';
@@ -40,6 +41,7 @@ import {
 	bibliographyCandidatePaths,
 	resolveBibliographyWritePathForOutput,
 } from './bibliography-paths';
+import { findEmbedPathRanges } from './embed-link-provider';
 
 // --- Implementation notes ---
 // - Editor decorations: use light/dark sub-properties for theme-aware backgrounds
@@ -60,6 +62,34 @@ let languageClient: LanguageClient | undefined;
 let languageClientDisposables: vscode.Disposable[] = [];
 let cslCacheDir: string = '';
 let previewMd: any;
+
+// Embed resolver for reading external files referenced by embed directives.
+// Shared by both the preview plugin and md-to-docx conversion.
+const EMBED_STAT_TTL_MS = 1500; // skip re-stat within this window
+const embedCache = new Map<string, { content: Uint8Array; mtime: number; checkedAt: number }>();
+const embedResolver: EmbedResolver = {
+	readFile(absolutePath: string): Uint8Array | null {
+		try {
+			const now = Date.now();
+			const cached = embedCache.get(absolutePath);
+			// Within the TTL window, return cached content without hitting the filesystem.
+			if (cached && (now - cached.checkedAt) < EMBED_STAT_TTL_MS) return cached.content;
+			const stat = fs.statSync(absolutePath);
+			if (cached && cached.mtime === stat.mtimeMs) {
+				cached.checkedAt = now;
+				return cached.content;
+			}
+			const content = new Uint8Array(fs.readFileSync(absolutePath));
+			embedCache.set(absolutePath, { content, mtime: stat.mtimeMs, checkedAt: now });
+			return content;
+		} catch {
+			return null;
+		}
+	},
+	resolveRelative(basePath: string, relativePath: string): string {
+		return path.resolve(path.dirname(basePath), relativePath);
+	},
+};
 function syncPreviewColors(scheme: ColorScheme) {
 	if (previewMd) previewMd.manuscriptColors = scheme;
 }
@@ -192,6 +222,26 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('manuscript-markdown.nextChange', () => changes.next()),
 		vscode.commands.registerCommand('manuscript-markdown.prevChange', () => changes.prev())
+	);
+
+	// Register embed directive link provider (Cmd+Click on file paths)
+	context.subscriptions.push(
+		vscode.languages.registerDocumentLinkProvider(
+			{ scheme: 'file', language: 'markdown' },
+			{
+				provideDocumentLinks(document: vscode.TextDocument): vscode.DocumentLink[] {
+					const ranges = findEmbedPathRanges(document.getText());
+					const docDir = path.dirname(document.uri.fsPath);
+					return ranges.map((r) => {
+						const range = new vscode.Range(r.line, r.startCol, r.line, r.endCol);
+						const absPath = path.resolve(docDir, r.path);
+						const link = new vscode.DocumentLink(range, vscode.Uri.file(absPath));
+						link.tooltip = absPath;
+						return link;
+					});
+				},
+			}
+		)
 	);
 
 	// Register bib file open/reveal commands (used by hover links)
@@ -868,6 +918,15 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.onDidChangeActiveTextEditor(editor => {
 			if (editor) { updateHighlightDecorations(editor); }
+			// Update embed resolver document path for preview preprocessing.
+			// NOTE: This tracks the active editor, not the previewed document,
+			// because VS Code's markdown preview API does not expose which document
+			// is being rendered. In split-view scenarios where the active editor
+			// differs from the preview target, relative embed paths may resolve
+			// against the wrong base directory.
+			if (editor?.document.languageId === 'markdown' && previewMd) {
+				previewMd.manuscriptDocumentPath = editor.document.uri.fsPath;
+			}
 		}),
 		vscode.workspace.onDidChangeTextDocument(e => {
 			const editor = vscode.window.activeTextEditor;
@@ -895,11 +954,33 @@ export function activate(context: vscode.ExtensionContext) {
 		);
 	}
 
+	// File watcher to invalidate embed cache
+	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md}');
+	embedWatcher.onDidChange(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
+	embedWatcher.onDidCreate(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
+	embedWatcher.onDidDelete(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
+	context.subscriptions.push(embedWatcher);
+
 	// Return markdown-it plugin for preview integration
 	return {
 		extendMarkdownIt(md: any) {
 			previewMd = md;
 			md.manuscriptColors = getConfiguredColorScheme();
+			md.manuscriptEmbedResolver = embedResolver;
+			// Set initial document path from active editor
+			const activeDoc = vscode.window.activeTextEditor?.document;
+			if (activeDoc?.languageId === 'markdown') {
+				md.manuscriptDocumentPath = activeDoc.uri.fsPath;
+			}
 			return md.use(manuscriptMarkdownPlugin);
 		}
 	};
@@ -1348,6 +1429,8 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 		sourceDir,
 		blockquoteStyle,
 		colors,
+		documentPath: input.basePath + '.md',
+		embedResolver,
 		onStyleNotFound: async (styleName: string) => {
 			const choice = await vscode.window.showWarningMessage(
 				`CSL style "${styleName}" is not bundled. Download it from the CSL repository? Without it, citations will use plain-text fallback formatting.`,

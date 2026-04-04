@@ -1,7 +1,8 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
-import { computeCodeRegions } from '../code-regions';
+import { computeCodeRegions, overlapsCodeRegion } from '../code-regions';
 import { scanOrientationDirectives } from '../orientation-scan';
+import { parseEmbedDirective } from '../embed-preprocess';
 import {
 	CompletionItem,
 	CompletionItemKind,
@@ -103,6 +104,7 @@ const bibCache = new Map<string, CachedBibData>();
 const citekeyDiagnostics = new Map<string, Diagnostic[]>();
 const frontmatterDiagnostics = new Map<string, Diagnostic[]>();
 const orientationDiagnostics = new Map<string, Diagnostic[]>();
+const embedDiagnostics = new Map<string, Diagnostic[]>();
 
 const severityMap: Record<string, DiagnosticSeverity> = {
 	'error': DiagnosticSeverity.Error,
@@ -114,7 +116,8 @@ function publishDiagnostics(uri: string): void {
 	const citekey = citekeyDiagnostics.get(uri) ?? [];
 	const frontmatter = frontmatterDiagnostics.get(uri) ?? [];
 	const orientation = orientationDiagnostics.get(uri) ?? [];
-	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...frontmatter, ...orientation] });
+	const embed = embedDiagnostics.get(uri) ?? [];
+	connection.sendDiagnostics({ uri, diagnostics: [...citekey, ...frontmatter, ...orientation, ...embed] });
 }
 
 interface OpenDocBibCache {
@@ -155,6 +158,7 @@ async function runValidationPipeline(doc: TextDocument): Promise<void> {
 		await validateCitekeys(doc, metadata);
 		await validateFrontmatterDiags(doc);
 		validateOrientationDirectives(doc);
+		await validateEmbedDirectives(doc);
 	} catch (error) {
 		connection.console.error(
 			`Validation pipeline error for ${doc.uri}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`
@@ -278,6 +282,7 @@ documents.onDidClose((event) => {
 		citekeyDiagnostics.delete(event.document.uri);
 		frontmatterDiagnostics.delete(event.document.uri);
 		orientationDiagnostics.delete(event.document.uri);
+		embedDiagnostics.delete(event.document.uri);
 		connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 	}
 });
@@ -675,6 +680,137 @@ function validateOrientationDirectives(doc: TextDocument): void {
 	}
 
 	orientationDiagnostics.set(doc.uri, diagnostics);
+	publishDiagnostics(doc.uri);
+}
+
+async function validateEmbedDirectives(doc: TextDocument): Promise<void> {
+	const text = doc.getText();
+	const lines = text.split('\n');
+	const codeRegions = computeCodeRegions(text);
+	const diagnostics: Diagnostic[] = [];
+	const docPath = uriToFsPath(doc.uri);
+	if (!docPath) return;
+	const docDir = path.dirname(docPath);
+
+	let offset = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const trimmed = lines[i].trim();
+		if (!overlapsCodeRegion(offset, offset + lines[i].length, codeRegions)) {
+			const directive = parseEmbedDirective(trimmed);
+			if (directive) {
+				const lineStart = offset;
+				const lineEnd = offset + lines[i].length;
+
+				// Validate file exists
+				const absPath = path.resolve(docDir, directive.path);
+				const ext = directive.path.toLowerCase().replace(/^.*\./, '.');
+				const supportedExts = new Set(['.csv', '.tsv', '.xlsx', '.md']);
+
+				if (!supportedExts.has(ext)) {
+					diagnostics.push({
+						severity: DiagnosticSeverity.Error,
+						range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+						message: 'Unsupported embed format: ' + ext,
+						source: 'manuscript-markdown',
+					});
+				} else {
+					try {
+						const stat = await fsp.stat(absPath);
+						if (!stat.isFile()) throw new Error('not a file');
+
+						// For XLSX, validate sheet and range params
+						if (ext === '.xlsx' && (directive.sheet || directive.range)) {
+							try {
+								const XLSX = require('@e965/xlsx');
+								const data = new Uint8Array(await fsp.readFile(absPath));
+								const wb = XLSX.read(data, { type: 'array' });
+
+								if (directive.sheet) {
+									const idx = Number(directive.sheet);
+									if (Number.isInteger(idx) && idx >= 1) {
+										if (idx > wb.SheetNames.length) {
+											diagnostics.push({
+												severity: DiagnosticSeverity.Error,
+												range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+												message: 'Sheet index ' + idx + ' out of range (workbook has ' + wb.SheetNames.length + ' sheets)',
+												source: 'manuscript-markdown',
+											});
+										}
+									} else if (!wb.SheetNames.includes(directive.sheet)) {
+										diagnostics.push({
+											severity: DiagnosticSeverity.Error,
+											range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+											message: 'Sheet "' + directive.sheet + '" not found in workbook',
+											source: 'manuscript-markdown',
+										});
+									}
+								}
+
+								if (directive.range && !/^[A-Z]+\d+:[A-Z]+\d+$/i.test(directive.range.replace(/\$/g, ''))) {
+									// Check if it's a named range
+									const names = wb.Workbook?.Names;
+									if (!names || !names.find((n: any) => n.Name === directive.range)) {
+										diagnostics.push({
+											severity: DiagnosticSeverity.Error,
+											range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+											message: 'Named range "' + directive.range + '" not found in workbook',
+											source: 'manuscript-markdown',
+										});
+									}
+								}
+							} catch (e) {
+								if (e instanceof Error && (e.message.includes('Sheet') || e.message.includes('range'))) {
+									diagnostics.push({
+										severity: DiagnosticSeverity.Error,
+										range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+										message: e.message,
+										source: 'manuscript-markdown',
+									});
+								}
+							}
+						}
+
+						// For .md files, check for non-table content
+						if (ext === '.md') {
+							const content = await fsp.readFile(absPath, 'utf-8');
+							const mdLines = content.split('\n');
+							let hasNonTableContent = false;
+							let inTable = false;
+							for (const mdLine of mdLines) {
+								const t = mdLine.trim();
+								if (t === '') continue;
+								if (/^<!--\s*table-(font-size|font|orientation|col-widths):/.test(t)) continue;
+								if (t.startsWith('<table') || t === '<table>') { inTable = true; continue; }
+								if (inTable) { if (t.includes('</table>')) inTable = false; continue; }
+								if (t.startsWith('|') && t.endsWith('|')) continue;
+								if (/^\+[-=]+(\+[-=]+)*\+$/.test(t)) continue;
+								hasNonTableContent = true;
+								break;
+							}
+							if (hasNonTableContent) {
+								diagnostics.push({
+									severity: DiagnosticSeverity.Information,
+									range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+									message: 'Embedded .md file contains non-table content (will be ignored)',
+									source: 'manuscript-markdown',
+								});
+							}
+						}
+					} catch {
+						diagnostics.push({
+							severity: DiagnosticSeverity.Error,
+							range: Range.create(doc.positionAt(lineStart), doc.positionAt(lineEnd)),
+							message: 'File not found: ' + directive.path,
+							source: 'manuscript-markdown',
+						});
+					}
+				}
+			}
+		}
+		offset += lines[i].length + 1; // +1 for newline
+	}
+
+	embedDiagnostics.set(doc.uri, diagnostics);
 	publishDiagnostics(doc.uri);
 }
 

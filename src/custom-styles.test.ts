@@ -633,7 +633,10 @@ describe('Custom Styles — Preview Plugin', () => {
   it('stray close without open → left as comment (no unmatched </div>)', () => {
     const md = '<!-- /style -->';
     const html = renderWithPlugin(md, 'github');
-    expect(html).not.toContain('</div>');
+    // The only </div> should be the data-line wrapper, not an unmatched style close
+    const divCloseCount = (html.match(/<\/div>/g) || []).length;
+    const divOpenCount = (html.match(/<div[^>]*>/g) || []).length;
+    expect(divCloseCount).toBe(divOpenCount);
     expect(html).toContain('<!-- /style -->');
   });
 });

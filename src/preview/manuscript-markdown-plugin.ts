@@ -6,6 +6,7 @@ import { PARA_PLACEHOLDER, findMatchingClose } from '../critic-markup';
 import { GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
 import { preprocessGridTablesWithMap, wrapBareLatexEnvironmentsWithMap, preprocessCriticMarkupWithMap } from './preprocess-with-map';
 import { LineMap } from './line-map';
+import { preprocessEmbedsWithMap, type EmbedResolver } from '../embed-preprocess';
 import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
 import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
@@ -995,11 +996,18 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const defaultScheme: ColorScheme = (md as any).manuscriptColors || getDefaultColorScheme();
     state.env.colorScheme = metadata.colors || defaultScheme;
     md.set({ breaks: metadata.breaks ?? false });
-    const r1 = preprocessGridTablesWithMap(state.src);
+    // Embed preprocessing runs first so embedded .md files with grid tables get
+    // processed by the subsequent grid table preprocessor.
+    const embedResolver: EmbedResolver | undefined = (md as any).manuscriptEmbedResolver;
+    const docPath: string | undefined = (md as any).manuscriptDocumentPath;
+    const r0 = (embedResolver && docPath)
+      ? preprocessEmbedsWithMap(state.src, embedResolver, docPath)
+      : { output: state.src, map: LineMap.identity() };
+    const r1 = preprocessGridTablesWithMap(r0.output);
     const r2 = wrapBareLatexEnvironmentsWithMap(r1.output);
     const r3 = preprocessCriticMarkupWithMap(r2.output);
     state.src = r3.output;
-    state.env.lineMap = LineMap.chain(LineMap.chain(r1.map, r2.map), r3.map);
+    state.env.lineMap = LineMap.chain(LineMap.chain(LineMap.chain(r0.map, r1.map), r2.map), r3.map);
   });
 
   // Inject <style> block for header-font-style and custom styles preview
@@ -1265,8 +1273,15 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     return isGfmDisallowedRawHtml(content) ? escapeHtmlText(content) : content;
   };
   md.renderer.rules.html_block = (tokens, idx) => {
-    const content = tokens[idx].content || '';
-    return isGfmDisallowedRawHtml(content) ? `<p>${escapeHtmlText(content)}</p>\n` : content;
+    const token = tokens[idx];
+    const content = token.content || '';
+    if (isGfmDisallowedRawHtml(content)) {
+      return '<p>' + escapeHtmlText(content) + '</p>\n';
+    }
+    if (token.map) {
+      return '<div data-line="' + token.map[0] + '">' + content + '</div>\n';
+    }
+    return content;
   };
 
   // Trusted internal style blocks injected by manuscript rules — bypass GFM filtering.

@@ -325,6 +325,16 @@ async function runMdToDocx(options: CliOptions) {
 
   const authorName = resolveAuthor(options.authorName);
 
+  const embedResolver: import('./embed-preprocess').EmbedResolver = {
+    readFile(absolutePath: string): Uint8Array | null {
+      try { return new Uint8Array(fs.readFileSync(absolutePath)); }
+      catch { return null; }
+    },
+    resolveRelative(basePath: string, relativePath: string): string {
+      return path.resolve(path.dirname(basePath), relativePath);
+    },
+  };
+
   const result = await convertMdToDocx(markdown, {
     bibtex,
     authorName,
@@ -334,6 +344,8 @@ async function runMdToDocx(options: CliOptions) {
     onStyleNotFound: async () => true,
     blockquoteStyle: options.blockquoteStyle,
     colors: options.colors,
+    documentPath: options.inputPath,
+    embedResolver,
   });
 
   fs.writeFileSync(docxPath, result.docx);
