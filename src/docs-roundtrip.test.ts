@@ -170,6 +170,7 @@ const fixtures: Fixture[] = [
   { path: 'docs/converter.md' },
   { path: 'docs/criticmarkup.md' },
   { path: 'docs/development.md' },
+  { path: 'docs/embedded-tables.md' },
   { path: 'docs/intro.md' },
   { path: 'docs/language-server.md' },
   { path: 'docs/latex-equations.md' },
