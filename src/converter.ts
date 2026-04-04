@@ -3961,9 +3961,13 @@ function tryRenderGridTable(
   // sourceColWidths are inner widths (between +...+), which include 2 padding spaces;
   // colWidths here are content widths (the renderer adds padding), so subtract 2.
   const colWidths: number[] = Array(numCols).fill(3);
+  let validSourceWidths = false;
   if (sourceColWidths && sourceColWidths.length === numCols) {
+    validSourceWidths = sourceColWidths.every(w => Number.isFinite(w) && w >= 0);
+  }
+  if (validSourceWidths) {
     for (let c = 0; c < numCols; c++) {
-      const contentWidth = sourceColWidths[c] - 2;
+      const contentWidth = sourceColWidths![c] - 2;
       if (contentWidth > colWidths[c]) colWidths[c] = contentWidth;
     }
   }
@@ -4141,7 +4145,13 @@ function renderTableOrFallback(
   }
   // Parse stored grid source column widths for this table
   const gridSrcWidthsStr = tableIndex !== undefined ? renderOpts?.gridSourceColWidthsMapping?.get(String(tableIndex)) : undefined;
-  const gridSrcWidths = gridSrcWidthsStr ? gridSrcWidthsStr.split(',').map(Number) : undefined;
+  let gridSrcWidths = gridSrcWidthsStr ? gridSrcWidthsStr.split(',').map(Number) : undefined;
+  if (gridSrcWidths) {
+    const numCols = item.rows.length > 0 ? Math.max(...item.rows.map(r => r.cells.length)) : 0;
+    if (gridSrcWidths.length !== numCols || !gridSrcWidths.every(w => Number.isFinite(w) && w >= 0)) {
+      gridSrcWidths = undefined;
+    }
+  }
   // If original was grid, try grid then fall back to HTML (skip pipe, skip width check to preserve format)
   if (storedFormat === 'grid') {
     const gridResult = tryRenderGridTable(item, comments, renderOpts, undefined, gridSrcWidths);
