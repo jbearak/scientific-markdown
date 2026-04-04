@@ -948,6 +948,10 @@ export function activate(context: vscode.ExtensionContext) {
 		embedCache.delete(uri.fsPath);
 		void vscode.commands.executeCommand('markdown.preview.refresh');
 	});
+	embedWatcher.onDidCreate(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
 	embedWatcher.onDidDelete(uri => {
 		embedCache.delete(uri.fsPath);
 		void vscode.commands.executeCommand('markdown.preview.refresh');

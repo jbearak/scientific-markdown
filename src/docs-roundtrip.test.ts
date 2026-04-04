@@ -276,8 +276,10 @@ describe('tables.md exact fidelity: pipe and grid tables round-trip byte-for-byt
 
   // Extract sections by heading
   const sections = tablesMd.split(/^(?=## )/m);
-  const pipeSection = sections.find(s => s.startsWith('## Pipe Table'))!;
-  const gridSection = sections.find(s => s.startsWith('## Grid Table'))!;
+  const pipeSection = sections.find(s => s.startsWith('## Pipe Table'));
+  const gridSection = sections.find(s => s.startsWith('## Grid Table'));
+  expect(pipeSection).toBeDefined();
+  expect(gridSection).toBeDefined();
 
   it('pipe table separator and column widths survive round-trip exactly', async () => {
     const docx = await convertMdToDocx(tablesMd);
@@ -285,7 +287,8 @@ describe('tables.md exact fidelity: pipe and grid tables round-trip byte-for-byt
     const rt = await convertDocx(docx.docx);
 
     const rtSections = rt.markdown.split(/^(?=## )/m);
-    const rtPipeSection = rtSections.find(s => s.startsWith('## Pipe Table'))!;
+    const rtPipeSection = rtSections.find(s => s.startsWith('## Pipe Table'));
+    expect(rtPipeSection).toBeDefined();
     expect(rtPipeSection).toBe(pipeSection);
   }, 30_000);
 
@@ -295,7 +298,8 @@ describe('tables.md exact fidelity: pipe and grid tables round-trip byte-for-byt
     const rt = await convertDocx(docx.docx);
 
     const rtSections = rt.markdown.split(/^(?=## )/m);
-    const rtGridSection = rtSections.find(s => s.startsWith('## Grid Table'))!;
+    const rtGridSection = rtSections.find(s => s.startsWith('## Grid Table'));
+    expect(rtGridSection).toBeDefined();
     expect(rtGridSection).toBe(gridSection);
   }, 30_000);
 });

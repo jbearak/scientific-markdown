@@ -158,7 +158,7 @@ async function runValidationPipeline(doc: TextDocument): Promise<void> {
 		await validateCitekeys(doc, metadata);
 		await validateFrontmatterDiags(doc);
 		validateOrientationDirectives(doc);
-		validateEmbedDirectives(doc);
+		await validateEmbedDirectives(doc);
 	} catch (error) {
 		connection.console.error(
 			`Validation pipeline error for ${doc.uri}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`
@@ -683,7 +683,7 @@ function validateOrientationDirectives(doc: TextDocument): void {
 	publishDiagnostics(doc.uri);
 }
 
-function validateEmbedDirectives(doc: TextDocument): void {
+async function validateEmbedDirectives(doc: TextDocument): Promise<void> {
 	const text = doc.getText();
 	const lines = text.split('\n');
 	const codeRegions = computeCodeRegions(text);
@@ -715,14 +715,14 @@ function validateEmbedDirectives(doc: TextDocument): void {
 					});
 				} else {
 					try {
-						const stat = require('fs').statSync(absPath);
+						const stat = await fsp.stat(absPath);
 						if (!stat.isFile()) throw new Error('not a file');
 
 						// For XLSX, validate sheet and range params
 						if (ext === '.xlsx' && (directive.sheet || directive.range)) {
 							try {
 								const XLSX = require('@e965/xlsx');
-								const data = new Uint8Array(require('fs').readFileSync(absPath));
+								const data = new Uint8Array(await fsp.readFile(absPath));
 								const wb = XLSX.read(data, { type: 'array' });
 
 								if (directive.sheet) {
@@ -772,7 +772,7 @@ function validateEmbedDirectives(doc: TextDocument): void {
 
 						// For .md files, check for non-table content
 						if (ext === '.md') {
-							const content = require('fs').readFileSync(absPath, 'utf-8');
+							const content = await fsp.readFile(absPath, 'utf-8');
 							const mdLines = content.split('\n');
 							let hasNonTableContent = false;
 							let inTable = false;

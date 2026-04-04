@@ -42,8 +42,8 @@ describe('Feature: embedded-tables, Property 1: CSV round-trip fidelity', () => 
   });
 
   it('serializing then parsing TSV recovers the original data', () => {
-    // For TSV, cell content must not contain tabs (since we only quote for comma/quote/newline)
-    const tsvCellArb = cellArb.filter(s => !s.includes('\t'));
+    // toCsv always quotes every cell, so tabs inside quoted fields round-trip correctly
+    const tsvCellArb = cellArb;
     const tsvRowArb = (numCols: number) => fc.array(tsvCellArb, { minLength: numCols, maxLength: numCols });
     const tsvTableArb = fc.integer({ min: 1, max: 6 }).chain(numCols =>
       fc.array(tsvRowArb(numCols), { minLength: 1, maxLength: 10 }).map(rows => ({ rows, numCols }))

@@ -846,7 +846,8 @@ describe('Integration: tables.docx fixture', () => {
   ].join('\n');
 
   beforeAll(async () => {
-    const { docx } = await convertMdToDocx(tablesSourceMd);
+    const { docx, warnings } = await convertMdToDocx(tablesSourceMd);
+    expect(warnings).toEqual([]);
     tablesData = new Uint8Array(docx);
   });
 

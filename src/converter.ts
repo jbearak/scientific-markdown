@@ -5324,12 +5324,21 @@ export function buildMarkdown(
       }
       // If this table was originally an embed directive, emit the directive instead of
       // rendering the table. Table directives (font-size, etc.) are emitted as a prefix
-      // before the embed directive.
+      // before the embed directive. Multi-table embeds (e.g. a .md file with 2 tables)
+      // produce multiple consecutive tables sharing the same directive — emit it once
+      // and skip the rest to avoid snowballing duplicates on round-trip.
       const embedDirective = renderOpts?.embedDirectiveMapping?.get(String(tableIndex));
       if (embedDirective) {
         const { fontPrefix: embedPrefix } = buildTableDirectivePrefix(renderOpts, tableIndex);
         pushWithHoistedPrefix(output, embedPrefix, embedDirective);
         tableIndex++;
+        i++;
+        // Skip subsequent tables that map to the same embed directive
+        while (i < content.length && content[i].type === 'table'
+          && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === embedDirective) {
+          tableIndex++;
+          i++;
+        }
         lastListType = undefined;
         lastListLevel = undefined;
         listTypeByLevel.clear();
@@ -5338,7 +5347,6 @@ export function buildMarkdown(
         pendingAlertInlinePrefixForHardBreak = undefined;
         lastBlockquoteAlertType = undefined;
         lastBlockquoteLevel = undefined;
-        i++;
         continue;
       }
       const storedFormat = renderOpts?.tableFormatMapping?.get(String(tableIndex));

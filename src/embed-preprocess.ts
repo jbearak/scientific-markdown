@@ -231,7 +231,8 @@ export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolve
       if (!fenceChar) {
         fenceChar = runChar;
         fenceLen = run.length;
-      } else if (runChar === fenceChar && run.length >= fenceLen) {
+      } else if (runChar === fenceChar && run.length >= fenceLen
+        && lines[i].slice(fenceMatch.index! + run.length).trim() === '') {
         fenceChar = null;
         fenceLen = 0;
       }
@@ -352,13 +353,13 @@ function resolveMd(data: Uint8Array): string {
   // Phase 2: Convert each block's table content to HTML.
   const outputParts: string[] = [];
   for (const block of blocks) {
-    // Emit directives as-is
-    if (block.directives.length > 0) {
-      outputParts.push(block.directives.join('\n'));
-    }
     // Convert the table content to HTML
     const html = tableContentToHtml(block.tableLines.join('\n'));
     if (html) {
+      // Only emit directives when the block produced a valid table
+      if (block.directives.length > 0) {
+        outputParts.push(block.directives.join('\n'));
+      }
       outputParts.push(html);
     }
   }
@@ -391,7 +392,8 @@ function extractTableBlocks(content: string): TableBlock[] {
       if (!fenceChar) {
         fenceChar = runChar;
         fenceLen = run.length;
-      } else if (runChar === fenceChar && run.length >= fenceLen) {
+      } else if (runChar === fenceChar && run.length >= fenceLen
+        && lines[i].slice(fenceMatch.index! + run.length).trim() === '') {
         fenceChar = null;
         fenceLen = 0;
       }
