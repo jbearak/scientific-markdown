@@ -6394,6 +6394,9 @@ export async function convertMdToDocx(
           }
           bodyXml += '<w:p>' + paragraphPPr + selfRefRun + '</w:p>';
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          if (t.embedIdx !== undefined && t.embedIdx < state.embedDirectives.length) {
+            state.embedDirectiveMap.set(state.tableIndex, t.embedIdx + '\t' + state.embedDirectives[t.embedIdx]);
+          }
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
@@ -6413,6 +6416,9 @@ export async function convertMdToDocx(
             state.tableColWidths.set(state.tableIndex, val);
           }
           bodyXml += generateTable(t, state, options, bibEntries, citeprocEngine);
+          if (t.embedIdx !== undefined && t.embedIdx < state.embedDirectives.length) {
+            state.embedDirectiveMap.set(state.tableIndex, t.embedIdx + '\t' + state.embedDirectives[t.embedIdx]);
+          }
           state.tableIndex++;
         } else {
           const runs = generateRuns(t.runs, state, options, bibEntries, citeprocEngine);
