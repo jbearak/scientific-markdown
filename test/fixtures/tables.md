@@ -35,10 +35,18 @@
 
 ## Embedded Tables
 
+### Excel spreadsheet
+
 <!-- embed: tables/embed.xlsx headers=1 -->
+
+### Comma-separated values
 
 <!-- embed: tables/embed.csv -->
 
+### Tab-separated values
+
 <!-- embed: tables/embed.tsv -->
+
+### Markdown file
 
 <!-- embed: tables/embed.md -->
