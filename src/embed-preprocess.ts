@@ -220,14 +220,14 @@ export function preprocessEmbeds(markdown: string, resolver: EmbedResolver, docu
  * Preprocess embeds and track which directives were expanded.
  * Each expanded table gets a `data-embed-idx` attribute for round-trip tracking.
  */
-export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolver, documentPath: string): PreprocessEmbedsResult {
+export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolver, documentPath: string, startIdx = 0): PreprocessEmbedsResult {
   const lines = markdown.split('\n');
   const result: string[] = [];
   const embedDirectives: string[] = [];
   let i = 0;
   let fenceChar: '`' | '~' | null = null;
   let fenceLen = 0;
-  let embedIdx = 0;
+  let embedIdx = startIdx;
 
   while (i < lines.length) {
     // Track fenced code blocks

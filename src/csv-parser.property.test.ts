@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import fc from 'fast-check';
 import { parseCsv, csvToHtmlTableMeta } from './csv-parser';
+import { renderHtmlTable } from './embed-preprocess';
 
 /**
  * Feature: embedded-tables
@@ -119,12 +120,12 @@ describe('Feature: embedded-tables, Property 3: csvToHtmlTableMeta structure pre
 
 /**
  * Feature: embedded-tables
- * Property 4: csvToHtmlTableMeta cell content never contains raw < > & characters
- * (they should be HTML-escaped in text runs).
+ * Property 4: csvToHtmlTableMeta → renderHtmlTable produces correctly escaped HTML
+ * (no raw < > & in rendered cell content).
  */
 
-describe('Feature: embedded-tables, Property 4: HTML escaping in csvToHtmlTableMeta', () => {
-  it('text runs never contain unescaped HTML special characters', () => {
+describe('Feature: embedded-tables, Property 4: HTML escaping through renderHtmlTable', () => {
+  it('rendered HTML never contains unescaped special characters in cell text', () => {
     const htmlCellArb = fc.oneof(
       fc.constantFrom('<script>alert(1)</script>', 'a & b', 'x > y', '"quoted"', 'normal'),
       fc.string({ minLength: 0, maxLength: 30 }),
@@ -135,15 +136,15 @@ describe('Feature: embedded-tables, Property 4: HTML escaping in csvToHtmlTableM
     fc.assert(
       fc.property(htmlTableArb, (rows) => {
         const meta = csvToHtmlTableMeta(rows, 1);
-        for (const row of meta.rows) {
-          for (const cell of row.cells) {
-            for (const run of cell.runs) {
-              if (run.type === 'text') {
-                expect(run.text).not.toMatch(/(?<!&\w+)[<>]/);
-                expect(run.text).not.toMatch(/&(?!(amp|lt|gt|quot);)/);
-              }
-            }
-          }
+        const html = renderHtmlTable(meta);
+        // Strip HTML tags to get only text content, then verify no raw special chars
+        const textContent = html.replace(/<[^>]+>/g, '\n');
+        for (const segment of textContent.split('\n')) {
+          if (segment.length === 0) continue;
+          // No raw < or > should appear in text content
+          expect(segment).not.toMatch(/[<>]/);
+          // All & should be part of an entity
+          expect(segment).not.toMatch(/&(?!amp;|lt;|gt;|quot;|#\d+;|#x[\da-fA-F]+;)/);
         }
       }),
       { numRuns: 200 },

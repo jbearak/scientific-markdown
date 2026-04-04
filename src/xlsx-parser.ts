@@ -1,14 +1,6 @@
 import * as XLSX from '@e965/xlsx';
 import type { HtmlTableMeta, HtmlTableRow, HtmlTableCell, HtmlTableRun } from './html-table-parser';
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 export interface XlsxParseOptions {
   sheet?: string;   // sheet name or 1-based index
   range?: string;   // cell range (A1:F20) or named range
@@ -68,7 +60,7 @@ export function parseXlsx(data: Uint8Array, options?: XlsxParseOptions): HtmlTab
       if (coveredCells.has(cellRef)) continue;
 
       const cell = ws[cellRef];
-      const text = escapeHtml(cell ? String(cell.v ?? '') : '');
+      const text = cell ? String(cell.v ?? '') : '';
       const runs: HtmlTableRun[] = [{ type: 'text', text }];
       const tableCell: HtmlTableCell = { runs };
 

@@ -6058,7 +6058,7 @@ export async function convertMdToDocx(
     embedDirectives = embedResult.embedDirectives;
     // Also expand embeds inside footnote/endnote definitions
     for (const [label, noteBody] of footnoteDefs) {
-      const noteResult = preprocessEmbedsTracked(noteBody, options.embedResolver, options.documentPath);
+      const noteResult = preprocessEmbedsTracked(noteBody, options.embedResolver, options.documentPath, embedDirectives.length);
       if (noteResult.output !== noteBody) {
         footnoteDefs.set(label, noteResult.output);
         embedDirectives.push(...noteResult.embedDirectives);

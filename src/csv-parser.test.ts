@@ -188,13 +188,13 @@ describe('csvToHtmlTableMeta', () => {
     expect(bodyCell.runs[0]).toEqual({ type: 'text', text: '' });
   });
 
-  it('HTML-escapes cell content', () => {
+  it('preserves raw cell content (escaping deferred to renderRuns)', () => {
     const rows = [
       ['Header'],
       ['<b>bold</b> & "quoted"'],
     ];
     const meta = csvToHtmlTableMeta(rows, 1);
     const text = meta.rows[1].cells[0].runs[0].text;
-    expect(text).toBe('&lt;b&gt;bold&lt;/b&gt; &amp; &quot;quoted&quot;');
+    expect(text).toBe('<b>bold</b> & "quoted"');
   });
 });

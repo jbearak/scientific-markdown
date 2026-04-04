@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { parseEmbedDirective, preprocessEmbeds, type EmbedResolver } from './embed-preprocess';
+import { parseEmbedDirective, preprocessEmbeds, preprocessEmbedsTracked, type EmbedResolver } from './embed-preprocess';
 
 // ---------------------------------------------------------------------------
 // parseEmbedDirective
@@ -441,5 +441,33 @@ describe('preprocessEmbeds — .md embed formats', () => {
     expect(result).toContain('data-embed-idx="0"');
     expect(result).toContain('data-embed-idx="1"');
     expect(result).toContain('data-embed-idx="2"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// preprocessEmbedsTracked — startIdx offset
+// ---------------------------------------------------------------------------
+
+describe('preprocessEmbedsTracked — startIdx offset', () => {
+  it('assigns data-embed-idx starting from startIdx', () => {
+    const resolver = makeTestResolver({
+      '/doc/data.csv': 'Name,Age\nAlice,30',
+    });
+    const input = '<!-- embed: data.csv -->';
+    const result = preprocessEmbedsTracked(input, resolver, '/doc/file.md', 3);
+
+    expect(result.output).toContain('data-embed-idx="3"');
+    expect(result.output).not.toContain('data-embed-idx="0"');
+    expect(result.embedDirectives).toEqual(['<!-- embed: data.csv -->']);
+  });
+
+  it('defaults startIdx to 0', () => {
+    const resolver = makeTestResolver({
+      '/doc/data.csv': 'A\n1',
+    });
+    const input = '<!-- embed: data.csv -->';
+    const result = preprocessEmbedsTracked(input, resolver, '/doc/file.md');
+
+    expect(result.output).toContain('data-embed-idx="0"');
   });
 });

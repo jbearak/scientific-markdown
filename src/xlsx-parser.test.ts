@@ -220,7 +220,7 @@ describe('parseXlsx', () => {
     expect(meta.rows[2].cells[0].runs[0].text).toBe('3.14');
   });
 
-  it('HTML-escapes cell content', () => {
+  it('preserves raw cell content (escaping deferred to renderRuns)', () => {
     const data = [
       ['Header'],
       ['<0.05'],
@@ -230,9 +230,9 @@ describe('parseXlsx', () => {
     const buf = buildXlsx(data);
     const meta = parseXlsx(buf, { headers: 1 });
 
-    expect(meta.rows[1].cells[0].runs[0].text).toBe('&lt;0.05');
-    expect(meta.rows[2].cells[0].runs[0].text).toBe('a &amp; b');
-    expect(meta.rows[3].cells[0].runs[0].text).toBe('&quot;quoted&quot;');
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('<0.05');
+    expect(meta.rows[2].cells[0].runs[0].text).toBe('a & b');
+    expect(meta.rows[3].cells[0].runs[0].text).toBe('"quoted"');
   });
 
   it('handles empty cells as empty text', () => {

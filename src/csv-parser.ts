@@ -83,23 +83,14 @@ export function parseCsv(content: string, delimiter: string): string[][] {
   return rows;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 /**
  * Convert a 2D string array into HtmlTableMeta.
- * Cell content is HTML-escaped. Newlines within cells become hardbreak runs.
+ * Cell content is stored as raw text. Newlines within cells become hardbreak runs.
  */
 export function csvToHtmlTableMeta(rows: string[][], headerCount: number): HtmlTableMeta {
   const tableRows: HtmlTableRow[] = rows.map((row, rowIdx) => {
     const cells: HtmlTableCell[] = row.map(cellText => {
-      const escaped = escapeHtml(cellText);
-      const lines = escaped.split('\n');
+      const lines = cellText.split('\n');
       const runs: HtmlTableRun[] = [];
       for (let i = 0; i < lines.length; i++) {
         if (i > 0) {
