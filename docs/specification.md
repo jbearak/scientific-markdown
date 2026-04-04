@@ -813,3 +813,15 @@ The Markdown-to-DOCX converter preserves the first paragraph, nested sublists, a
 The converter emits a warning when block content inside a list item is dropped.
 
 To preserve such content through DOCX round-trip, move it outside the list:
+
+```markdown
+1. First item
+2. Second item
+
+\`\`\`python
+# Now outside the list — survives round-trip
+print("hello")
+\`\`\`
+
+3. Third item
+```
