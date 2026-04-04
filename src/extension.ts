@@ -41,6 +41,7 @@ import {
 	bibliographyCandidatePaths,
 	resolveBibliographyWritePathForOutput,
 } from './bibliography-paths';
+import { findEmbedPathRanges } from './embed-link-provider';
 
 // --- Implementation notes ---
 // - Editor decorations: use light/dark sub-properties for theme-aware backgrounds
@@ -214,6 +215,26 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('manuscript-markdown.nextChange', () => changes.next()),
 		vscode.commands.registerCommand('manuscript-markdown.prevChange', () => changes.prev())
+	);
+
+	// Register embed directive link provider (Cmd+Click on file paths)
+	context.subscriptions.push(
+		vscode.languages.registerDocumentLinkProvider(
+			{ scheme: 'file', language: 'markdown' },
+			{
+				provideDocumentLinks(document: vscode.TextDocument): vscode.DocumentLink[] {
+					const ranges = findEmbedPathRanges(document.getText());
+					const docDir = path.dirname(document.uri.fsPath);
+					return ranges.map((r) => {
+						const range = new vscode.Range(r.line, r.startCol, r.line, r.endCol);
+						const absPath = path.resolve(docDir, r.path);
+						const link = new vscode.DocumentLink(range, vscode.Uri.file(absPath));
+						link.tooltip = absPath;
+						return link;
+					});
+				},
+			}
+		)
 	);
 
 	// Register bib file open/reveal commands (used by hover links)
