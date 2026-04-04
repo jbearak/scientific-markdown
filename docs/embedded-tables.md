@@ -92,7 +92,7 @@ Existing per-table directives work with embedded tables. Place them before the e
 <!-- embed: data/results.csv -->
 ```
 
-Available directives: `table-font-size`, `table-font`, `table-orientation`, `table-col-widths`. See [Specification](specification.md) for details on each directive.
+Available directives: `table-font-size`, `table-font`, `table-orientation`, `table-col-widths`. The last of these takes space-separated ratios (e.g. `2 1 1 1`); if there are fewer values than columns, the last value repeats — so `2 1` is equivalent to `2 1 1 1` for a four-column table. See [Specification](specification.md) for details on each directive.
 
 ## Round-Trip Behavior
 
