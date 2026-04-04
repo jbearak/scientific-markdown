@@ -5541,11 +5541,21 @@ export function buildMarkdown(
             bodyParts.push(noteEmbedPrefix + noteEmbedDirective);
             tableIndex++;
             bi++;
-            // Skip subsequent tables from the same embed occurrence
-            while (bi < bodyMerged.length && bodyMerged[bi].type === 'table'
-              && noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === noteRawEmbedValue) {
-              tableIndex++;
-              bi++;
+            // Skip subsequent tables from the same embed occurrence,
+            // including Word-inserted empty paragraphs between them
+            while (bi < bodyMerged.length) {
+              const next = bodyMerged[bi];
+              if (next.type === 'table'
+                && noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === noteRawEmbedValue) {
+                tableIndex++;
+                bi++;
+              } else if (next.type === 'para') {
+                bi++;
+              } else if (next.type === 'text' && !next.text?.trim()) {
+                bi++;
+              } else {
+                break;
+              }
             }
             partStart = bi;
             bi--; // compensate for the for-loop's bi++ on continue

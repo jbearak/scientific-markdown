@@ -534,9 +534,7 @@ function gridTableDataToHtml(data: GridTableData): string {
     for (const row of headerRows) {
       html += '<tr>';
       for (const cell of row.cells) {
-        const escaped = cell.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        // Multi-line cells: convert newlines to <br>
-        const formatted = escaped.replace(/\n/g, '<br>');
+        const formatted = escapeHtml(cell).replace(/\n/g, '<br>');
         html += '<th>' + formatted + '</th>';
       }
       html += '</tr>';
@@ -549,8 +547,7 @@ function gridTableDataToHtml(data: GridTableData): string {
     for (const row of bodyRows) {
       html += '<tr>';
       for (const cell of row.cells) {
-        const escaped = cell.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const formatted = escaped.replace(/\n/g, '<br>');
+        const formatted = escapeHtml(cell).replace(/\n/g, '<br>');
         html += '<td>' + formatted + '</td>';
       }
       html += '</tr>';

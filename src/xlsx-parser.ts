@@ -32,17 +32,17 @@ export function parseXlsx(data: Uint8Array, options?: XlsxParseOptions): HtmlTab
 
   // Build a set of cells that are "covered" by a merge (not the top-left origin)
   const coveredCells = new Set<string>();
-  const mergeMap = new Map<string, { colspan: number; rowspan: number }>();
+  const mergeMap = new Map<string, { colspan?: number; rowspan?: number }>();
 
   for (const merge of merges) {
     const colspan = merge.e.c - merge.s.c + 1;
     const rowspan = merge.e.r - merge.s.r + 1;
     const originKey = XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
     if (colspan > 1 || rowspan > 1) {
-      mergeMap.set(originKey, {
-        colspan: colspan > 1 ? colspan : undefined!,
-        rowspan: rowspan > 1 ? rowspan : undefined!,
-      });
+      const info: { colspan?: number; rowspan?: number } = {};
+      if (colspan > 1) info.colspan = colspan;
+      if (rowspan > 1) info.rowspan = rowspan;
+      mergeMap.set(originKey, info);
     }
     for (let r = merge.s.r; r <= merge.e.r; r++) {
       for (let c = merge.s.c; c <= merge.e.c; c++) {
