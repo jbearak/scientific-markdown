@@ -7,6 +7,14 @@ import MarkdownIt from 'markdown-it';
 
 const sharedMarkdownIt = new MarkdownIt({ html: true });
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -290,7 +298,7 @@ function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, docume
   const data = resolver.readFile(absolutePath);
 
   if (!data) {
-    return '<p><strong>Error: could not embed ' + directive.path + ' \u2014 file not found</strong></p>';
+    return '<p><strong>Error: could not embed ' + escapeHtml(directive.path) + ' \u2014 file not found</strong></p>';
   }
 
   const ext = directive.path.toLowerCase().replace(/^.*\./, '.');
@@ -306,11 +314,11 @@ function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, docume
       case '.md':
         return resolveMd(data);
       default:
-        return '<p><strong>Error: unsupported embed format: ' + ext + '</strong></p>';
+        return '<p><strong>Error: unsupported embed format: ' + escapeHtml(ext) + '</strong></p>';
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return '<p><strong>Error: could not embed ' + directive.path + ' \u2014 ' + msg + '</strong></p>';
+    return '<p><strong>Error: could not embed ' + escapeHtml(directive.path) + ' \u2014 ' + escapeHtml(msg) + '</strong></p>';
   }
 }
 

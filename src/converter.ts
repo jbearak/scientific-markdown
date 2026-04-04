@@ -5327,15 +5327,19 @@ export function buildMarkdown(
       // before the embed directive. Multi-table embeds (e.g. a .md file with 2 tables)
       // produce multiple consecutive tables sharing the same directive — emit it once
       // and skip the rest to avoid snowballing duplicates on round-trip.
-      const embedDirective = renderOpts?.embedDirectiveMapping?.get(String(tableIndex));
-      if (embedDirective) {
+      const rawEmbedValue = renderOpts?.embedDirectiveMapping?.get(String(tableIndex));
+      if (rawEmbedValue) {
+        // Stored value may be prefixed with embedIdx + tab to distinguish
+        // separate embed occurrences that share the same directive text.
+        const tabPos = rawEmbedValue.indexOf('\t');
+        const embedDirective = tabPos >= 0 ? rawEmbedValue.substring(tabPos + 1) : rawEmbedValue;
         const { fontPrefix: embedPrefix } = buildTableDirectivePrefix(renderOpts, tableIndex);
         pushWithHoistedPrefix(output, embedPrefix, embedDirective);
         tableIndex++;
         i++;
-        // Skip subsequent tables that map to the same embed directive
-        while (i < content.length && content[i].type === 'table'
-          && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === embedDirective) {
+        // Skip subsequent tables from the same embed occurrence (same raw stored value)
+        while (i < mergedContent.length && mergedContent[i].type === 'table'
+          && renderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === rawEmbedValue) {
           tableIndex++;
           i++;
         }
@@ -5505,10 +5509,22 @@ export function buildMarkdown(
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
-          const noteEmbedDirective = noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex));
-          if (noteEmbedDirective) {
+          const noteRawEmbedValue = noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex));
+          if (noteRawEmbedValue) {
+            const noteTabPos = noteRawEmbedValue.indexOf('\t');
+            const noteEmbedDirective = noteTabPos >= 0 ? noteRawEmbedValue.substring(noteTabPos + 1) : noteRawEmbedValue;
             const { fontPrefix: noteEmbedPrefix } = buildTableDirectivePrefix(noteRenderOpts, tableIndex);
             bodyParts.push(noteEmbedPrefix + noteEmbedDirective);
+            tableIndex++;
+            bi++;
+            // Skip subsequent tables from the same embed occurrence
+            while (bi < bodyMerged.length && bodyMerged[bi].type === 'table'
+              && noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex)) === noteRawEmbedValue) {
+              tableIndex++;
+              bi++;
+            }
+            partStart = bi;
+            continue;
           } else {
             const noteStoredFormat = noteRenderOpts?.tableFormatMapping?.get(String(tableIndex));
             const noteTableResult = renderTableOrFallback(item, comments, options, noteRenderOpts, noteStoredFormat, tableIndex);

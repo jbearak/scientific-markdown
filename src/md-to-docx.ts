@@ -5951,7 +5951,7 @@ export function generateDocumentXml(tokens: MdToken[], state: DocxGenState, opti
       }
       // Record embed directive for round-trip if this table came from an embed
       if (token.embedIdx !== undefined && token.embedIdx < state.embedDirectives.length) {
-        state.embedDirectiveMap.set(state.tableIndex, state.embedDirectives[token.embedIdx]);
+        state.embedDirectiveMap.set(state.tableIndex, token.embedIdx + '\t' + state.embedDirectives[token.embedIdx]);
       }
       state.tableIndex++;
     } else {
