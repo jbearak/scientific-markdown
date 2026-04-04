@@ -4028,6 +4028,43 @@ function tryRenderGridTable(
 
 /** Render a table as a grid table, GFM pipe table, or HTML fallback, depending on feasibility and stored format.
  *  Returns { directivePrefix, body } so callers can position directives before preceding HTML comments. */
+/**
+ * Build the comment-style directive prefix for a table (font-size, font, col-widths, orientation).
+ * Returns the prefix string and a flag indicating whether a font value is comment-unsafe.
+ */
+function buildTableDirectivePrefix(
+  renderOpts: RenderOpts | undefined,
+  tableIndex: number | undefined,
+): { fontPrefix: string; commentUnsafeFont: boolean } {
+  let fontPrefix = '';
+  let commentUnsafeFont = false;
+  const isLandscapeTable = tableIndex !== undefined && renderOpts?.landscapeTableIndices?.has(tableIndex);
+  const isPortraitTable = tableIndex !== undefined && renderOpts?.portraitTableIndices?.has(tableIndex);
+  if (tableIndex !== undefined && renderOpts) {
+    const fontSize = renderOpts.tableFontSizeMapping?.get(String(tableIndex));
+    const font = renderOpts.tableFontMapping?.get(String(tableIndex));
+    if (fontSize) fontPrefix += '<!-- table-font-size: ' + fontSize + ' -->\n';
+    if (font) {
+      if (font.includes('-->')) {
+        commentUnsafeFont = true;
+      } else {
+        fontPrefix += '<!-- table-font: ' + font + ' -->\n';
+      }
+    }
+    const colWidths = renderOpts.tableColWidthsMapping?.get(String(tableIndex));
+    if (colWidths) {
+      if (colWidths.includes('-->')) {
+        commentUnsafeFont = true;
+      } else {
+        fontPrefix += '<!-- table-col-widths: ' + colWidths + ' -->\n';
+      }
+    }
+    if (isLandscapeTable) fontPrefix += '<!-- table-orientation: landscape -->\n';
+    if (isPortraitTable) fontPrefix += '<!-- table-orientation: portrait -->\n';
+  }
+  return { fontPrefix, commentUnsafeFont };
+}
+
 function renderTableOrFallback(
   item: { rows: TableRow[] },
   comments: Map<string, Comment>,
@@ -4036,37 +4073,16 @@ function renderTableOrFallback(
   storedFormat?: string,
   tableIndex?: number,
 ): { directivePrefix: string; body: string } {
-  // Build per-table font directive prefix for pipe/grid tables
-  let fontPrefix = '';
+  const { fontPrefix, commentUnsafeFont: forceHtmlTable } = buildTableDirectivePrefix(renderOpts, tableIndex);
   let htmlFontAttrs = '';
   const isLandscapeTable = tableIndex !== undefined && renderOpts?.landscapeTableIndices?.has(tableIndex);
   const isPortraitTable = tableIndex !== undefined && renderOpts?.portraitTableIndices?.has(tableIndex);
-  // Font values containing --> cannot be safely embedded in HTML comments;
-  // force HTML table output so the value is preserved losslessly in data-font.
-  let forceHtmlTable = false;
   if (tableIndex !== undefined && renderOpts) {
     const fontSize = renderOpts.tableFontSizeMapping?.get(String(tableIndex));
     const font = renderOpts.tableFontMapping?.get(String(tableIndex));
-    if (fontSize) fontPrefix += '<!-- table-font-size: ' + fontSize + ' -->\n';
-    if (font) {
-      if (font.includes('-->')) {
-        forceHtmlTable = true;
-      } else {
-        fontPrefix += '<!-- table-font: ' + font + ' -->\n';
-      }
-    }
-    const colWidths = renderOpts.tableColWidthsMapping?.get(String(tableIndex));
-    if (colWidths) {
-      if (colWidths.includes('-->')) {
-        forceHtmlTable = true;
-      } else {
-        fontPrefix += '<!-- table-col-widths: ' + colWidths + ' -->\n';
-      }
-    }
-    if (isLandscapeTable) fontPrefix += '<!-- table-orientation: landscape -->\n';
-    if (isPortraitTable) fontPrefix += '<!-- table-orientation: portrait -->\n';
     if (fontSize) htmlFontAttrs += ' data-font-size="' + escapeHtmlAttr(fontSize) + '"';
     if (font) htmlFontAttrs += ' data-font="' + escapeHtmlAttr(font) + '"';
+    const colWidths = renderOpts.tableColWidthsMapping?.get(String(tableIndex));
     if (colWidths) htmlFontAttrs += ' data-col-widths="' + escapeHtmlAttr(colWidths) + '"';
     if (isLandscapeTable) htmlFontAttrs += ' data-orientation="landscape"';
     if (isPortraitTable) htmlFontAttrs += ' data-orientation="portrait"';
@@ -5257,11 +5273,12 @@ export function buildMarkdown(
         output.push('\n\n');
       }
       // If this table was originally an embed directive, emit the directive instead of
-      // rendering the table. Table directives (font-size, etc.) are still emitted by
-      // renderTableOrFallback's directive prefix logic.
+      // rendering the table. Table directives (font-size, etc.) are emitted as a prefix
+      // before the embed directive.
       const embedDirective = renderOpts?.embedDirectiveMapping?.get(String(tableIndex));
       if (embedDirective) {
-        output.push(embedDirective);
+        const { fontPrefix: embedPrefix } = buildTableDirectivePrefix(renderOpts, tableIndex);
+        output.push(embedPrefix + embedDirective);
         tableIndex++;
         lastListType = undefined;
         lastListLevel = undefined;
@@ -5459,12 +5476,18 @@ export function buildMarkdown(
             bodyParts.push(part.text);
             deferredAll.push(...part.deferredComments);
           }
-          const noteStoredFormat = noteRenderOpts?.tableFormatMapping?.get(String(tableIndex));
-          const noteTableResult = renderTableOrFallback(item, comments, options, noteRenderOpts, noteStoredFormat, tableIndex);
-          if (noteTableResult.directivePrefix) {
-            bodyParts.push(noteTableResult.directivePrefix.replace(/\n+$/, '') + '\n' + noteTableResult.body);
+          const noteEmbedDirective = noteRenderOpts?.embedDirectiveMapping?.get(String(tableIndex));
+          if (noteEmbedDirective) {
+            const { fontPrefix: noteEmbedPrefix } = buildTableDirectivePrefix(noteRenderOpts, tableIndex);
+            bodyParts.push(noteEmbedPrefix + noteEmbedDirective);
           } else {
-            bodyParts.push(noteTableResult.body);
+            const noteStoredFormat = noteRenderOpts?.tableFormatMapping?.get(String(tableIndex));
+            const noteTableResult = renderTableOrFallback(item, comments, options, noteRenderOpts, noteStoredFormat, tableIndex);
+            if (noteTableResult.directivePrefix) {
+              bodyParts.push(noteTableResult.directivePrefix.replace(/\n+$/, '') + '\n' + noteTableResult.body);
+            } else {
+              bodyParts.push(noteTableResult.body);
+            }
           }
           tableIndex++;
           partStart = bi + 1;

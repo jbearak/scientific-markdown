@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Create standalone page `docs/embedded-tables.md`
+## Task 1: Create standalone page `docs/embedded-tables.md`
 
 **Files:**
 - Create: `docs/embedded-tables.md`
@@ -155,7 +155,7 @@ git commit -m "docs: add embedded tables reference page"
 
 ---
 
-### Task 2: Add README feature bullet
+## Task 2: Add README feature bullet
 
 **Files:**
 - Modify: `README.md:63-64` (the "Formatting & Authoring" section)
@@ -192,7 +192,7 @@ git commit -m "docs: add embedded tables to README feature list and doc links"
 
 ---
 
-### Task 3: Add Embedded Tables section to `docs/specification.md`
+## Task 3: Add Embedded Tables section to `docs/specification.md`
 
 **Files:**
 - Modify: `docs/specification.md:266` (insert after the "Page Orientation Sections" subsection ends at line 265, before "Code Block Styling Example" at line 267)
@@ -232,7 +232,7 @@ git commit -m "docs: add embedded tables syntax to specification"
 
 ---
 
-### Task 4: Expand Tables section in `docs/guides/documentation.md`
+## Task 4: Expand Tables section in `docs/guides/documentation.md`
 
 **Files:**
 - Modify: `docs/guides/documentation.md:55-65` (the "Tables" subsection, section 5)
@@ -287,7 +287,7 @@ git commit -m "docs: add embedded tables example to documentation guide"
 
 ---
 
-### Task 5: Add embed note to `docs/converter.md`
+## Task 5: Add embed note to `docs/converter.md`
 
 **Files:**
 - Modify: `docs/converter.md:23-24` (the Tables bullet in the Round-Trip Features list)
@@ -296,13 +296,13 @@ git commit -m "docs: add embedded tables example to documentation guide"
 
 The current Tables bullet in the Round-Trip Features list (line 24) ends with:
 
-```
+```text
 Markdown→DOCX export accepts pipe tables, grid tables, and HTML tables (with `colspan` and `rowspan` support)
 ```
 
 Append to that same bullet:
 
-```
+```text
 . Embed directives (`<!-- embed: path -->`) are expanded into full tables on export; the original directive is stored in DOCX custom properties under the `MANUSCRIPT_EMBED_DIRECTIVES_` prefix so that re-importing the DOCX recovers the embed reference. See [Embedded Tables](embedded-tables.md)
 ```
 

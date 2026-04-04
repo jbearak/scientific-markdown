@@ -5,6 +5,8 @@ import { LineMap, type LineMapSegment } from './preview/line-map';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
 import MarkdownIt from 'markdown-it';
 
+const sharedMarkdownIt = new MarkdownIt({ html: true });
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -60,9 +62,13 @@ export function parseEmbedDirective(comment: string): EmbedDirective | null {
       case 'range':
         result.range = val;
         break;
-      case 'headers':
-        result.headers = parseInt(val, 10);
+      case 'headers': {
+        const parsed = parseInt(val, 10);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          result.headers = parsed;
+        }
         break;
+      }
     }
   }
 
@@ -497,8 +503,7 @@ function tableContentToHtml(tableContent: string): string | null {
   }
 
   // Must be a pipe table — render via markdown-it
-  const md = new MarkdownIt({ html: true });
-  const html = md.render(processed);
+  const html = sharedMarkdownIt.render(processed);
 
   // Extract <table>...</table> from the rendered HTML
   const tableMatch = html.match(/<table>[\s\S]*?<\/table>/i);

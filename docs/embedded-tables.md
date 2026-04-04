@@ -4,13 +4,13 @@ Tables can be written directly in your document as pipe tables, grid tables, or 
 
 ## Syntax
 
-```
+```markdown
 <!-- embed: <path> [sheet=<name>] [range=<ref>] [headers=<n>] -->
 ```
 
 File paths are resolved relative to the markdown file containing the directive. All values (including the file path) support optional single or double quotes to allow spaces:
 
-```
+```markdown
 <!-- embed: "my data/results.xlsx" sheet='Sheet One' range=A1:F20 headers=2 -->
 ```
 
@@ -28,7 +28,7 @@ File paths are resolved relative to the markdown file containing the directive. 
 
 Embed a comma-separated or tab-separated file:
 
-```
+```markdown
 <!-- embed: data/results.csv -->
 <!-- embed: data/results.tsv headers=2 -->
 ```
@@ -39,7 +39,7 @@ CSV/TSV parsing follows RFC 4180: quoted fields may contain embedded newlines an
 
 Embed a sheet (or part of a sheet) from an Excel workbook:
 
-```
+```markdown
 <!-- embed: data/budget.xlsx -->
 <!-- embed: data/budget.xlsx sheet=Summary range=A1:D10 -->
 <!-- embed: data/budget.xlsx sheet=2 range=Q1Results -->
@@ -53,7 +53,7 @@ Embed a sheet (or part of a sheet) from an Excel workbook:
 
 Embed tables from another markdown file:
 
-```
+```markdown
 <!-- embed: shared/standard-table.md -->
 ```
 

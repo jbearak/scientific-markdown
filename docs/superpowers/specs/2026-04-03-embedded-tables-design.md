@@ -32,7 +32,7 @@ All values, including the file path, support optional single or double quotes to
 
 ### .md embeds
 
-Only the path parameter is accepted. The embedded file is expected to contain table(s) and optional table directives (`table-font-size`, `table-font`, `table-orientation`, `table-col-widths`). Non-table content is silently ignored (with an info-level LSP diagnostic).
+Only the path parameter is accepted. The embedded file is expected to contain table(s) and optional table directives (`table-font-size`, `table-font`, `table-orientation`, `table-col-widths`). Only raw Markdown table structure is extracted and preserved — in-cell Manuscript features such as CriticMarkup, citations, math, and other Manuscript-specific syntax are not supported and will appear as literal text in the output. Non-table content is silently ignored (with an info-level LSP diagnostic).
 
 ### Interaction with table directives
 
@@ -60,7 +60,7 @@ Embed resolution follows the established grid table pattern: a preprocessor runs
 
 ### New dependency
 
-- `xlsx` (SheetJS) — for XLSX parsing, merged cell detection, and named range resolution.
+- `@e965/xlsx` (SheetJS) — for XLSX parsing, merged cell detection, and named range resolution.
 
 ## Preprocessing & File Resolution
 
@@ -91,7 +91,7 @@ Injected by callers: VS Code extension provides one backed by `workspace.fs`; md
 
 ### File type handling
 
-- **.md** — Read the file, extract only table blocks and preceding table directives, splice them in. Non-table content is dropped.
+- **.md** — Read the file, extract only table blocks and preceding table directives, splice them in. Only raw Markdown table structure is preserved; in-cell Manuscript features (CriticMarkup, citations, math, Manuscript-specific syntax) are not processed and will appear as literal text. Non-table content is dropped.
 - **.csv / .tsv** — Parse into a 2D array, convert to HTML `<table>` string.
 - **.xlsx** — Parse with SheetJS, resolve sheet/range/named-range parameters, detect merged cells, convert to HTML `<table>` string with `colspan`/`rowspan` attributes.
 
@@ -123,7 +123,7 @@ If a file can't be read or parsed, the preprocessor replaces the embed comment w
 
 ### `src/xlsx-parser.ts`
 
-**Uses SheetJS (`xlsx` npm package).**
+**Uses SheetJS (`@e965/xlsx` npm package).**
 
 **`parseXlsx(data: Uint8Array, options?: { sheet?: string, range?: string, headers?: number }): HtmlTableMeta`**
 
