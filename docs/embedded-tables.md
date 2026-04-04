@@ -1,6 +1,6 @@
 # Embedded Tables
 
-Tables can be written directly in your document as [pipe tables](specification.md#pipe-tables), [grid tables](specification.md#grid-tables), or [HTML tables](specification.md#html-tables). When your data lives in an external file — a spreadsheet, a CSV or TSV export, a Stata dataset, or a shared markdown file — you can embed it instead using a single directive. The embedded table behaves identically to an inline table for formatting, preview, and Word export.
+Tables can be written directly in your document as [pipe tables](specification.md#pipe-tables), [grid tables](specification.md#grid-tables), or [HTML tables](specification.md#html-tables). When your data lives in an external file — a [spreadsheet](#xlsx), a [CSV or TSV](#csv-and-tsv) export, a [Stata dataset](#stata-dataset-dta), or a shared [markdown file](#markdown) — you can embed it instead using a single directive. The embedded table behaves identically to an inline table for formatting, preview, and Word export.
 
 ## Syntax
 
