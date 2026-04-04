@@ -181,6 +181,8 @@ const fixtures: Fixture[] = [
   { path: 'sample.md', bibtex: sampleBib },
   { path: 'README.md' },
   { path: 'AGENTS.md' },
+  // test fixtures
+  { path: 'test/fixtures/tables.md' },
 ];
 
 it('covers all docs/ files', () => {

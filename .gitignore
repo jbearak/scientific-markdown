@@ -45,6 +45,7 @@ test/fixtures/draft_saved.md
 test/fixtures/draft.docx
 test/fixtures/draft_current.docx
 test/fixtures/blockquotes.docx
+test/fixtures/tables.docx
 sample_saved.md
 sample_roundtrip.md
 .tmp/
