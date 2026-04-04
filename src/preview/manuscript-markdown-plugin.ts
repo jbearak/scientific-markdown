@@ -1273,8 +1273,15 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     return isGfmDisallowedRawHtml(content) ? escapeHtmlText(content) : content;
   };
   md.renderer.rules.html_block = (tokens, idx) => {
-    const content = tokens[idx].content || '';
-    return isGfmDisallowedRawHtml(content) ? `<p>${escapeHtmlText(content)}</p>\n` : content;
+    const token = tokens[idx];
+    const content = token.content || '';
+    if (isGfmDisallowedRawHtml(content)) {
+      return '<p>' + escapeHtmlText(content) + '</p>\n';
+    }
+    if (token.map) {
+      return '<div data-line="' + token.map[0] + '">' + content + '</div>\n';
+    }
+    return content;
   };
 
   // Trusted internal style blocks injected by manuscript rules — bypass GFM filtering.
