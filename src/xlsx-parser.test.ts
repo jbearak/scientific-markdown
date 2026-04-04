@@ -120,6 +120,19 @@ describe('parseXlsx', () => {
     expect(meta.rows[0].cells[1].runs[0].text).toBe('C');
   });
 
+  it('resolves a named range that points to a different sheet', () => {
+    const buf = buildXlsx([['Wrong']], {
+      sheetName: 'First',
+      extraSheets: [{ name: 'Second', data: [['Right'], ['Data']] }],
+      definedNames: [{ name: 'CrossSheet', ref: '$A$1:$A$2', sheet: 'Second' }],
+    });
+    const meta = parseXlsx(buf, { range: 'CrossSheet', headers: 1 });
+
+    expect(meta.rows.length).toBe(2);
+    expect(meta.rows[0].cells[0].runs[0].text).toBe('Right');
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('Data');
+  });
+
   it('handles merged cells with colspan', () => {
     const data = [
       ['Merged', '', 'C'],
@@ -205,6 +218,21 @@ describe('parseXlsx', () => {
     const meta = parseXlsx(buf, { headers: 1 });
     expect(meta.rows[1].cells[0].runs[0].text).toBe('42');
     expect(meta.rows[2].cells[0].runs[0].text).toBe('3.14');
+  });
+
+  it('HTML-escapes cell content', () => {
+    const data = [
+      ['Header'],
+      ['<0.05'],
+      ['a & b'],
+      ['"quoted"'],
+    ];
+    const buf = buildXlsx(data);
+    const meta = parseXlsx(buf, { headers: 1 });
+
+    expect(meta.rows[1].cells[0].runs[0].text).toBe('&lt;0.05');
+    expect(meta.rows[2].cells[0].runs[0].text).toBe('a &amp; b');
+    expect(meta.rows[3].cells[0].runs[0].text).toBe('&quot;quoted&quot;');
   });
 
   it('handles empty cells as empty text', () => {

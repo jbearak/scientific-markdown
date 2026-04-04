@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { computeCodeRegions, overlapsCodeRegion } from '../code-regions';
 import { scanOrientationDirectives } from '../orientation-scan';
 import { parseEmbedDirective } from '../embed-preprocess';
@@ -688,7 +689,7 @@ function validateEmbedDirectives(doc: TextDocument): void {
 	const lines = text.split('\n');
 	const codeRegions = computeCodeRegions(text);
 	const diagnostics: Diagnostic[] = [];
-	const docPath = new URL(doc.uri).pathname;
+	const docPath = fileURLToPath(doc.uri);
 	const docDir = path.dirname(docPath);
 
 	let offset = 0;

@@ -244,8 +244,9 @@ export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolve
       embedDirectives.push(trimmed);
       let expanded = resolveEmbed(directive, resolver, documentPath);
 
-      // Tag the expanded table with data-embed-idx for round-trip tracking
-      expanded = expanded.replace(/^<table/, '<table data-embed-idx="' + embedIdx + '"');
+      // Tag the first <table in the expanded content with data-embed-idx for round-trip tracking.
+      // For .md embeds, table directives may precede the <table> tag.
+      expanded = expanded.replace(/<table(?=[\s>])/, '<table data-embed-idx="' + embedIdx + '"');
       embedIdx++;
 
       // Ensure blank line before

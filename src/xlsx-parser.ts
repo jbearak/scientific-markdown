@@ -1,6 +1,14 @@
 import * as XLSX from 'xlsx';
 import type { HtmlTableMeta, HtmlTableRow, HtmlTableCell, HtmlTableRun } from './html-table-parser';
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export interface XlsxParseOptions {
   sheet?: string;   // sheet name or 1-based index
   range?: string;   // cell range (A1:F20) or named range
@@ -19,10 +27,12 @@ export function parseXlsx(data: Uint8Array, options?: XlsxParseOptions): HtmlTab
   const headerCount = options?.headers ?? 1;
 
   // --- Sheet resolution ---
-  const ws = resolveSheet(wb, options?.sheet);
+  let ws = resolveSheet(wb, options?.sheet);
 
-  // --- Range resolution ---
-  const rangeRef = resolveRange(wb, ws, options?.range);
+  // --- Range resolution (may switch ws if named range points to another sheet) ---
+  const rangeResult = resolveRange(wb, ws, options?.range);
+  const rangeRef = rangeResult.range;
+  if (rangeResult.ws) ws = rangeResult.ws;
 
   // --- Parse cells within range ---
   const range = XLSX.utils.decode_range(rangeRef);
@@ -58,7 +68,7 @@ export function parseXlsx(data: Uint8Array, options?: XlsxParseOptions): HtmlTab
       if (coveredCells.has(cellRef)) continue;
 
       const cell = ws[cellRef];
-      const text = cell ? String(cell.v ?? '') : '';
+      const text = escapeHtml(cell ? String(cell.v ?? '') : '');
       const runs: HtmlTableRun[] = [{ type: 'text', text }];
       const tableCell: HtmlTableCell = { runs };
 
@@ -100,7 +110,7 @@ function resolveSheet(wb: XLSX.WorkBook, sheet?: string): XLSX.WorkSheet {
   return ws;
 }
 
-function resolveRange(wb: XLSX.WorkBook, ws: XLSX.WorkSheet, range?: string): string {
+function resolveRange(wb: XLSX.WorkBook, ws: XLSX.WorkSheet, range?: string): { range: string; ws?: XLSX.WorkSheet } {
   if (!range) {
     // Auto-detect bounding rectangle by scanning actual cell keys
     let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
@@ -113,12 +123,12 @@ function resolveRange(wb: XLSX.WorkBook, ws: XLSX.WorkSheet, range?: string): st
       if (cell.c > maxC) maxC = cell.c;
     }
     if (maxR < 0) throw new Error('Sheet is empty');
-    return XLSX.utils.encode_range({ s: { r: minR, c: minC }, e: { r: maxR, c: maxC } });
+    return { range: XLSX.utils.encode_range({ s: { r: minR, c: minC }, e: { r: maxR, c: maxC } }) };
   }
 
   // Check if it's a cell reference (contains a colon with letter-number patterns)
   if (/^[A-Z]+\d+:[A-Z]+\d+$/i.test(range.replace(/\$/g, ''))) {
-    return range;
+    return { range };
   }
 
   // Try as named range
@@ -128,7 +138,10 @@ function resolveRange(wb: XLSX.WorkBook, ws: XLSX.WorkSheet, range?: string): st
     if (found && found.Ref) {
       // Ref format: 'SheetName'!$A$1:$B$2 or SheetName!A1:B2
       const refPart = found.Ref.replace(/^.*!/, '').replace(/\$/g, '');
-      return refPart;
+      // Extract the sheet name from the ref and switch to it if different
+      const sheetMatch = found.Ref.match(/^'?([^'!]+)'?!/);
+      const targetSheet = sheetMatch ? wb.Sheets[sheetMatch[1]] : undefined;
+      return { range: refPart, ws: targetSheet };
     }
   }
 

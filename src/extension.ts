@@ -923,8 +923,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// File watcher to invalidate embed cache
 	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md}');
-	embedWatcher.onDidChange(uri => embedCache.delete(uri.fsPath));
-	embedWatcher.onDidDelete(uri => embedCache.delete(uri.fsPath));
+	embedWatcher.onDidChange(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
+	embedWatcher.onDidDelete(uri => {
+		embedCache.delete(uri.fsPath);
+		void vscode.commands.executeCommand('markdown.preview.refresh');
+	});
 	context.subscriptions.push(embedWatcher);
 
 	// Return markdown-it plugin for preview integration
