@@ -5524,6 +5524,7 @@ export function buildMarkdown(
               bi++;
             }
             partStart = bi;
+            bi--; // compensate for the for-loop's bi++ on continue
             continue;
           } else {
             const noteStoredFormat = noteRenderOpts?.tableFormatMapping?.get(String(tableIndex));
