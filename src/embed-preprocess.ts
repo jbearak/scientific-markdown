@@ -326,7 +326,7 @@ function resolveDelimited(data: Uint8Array, delimiter: string, directive: EmbedD
   const content = new TextDecoder().decode(data);
   const rows = parseCsv(content, delimiter);
   if (rows.length === 0) {
-    return '<p><strong>Error: could not embed ' + directive.path + ' \u2014 file is empty</strong></p>';
+    return '<p><strong>Error: could not embed ' + escapeHtml(directive.path) + ' \u2014 file is empty</strong></p>';
   }
   const headerCount = directive.headers ?? 1;
   const meta = csvToHtmlTableMeta(rows, headerCount);
