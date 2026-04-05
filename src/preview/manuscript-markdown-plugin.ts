@@ -983,6 +983,28 @@ function gridTableBlockRule(state: StateBlock, startLine: number, endLine: numbe
   return true;
 }
 
+function getEmbedDocumentPath(md: MarkdownIt, state: any): string | undefined {
+  const env = state.env;
+  const currentDocument = env?.currentDocument;
+  if (currentDocument && typeof currentDocument === 'object' && typeof currentDocument.fsPath === 'string') {
+    return currentDocument.fsPath;
+  }
+  if (typeof currentDocument === 'string' && currentDocument.length > 0) {
+    return currentDocument;
+  }
+
+  const getDocPath = (md as any).manuscriptGetDocumentPath;
+  if (typeof getDocPath === 'function') {
+    const resolved = getDocPath(state.src);
+    if (typeof resolved === 'string' && resolved.length > 0) {
+      return resolved;
+    }
+  }
+
+  const fallbackPath = (md as any).manuscriptDocumentPath;
+  return typeof fallbackPath === 'string' && fallbackPath.length > 0 ? fallbackPath : undefined;
+}
+
 /**
  * Main plugin function that registers Manuscript Markdown parsing with markdown-it
  * @param md - The MarkdownIt instance to extend
@@ -1000,7 +1022,7 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     // processed by the subsequent grid table preprocessor.
     const embedResolver: EmbedResolver | undefined = (md as any).manuscriptEmbedResolver;
     const embedOptions: EmbedOptions | undefined = (md as any).manuscriptEmbedOptions;
-    const docPath: string | undefined = (md as any).manuscriptDocumentPath;
+    const docPath = getEmbedDocumentPath(md, state);
     const r0 = (embedResolver && docPath)
       ? preprocessEmbedsWithMap(state.src, embedResolver, docPath, embedOptions)
       : { output: state.src, map: LineMap.identity() };
