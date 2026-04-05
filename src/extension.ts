@@ -933,8 +933,12 @@ export function activate(context: vscode.ExtensionContext) {
 			// is being rendered. In split-view scenarios where the active editor
 			// differs from the preview target, relative embed paths may resolve
 			// against the wrong base directory.
-			if (editor?.document.languageId === 'markdown' && previewMd) {
+		if (editor?.document.languageId === 'markdown' && previewMd) {
+				const hadPath = !!previewMd.manuscriptDocumentPath;
 				previewMd.manuscriptDocumentPath = editor.document.uri.fsPath;
+				if (!hadPath) {
+					vscode.commands.executeCommand('markdown.preview.refresh');
+				}
 			}
 		}),
 		vscode.workspace.onDidChangeTextDocument(e => {
