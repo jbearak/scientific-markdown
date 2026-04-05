@@ -208,10 +208,12 @@ describe('docs round-trip: md -> docx -> md', () => {
       });
 
       // No unexpected warnings for well-formed docs (list item block content
-      // warnings are expected — see Known Limitations in specification.md)
+      // and remote-image warnings are expected — see Known Limitations in
+      // specification.md and image-roundtrip requirements)
       const unexpectedWarnings = docxResult.warnings.filter(
         (w: string) => !w.includes('inside list item dropped during conversion') &&
-                       !w.includes('Continuation paragraph inside list item dropped'),
+                       !w.includes('Continuation paragraph inside list item dropped') &&
+                       !w.includes('is a URL or data URI; only local file paths are supported'),
       );
       expect(unexpectedWarnings).toEqual([]);
 
