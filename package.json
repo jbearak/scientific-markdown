@@ -823,9 +823,9 @@
   "dependencies": {
     "@jbearak/dta-parser": "github:jbearak/dta-parser#v0.1.1",
     "citeproc": "^2.4.63",
-    "fast-xml-parser": "^5.3.5",
+    "fast-xml-parser": "^5.5.7",
     "jszip": "^3.10.1",
-    "markdown-it": "^14.1.0",
+    "markdown-it": "^14.1.1",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
