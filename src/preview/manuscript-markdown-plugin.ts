@@ -6,7 +6,7 @@ import { PARA_PLACEHOLDER, findMatchingClose } from '../critic-markup';
 import { GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
 import { preprocessGridTablesWithMap, wrapBareLatexEnvironmentsWithMap, preprocessCriticMarkupWithMap } from './preprocess-with-map';
 import { LineMap } from './line-map';
-import { preprocessEmbedsWithMap, type EmbedResolver } from '../embed-preprocess';
+import { preprocessEmbedsWithMap, type EmbedResolver, type EmbedOptions } from '../embed-preprocess';
 import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
 import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
@@ -999,9 +999,10 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     // Embed preprocessing runs first so embedded .md files with grid tables get
     // processed by the subsequent grid table preprocessor.
     const embedResolver: EmbedResolver | undefined = (md as any).manuscriptEmbedResolver;
+    const embedOptions: EmbedOptions | undefined = (md as any).manuscriptEmbedOptions;
     const docPath: string | undefined = (md as any).manuscriptDocumentPath;
     const r0 = (embedResolver && docPath)
-      ? preprocessEmbedsWithMap(state.src, embedResolver, docPath)
+      ? preprocessEmbedsWithMap(state.src, embedResolver, docPath, embedOptions)
       : { output: state.src, map: LineMap.identity() };
     const r1 = preprocessGridTablesWithMap(r0.output);
     const r2 = wrapBareLatexEnvironmentsWithMap(r1.output);
@@ -1086,6 +1087,13 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     }
     const token = new state.Token('manuscript_style', '', 0);
     token.content = '<style>\n' + css + '</style>\n';
+    state.tokens.unshift(token);
+  });
+
+  // Inject <style> block for missing-value colorization in embedded .dta tables
+  md.core.ruler.push('manuscript_missing_value_style', (state: any) => {
+    const token = new state.Token('manuscript_style', '', 0);
+    token.content = '<style>\n.mm-missing-value { color: var(--vscode-editorError-foreground); }\n</style>\n';
     state.tokens.unshift(token);
   });
 

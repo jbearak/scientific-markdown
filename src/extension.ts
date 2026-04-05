@@ -688,6 +688,15 @@ export function activate(context: vscode.ExtensionContext) {
 				syncPreviewColors(scheme);
 				vscode.commands.executeCommand('markdown.preview.refresh');
 			}
+			if (e.affectsConfiguration('manuscriptMarkdown.embedDtaMaxFileSize')) {
+				if (previewMd) {
+					const maxDtaFileSize = vscode.workspace
+						.getConfiguration('manuscriptMarkdown')
+						.get<number>('embedDtaMaxFileSize', 10_485_760);
+					previewMd.manuscriptEmbedOptions = { maxDtaFileSize };
+					vscode.commands.executeCommand('markdown.preview.refresh');
+				}
+			}
 		})
 	);
 
@@ -955,7 +964,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// File watcher to invalidate embed cache
-	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md}');
+	const embedWatcher = vscode.workspace.createFileSystemWatcher('**/*.{csv,tsv,xlsx,md,dta}');
 	embedWatcher.onDidChange(uri => {
 		embedCache.delete(uri.fsPath);
 		void vscode.commands.executeCommand('markdown.preview.refresh');
@@ -976,6 +985,10 @@ export function activate(context: vscode.ExtensionContext) {
 			previewMd = md;
 			md.manuscriptColors = getConfiguredColorScheme();
 			md.manuscriptEmbedResolver = embedResolver;
+			const maxDtaFileSize = vscode.workspace
+				.getConfiguration('manuscriptMarkdown')
+				.get<number>('embedDtaMaxFileSize', 10_485_760);
+			md.manuscriptEmbedOptions = { maxDtaFileSize };
 			// Set initial document path from active editor
 			const activeDoc = vscode.window.activeTextEditor?.document;
 			if (activeDoc?.languageId === 'markdown') {
@@ -1421,6 +1434,7 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 	const config = vscode.workspace.getConfiguration('manuscriptMarkdown');
 	const blockquoteStyle = config.get<'Quote' | 'IntenseQuote' | 'GitHub'>('blockquoteStyle', 'GitHub');
 	const colors = normalizeColorScheme(config.get<string>('colors') ?? '') ?? 'guttmacher';
+	const maxDtaFileSize = config.get<number>('embedDtaMaxFileSize', 10_485_760);
 	const result = await convertMdToDocx(input.markdown, {
 		bibtex: input.bibtex,
 		authorName: authorName ?? undefined,
@@ -1431,6 +1445,7 @@ async function exportMdToDocx(uri?: vscode.Uri, templateDocx?: Uint8Array): Prom
 		colors,
 		documentPath: input.basePath + '.md',
 		embedResolver,
+		maxDtaFileSize,
 		onStyleNotFound: async (styleName: string) => {
 			const choice = await vscode.window.showWarningMessage(
 				`CSL style "${styleName}" is not bundled. Download it from the CSL repository? Without it, citations will use plain-text fallback formatting.`,

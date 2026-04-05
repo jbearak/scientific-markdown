@@ -53,6 +53,7 @@ full_draft_temp/**
 *_temp/**
 dist/**
 docs/**
+CLAUDE.md
 media/**/*.test.ts
 scripts/**
 test/**

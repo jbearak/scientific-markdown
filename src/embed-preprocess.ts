@@ -1,5 +1,6 @@
 import { parseCsv, csvToHtmlTableMeta } from './csv-parser';
 import { parseXlsx } from './xlsx-parser';
+import { parseDta } from './dta-parser';
 import type { HtmlTableMeta, HtmlTableRun } from './html-table-parser';
 import { LineMap, type LineMapSegment } from './preview/line-map';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
@@ -29,6 +30,10 @@ export interface EmbedDirective {
 export interface EmbedResolver {
   readFile(absolutePath: string): Uint8Array | null;
   resolveRelative(basePath: string, relativePath: string): string;
+}
+
+export interface EmbedOptions {
+  maxDtaFileSize?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,15 +217,15 @@ export interface PreprocessEmbedsResult {
   embedDirectives: string[];
 }
 
-export function preprocessEmbeds(markdown: string, resolver: EmbedResolver, documentPath: string): string {
-  return preprocessEmbedsTracked(markdown, resolver, documentPath).output;
+export function preprocessEmbeds(markdown: string, resolver: EmbedResolver, documentPath: string, options?: EmbedOptions): string {
+  return preprocessEmbedsTracked(markdown, resolver, documentPath, 0, options).output;
 }
 
 /**
  * Preprocess embeds and track which directives were expanded.
  * Each expanded table gets a `data-embed-idx` attribute for round-trip tracking.
  */
-export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolver, documentPath: string, startIdx = 0): PreprocessEmbedsResult {
+export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolver, documentPath: string, startIdx = 0, options?: EmbedOptions): PreprocessEmbedsResult {
   const lines = markdown.split('\n');
   const result: string[] = [];
   const embedDirectives: string[] = [];
@@ -258,7 +263,7 @@ export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolve
     const directive = parseEmbedDirective(trimmed);
     if (directive) {
       embedDirectives.push(trimmed);
-      let expanded = resolveEmbed(directive, resolver, documentPath);
+      let expanded = resolveEmbed(directive, resolver, documentPath, options);
 
       // Tag all <table> elements in the expanded content with data-embed-idx for round-trip tracking.
       // .md embeds may produce multiple tables; all must map back to the same directive.
@@ -292,7 +297,7 @@ export function preprocessEmbedsTracked(markdown: string, resolver: EmbedResolve
   return { output: result.join('\n'), embedDirectives };
 }
 
-function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, documentPath: string): string {
+function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, documentPath: string, options?: EmbedOptions): string {
   const absolutePath = resolver.resolveRelative(documentPath, directive.path);
   const data = resolver.readFile(absolutePath);
 
@@ -312,6 +317,8 @@ function resolveEmbed(directive: EmbedDirective, resolver: EmbedResolver, docume
         return resolveXlsx(data, directive);
       case '.md':
         return resolveMd(data);
+      case '.dta':
+        return parseDta(data, directive, options?.maxDtaFileSize);
       default:
         return '<p><strong>Error: unsupported embed format: ' + escapeHtml(ext) + '</strong></p>';
     }
@@ -571,8 +578,9 @@ export function preprocessEmbedsWithMap(
   src: string,
   resolver: EmbedResolver,
   documentPath: string,
+  options?: EmbedOptions,
 ): { output: string; map: LineMap } {
-  const output = preprocessEmbeds(src, resolver, documentPath);
+  const output = preprocessEmbeds(src, resolver, documentPath, options);
   if (output === src) return { output, map: LineMap.identity() };
 
   const origLines = src.split('\n');

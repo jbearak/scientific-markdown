@@ -24,7 +24,7 @@ function validateLocaleTag(lang: string): void {
 /**
  * Resolve the bundled CSL directory.  Works both when running from source
  * (`src/csl-loader.ts` → `src/csl-styles/`) and from the compiled output
- * (`out/csl-loader.js` → `src/csl-styles/` relative to project root).
+ * (`out/csl-loader.js` → `out/csl-styles/` via copy-csl script).
  */
 function resolveDir(subdir: string): string {
   // When running via bun test, __dirname is the src/ folder

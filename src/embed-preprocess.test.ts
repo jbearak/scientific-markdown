@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'bun:test';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { parseEmbedDirective, preprocessEmbeds, preprocessEmbedsTracked, type EmbedResolver } from './embed-preprocess';
 
 // ---------------------------------------------------------------------------
@@ -469,5 +471,40 @@ describe('preprocessEmbedsTracked — startIdx offset', () => {
     const result = preprocessEmbedsTracked(input, resolver, '/doc/file.md');
 
     expect(result.output).toContain('data-embed-idx="0"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// .dta embeds
+// ---------------------------------------------------------------------------
+
+describe('preprocessEmbeds — .dta embeds', () => {
+  const dtaFixture = new Uint8Array(
+    readFileSync(join(__dirname, '..', 'test', 'fixtures', 'tables', 'embed.dta'))
+  );
+
+  it('replaces a .dta embed with an HTML table', () => {
+    const resolver = makeTestResolver({
+      '/doc/data.dta': dtaFixture,
+    });
+    const input = '# Title\n\n<!-- embed: data.dta -->\n\nMore text';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    expect(result).toContain('<table');
+    expect(result).toContain('Apple');
+    expect(result).toContain('Autumn');
+    expect(result).not.toContain('<!-- embed:');
+  });
+
+  it('passes headers param through to parseDta', () => {
+    const resolver = makeTestResolver({
+      '/doc/data.dta': dtaFixture,
+    });
+    const input = '<!-- embed: data.dta headers=1 -->';
+    const result = preprocessEmbeds(input, resolver, '/doc/file.md');
+
+    // With headers=1, first data row becomes header
+    expect(result).toContain('<th>Apple</th>');
+    expect(result).not.toContain('<th>Fruit</th>');
   });
 });
