@@ -786,9 +786,8 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./ && bun run copy-csl",
-    "copy-csl": "rm -rf out/csl-styles out/csl-locales && cp -R src/csl-styles out/csl-styles && cp -R src/csl-locales out/csl-locales",
-    "watch": "tsc -watch -p ./",
+    "compile": "node scripts/build-extension.mjs",
+    "watch": "node scripts/build-extension.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test:word-dirty": "WORD_TESTS=1 bun test src/word-dirty.test.ts",
     "word:dirty": "bun scripts/dirty-flag-diagnose.ts",
@@ -804,21 +803,11 @@
     "@types/mocha": "^2.2.42",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.103.2",
+    "esbuild": "^0.28.0",
     "fast-check": "^4.5.3",
     "tslint": "^5.14.0",
     "typescript": "^5.9.3"
   },
-  "bundledDependencies": [
-    "@e965/xlsx",
-    "@jbearak/dta-parser",
-    "citeproc",
-    "fast-xml-parser",
-    "jszip",
-    "markdown-it",
-    "vscode-languageclient",
-    "vscode-languageserver",
-    "vscode-languageserver-textdocument"
-  ],
   "private": true,
   "dependencies": {
     "@jbearak/dta-parser": "github:jbearak/dta-parser#v0.1.1",

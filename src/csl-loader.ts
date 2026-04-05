@@ -22,18 +22,21 @@ function validateLocaleTag(lang: string): void {
 }
 
 /**
- * Resolve the bundled CSL directory.  Works both when running from source
- * (`src/csl-loader.ts` → `src/csl-styles/`) and from the compiled output
- * (`out/csl-loader.js` → `out/csl-styles/` via copy-csl script).
+ * Resolve the bundled CSL directory. Works when running from source
+ * (`src/csl-loader.ts` → `src/csl-styles/`), the extension bundle
+ * (`out/extension.js` → `out/csl-styles/`), and the bundled language server
+ * (`out/lsp/server.js` → `../csl-styles/`).
  */
 function resolveDir(subdir: string): string {
-  // When running via bun test, __dirname is the src/ folder
-  const fromSrc = join(__dirname, subdir);
-  if (existsSync(fromSrc)) return fromSrc;
-  // When running compiled (out/csl-loader.js), go up to project root
-  const fromOut = join(dirname(__dirname), 'src', subdir);
-  if (existsSync(fromOut)) return fromOut;
-  return fromSrc; // fallback
+  const candidates = [
+    join(__dirname, subdir),
+    join(__dirname, '..', subdir),
+    join(dirname(__dirname), 'src', subdir),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
 }
 
 const BUNDLED_STYLES_DIR = resolveDir('csl-styles');

@@ -45,5 +45,5 @@ revised_temp/**
 full_draft_temp/**
 *_temp/**
 .tmp/**
-
-# Keep runtime node_modules; do not exclude them
+# Runtime code is bundled into out/*.js
+node_modules/**
