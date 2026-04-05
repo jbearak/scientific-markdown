@@ -64,7 +64,7 @@ jobs:
         uses: ./.github/actions/setup
       - name: Build extension
         run: bun run package
-      - name: Validate extension package
+      - name: Validate VSIX contents
         run: |
           shopt -s nullglob
           vsix_files=( *.vsix )
@@ -72,16 +72,33 @@ jobs:
             echo "ERROR: No .vsix package produced"
             exit 1
           fi
-          for vsix in "${vsix_files[@]}"; do
-            ls -la "$vsix"
-            unzip -l "$vsix"
+          vsix="${vsix_files[0]}"
+          ls -la "$vsix"
+
+          # Verify required bundled files are present and non-trivial
+          for f in extension/out/extension.js extension/out/server.js; do
+            size=$(unzip -l "$vsix" "$f" 2>/dev/null | awk '/-----/{getline; print $1}')
+            if [ -z "$size" ] || [ "$size" -lt 1000 ]; then
+              echo "ERROR: $f missing or too small (${size:-0} bytes)"
+              exit 1
+            fi
+            echo "OK: $f ($size bytes)"
           done
-      - name: Validate extension manifest
-        run: |
+
+          # Verify node_modules did NOT leak into the VSIX
+          if unzip -l "$vsix" | grep -q 'extension/node_modules/'; then
+            echo "ERROR: node_modules leaked into VSIX"
+            unzip -l "$vsix" | grep 'extension/node_modules/' | head -5
+            exit 1
+          fi
+          echo "OK: no node_modules in VSIX"
+
+          # Verify manifest
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             if (!pkg.engines?.vscode) throw new Error('Missing VS Code engine');
+            if (pkg.bundledDependencies) throw new Error('bundledDependencies should not exist (deps are esbuild-inlined)');
             console.log('Extension:', pkg.displayName);
             console.log('Version:', pkg.version);
             console.log('Publisher:', pkg.publisher);
