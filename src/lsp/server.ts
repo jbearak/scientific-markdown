@@ -704,7 +704,7 @@ async function validateEmbedDirectives(doc: TextDocument): Promise<void> {
 				// Validate file exists
 				const absPath = path.resolve(docDir, directive.path);
 				const ext = directive.path.toLowerCase().replace(/^.*\./, '.');
-				const supportedExts = new Set(['.csv', '.tsv', '.xlsx', '.md']);
+				const supportedExts = new Set(['.csv', '.tsv', '.xlsx', '.md', '.dta']);
 
 				if (!supportedExts.has(ext)) {
 					diagnostics.push({

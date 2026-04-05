@@ -1,36 +1,19 @@
-# Source files (keep only compiled output)
+# Source files (keep compiled output)
 src/**
 
-# Build artifacts
+# Local/test artifacts
 .vscode-test/**
-test-*.md
-test-*.js
-test-*.js.map
+test/**
+tests/**
 out/**/*.test.js
 out/test-*.js
 out/__mocks__/**
 .*.bun-build
-bin/**
+dist/**
 
-# Dependencies are required at runtime in packaged extension
-# Do NOT exclude node_modules/** — runtime deps are imported from out/*.js
-.venv/**
-venv/**
-.pytest_cache/**
-.hypothesis/**
-
-# Git
+# Git and editor metadata
 .git/**
 .gitignore
-
-# Documentation (keep README, LICENSE, CHANGELOG)
-AGENTS.md
-ARCHITECTURE.md
-IMPLEMENTATION_SUMMARY.md
-MANUAL_TEST_*.md
-TABLE_REFLOW_IMPLEMENTATION.md
-
-# Config files
 .kiro/**
 .claude/**
 .vscode/**
@@ -42,19 +25,25 @@ jsconfig.json
 tslint.json
 out/**/*.map
 
-# Misc
+# Docs not needed in package
+AGENTS.md
+ARCHITECTURE.md
+IMPLEMENTATION_SUMMARY.md
+MANUAL_TEST_*.md
+TABLE_REFLOW_IMPLEMENTATION.md
+CLAUDE.md
+docs/**
+
+# Misc repo files not needed in extension package
 *.vsix
 *.docx
 example.qmd
 bun.lock
 setup.sh
+scripts/**
 revised_temp/**
 full_draft_temp/**
 *_temp/**
-dist/**
-docs/**
-CLAUDE.md
-media/**/*.test.ts
-scripts/**
-test/**
-tests/**
+.tmp/**
+
+# Keep runtime node_modules; do not exclude them

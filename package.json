@@ -794,7 +794,7 @@
     "word:dirty": "bun scripts/dirty-flag-diagnose.ts",
     "clean": "rm -rf out/",
     "rebuild": "bun run clean && bun run compile",
-    "package": "bun run rebuild && bunx vsce package --no-dependencies",
+    "package": "bun run rebuild && bunx vsce package",
     "build:binary": "bun scripts/build-binary.ts binary",
     "build:current": "bun scripts/build-binary.ts current",
     "install-local": "bun run package && code --install-extension manuscript-markdown-$(node -p \"require('./package.json').version\").vsix --force"
@@ -808,6 +808,17 @@
     "tslint": "^5.14.0",
     "typescript": "^5.9.3"
   },
+  "bundledDependencies": [
+    "@e965/xlsx",
+    "@jbearak/dta-parser",
+    "citeproc",
+    "fast-xml-parser",
+    "jszip",
+    "markdown-it",
+    "vscode-languageclient",
+    "vscode-languageserver",
+    "vscode-languageserver-textdocument"
+  ],
   "private": true,
   "dependencies": {
     "@jbearak/dta-parser": "github:jbearak/dta-parser#v0.1.1",

@@ -37,6 +37,12 @@ bun install
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
+# Step 1b: Normalize dependency metadata for VS Code packaging
+echo "Normalizing package metadata for VSIX packaging..."
+npm install
+echo -e "${GREEN}✓ npm metadata normalized${NC}"
+echo ""
+
 # Step 2: Compile TypeScript
 echo "Compiling TypeScript..."
 bun run compile
@@ -45,7 +51,7 @@ echo ""
 
 # Step 3: Package the VSIX
 echo "Packaging extension..."
-bunx vsce package
+bun run package
 echo -e "${GREEN}✓ VSIX package built${NC}"
 echo ""
 
