@@ -333,6 +333,11 @@ const parserOptions = {
   preserveOrder: true,
   trimValues: false,
   parseTagValue: false,
+  processEntities: {
+    enabled: true,
+    maxTotalExpansions: 10000,
+    maxExpandedLength: 1000000,
+  },
 };
 
 function escapeHtmlAttr(s: string): string {
