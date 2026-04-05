@@ -26,6 +26,7 @@ jobs:
             source:
               - 'package.json'
               - 'bun.lock'
+              - 'esbuild.mjs'
               - 'tsconfig*.json'
               - 'src/**'
               - 'scripts/**'
@@ -35,6 +36,7 @@ jobs:
               - 'src/**'
               - 'package.json'
               - 'bun.lock'
+              - 'esbuild.mjs'
               - 'scripts/build-binary.ts'
 
   verify:
