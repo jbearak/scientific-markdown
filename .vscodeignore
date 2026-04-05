@@ -37,6 +37,7 @@ docs/**
 # Misc repo files not needed in extension package
 *.vsix
 *.docx
+sample.png
 example.qmd
 bun.lock
 esbuild.mjs

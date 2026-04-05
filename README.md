@@ -32,7 +32,7 @@ Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/item
 
 The [sample file](sample.md) demonstrates citations, math, callouts, code blocks, comments, and track changes.
 
-![left: a VS Code window with an editor and preview tab showing side-by-side; right: same document in Word](sample.png)
+![left: a VS Code window with an editor and preview tab showing side-by-side; right: same document in Word](https://raw.githubusercontent.com/jbearak/manuscript-markdown/refs/tags/1.0.1/sample.png)
 
 ### CLI
 
