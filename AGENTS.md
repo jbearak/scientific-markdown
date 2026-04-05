@@ -17,6 +17,13 @@ LSP: `src/lsp/server.ts` (language server — diagnostics, completions)
 
 Per-module invariants live as comments in the corresponding source files.
 
+## Build system
+
+- Bun is the sole package manager — there is no `package-lock.json`.
+- Extension is bundled with esbuild (`esbuild.mjs`), not tsc. Two entry points: `src/extension.ts` → `out/extension.js`, `src/lsp/server.ts` → `out/server.js`. All runtime dependencies are inlined; `vsce package` runs with `--no-dependencies`.
+- tsc is still used for type-checking (`bun run typecheck`) via `tsconfig.json`, but does not emit.
+- Static assets (CSL styles/locales) are copied to `out/` by the `copy-csl` script.
+
 ## Quick commands
 
 - `bun install` — install dependencies

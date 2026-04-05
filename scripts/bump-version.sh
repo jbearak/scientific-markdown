@@ -85,14 +85,16 @@ if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Update version using npm
-npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version
+# Update version in package.json (no npm dependency)
+node -e "
+  const fs = require('fs');
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  pkg.version = '$NEW_VERSION';
+  fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+"
 
 # Git operations
 git add package.json
-if [ -f package-lock.json ]; then
-    git add package-lock.json
-fi
 git commit -m "chore: bump version to $NEW_VERSION"
 git tag -a "$TAG" -m "Version $NEW_VERSION"
 
