@@ -1429,8 +1429,8 @@ describe('Embed preview document resolution', () => {
 
   it('prefers state.env.currentDocument over a stale manuscriptDocumentPath fallback', () => {
     const resolver = makeEmbedResolver({
-      '/right/data.csv': 'Name,Age\\nAlice,30',
-      '/wrong/data.csv': 'Name,Age\\nBob,25',
+      '/right/data.csv': 'Name,Age\nAlice,30',
+      '/wrong/data.csv': 'Name,Age\nBob,25',
     });
     const html = renderWithEmbedSetup(
       '<!-- embed: data.csv -->',
@@ -1445,7 +1445,7 @@ describe('Embed preview document resolution', () => {
 
   it('uses manuscriptGetDocumentPath to resolve embed paths', () => {
     const resolver = makeEmbedResolver({
-      '/dynamic/data.csv': 'Name,Age\\nCarol,40',
+      '/dynamic/data.csv': 'Name,Age\nCarol,40',
     });
     const html = renderWithEmbedSetup(
       '<!-- embed: data.csv -->',
@@ -1460,8 +1460,8 @@ describe('Embed preview document resolution', () => {
 
   it('prefers manuscriptDocumentPath over manuscriptGetDocumentPath once set', () => {
     const resolver = makeEmbedResolver({
-      '/cached/data.csv': 'Name,Age\\nDana,35',
-      '/dynamic/data.csv': 'Name,Age\\nEvan,28',
+      '/cached/data.csv': 'Name,Age\nDana,35',
+      '/dynamic/data.csv': 'Name,Age\nEvan,28',
     });
     const html = renderWithEmbedSetup(
       '<!-- embed: data.csv -->',
