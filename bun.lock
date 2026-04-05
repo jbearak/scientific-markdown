@@ -6,6 +6,7 @@
       "name": "mdmarkup",
       "dependencies": {
         "@e965/xlsx": "^0.20.3",
+        "@jbearak/dta-parser": "github:jbearak/dta-parser#v0.1.1",
         "citeproc": "^2.4.63",
         "fast-xml-parser": "^5.3.5",
         "jszip": "^3.10.1",
@@ -31,6 +32,8 @@
     "@babel/helper-validator-identifier": ["@babel/helper-validator-identifier@7.28.5", "", {}, "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q=="],
 
     "@e965/xlsx": ["@e965/xlsx@0.20.3", "", { "bin": { "xlsx": "bin/xlsx.njs" } }, "sha512-703RN/3OdsRD5mtse2HBX7Um7xwaP9tlswEG6svOtjqokXoX7rJdQj7DyabD2I+xk22RgaIIU+R6BHgkpZGB/w=="],
+
+    "@jbearak/dta-parser": ["@jbearak/dta-parser@github:jbearak/dta-parser#4b1cdfa", {}, "jbearak-dta-parser-4b1cdfa", "sha512-Gg20fvqJt786+s3a+kCZaPrnP5nYMdWQus+ZkPKn6nayTniqwCATt9dULOtHWNhG60p29TQIkvcPr7rI7u/7jQ=="],
 
     "@types/linkify-it": ["@types/linkify-it@5.0.0", "", {}, "sha512-sVDA58zAw4eWAffKOaQH5/5j3XeayukzDk+ewSsnv3p4yJEZHCCzMDiZM8e0OUrRvmpGZ85jf4yDHkHsgBNr9Q=="],
 
