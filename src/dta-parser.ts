@@ -7,22 +7,23 @@
 // synchronous.
 // -----------------------------------------------------------
 
-import { parse_metadata } from './dta-parser-lib/header';
-import { parse_legacy_metadata } from './dta-parser-lib/legacy-header';
-import { read_rows_from_buffer } from './dta-parser-lib/data-reader';
-import { build_gso_index, resolve_strl } from './dta-parser-lib/strl-reader';
-import { parse_value_labels } from './dta-parser-lib/value-labels';
-import { apply_display_format } from './dta-parser-lib/display-format';
 import {
+  apply_display_format,
+  build_gso_index,
+  is_legacy_format,
   is_missing_value_object,
   missing_type_to_label_key,
-} from './dta-parser-lib/missing-values';
-import { is_legacy_format } from './dta-parser-lib/types';
+  parse_legacy_metadata,
+  parse_metadata,
+  parse_value_labels,
+  read_rows_from_buffer,
+  resolve_strl,
+} from '@jbearak/dta-parser';
 import type {
   DtaMetadata,
   VariableInfo,
   RowCell,
-} from './dta-parser-lib/types';
+} from '@jbearak/dta-parser';
 import type { EmbedDirective } from './embed-preprocess';
 
 const DEFAULT_MAX_DTA_FILE_SIZE = 10_485_760; // 10 MB
