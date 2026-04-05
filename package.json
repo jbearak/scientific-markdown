@@ -794,7 +794,7 @@
     "word:dirty": "bun scripts/dirty-flag-diagnose.ts",
     "clean": "rm -rf out/",
     "rebuild": "bun run clean && bun run compile",
-    "package": "bun run rebuild && bunx vsce package",
+    "package": "bun run rebuild && npm install --no-package-lock && bunx vsce package",
     "build:binary": "bun scripts/build-binary.ts binary",
     "build:current": "bun scripts/build-binary.ts current",
     "install-local": "bun run package && code --install-extension manuscript-markdown-$(node -p \"require('./package.json').version\").vsix --force"
