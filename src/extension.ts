@@ -1016,7 +1016,7 @@ function startLanguageClient(context: vscode.ExtensionContext): void {
 	if (languageClient) {
 		return;
 	}
-	const serverModule = context.asAbsolutePath(path.join('out', 'lsp', 'server.js'));
+	const serverModule = context.asAbsolutePath(path.join('out', 'server.js'));
 	const serverOptions: ServerOptions = {
 		run: { module: serverModule, transport: TransportKind.ipc },
 		debug: {

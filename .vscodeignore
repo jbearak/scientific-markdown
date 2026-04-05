@@ -39,6 +39,7 @@ docs/**
 *.docx
 example.qmd
 bun.lock
+esbuild.mjs
 setup.sh
 scripts/**
 revised_temp/**
@@ -46,4 +47,5 @@ full_draft_temp/**
 *_temp/**
 .tmp/**
 
-# Keep runtime node_modules; do not exclude them
+# Dependencies are bundled by esbuild into out/; exclude raw node_modules
+node_modules/**
