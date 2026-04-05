@@ -1,9 +1,45 @@
 import { describe, it, expect } from 'bun:test';
 import * as fc from 'fast-check';
+import MarkdownIt from 'markdown-it';
+import { manuscriptMarkdownPlugin } from './manuscript-markdown-plugin';
+import type { EmbedResolver } from '../embed-preprocess';
 import { VALID_COLOR_IDS, setDefaultHighlightColor, getDefaultHighlightColor } from '../highlight-colors';
 import { escapeHtml, stripHtmlTags, hasNoSpecialSyntax, renderWithPlugin, SIMPLE_CRITIC_TYPES } from '../test-helpers';
 import * as fs from 'fs';
 import * as path from 'path';
+
+function makeEmbedResolver(files: Record<string, string>): EmbedResolver {
+  return {
+    readFile(absolutePath: string): Uint8Array | null {
+      const content = files[absolutePath];
+      if (content === undefined) return null;
+      return new TextEncoder().encode(content);
+    },
+    resolveRelative(basePath: string, relativePath: string): string {
+      const baseDir = basePath.replace(/\/[^/]*$/, '');
+      return baseDir + '/' + relativePath;
+    },
+  };
+}
+
+function renderWithEmbedSetup(
+  input: string,
+  resolver: EmbedResolver,
+  env?: Record<string, unknown>,
+  documentPath?: string,
+  getDocumentPath?: (src: string) => string | undefined,
+): string {
+  const md = new MarkdownIt({ html: true });
+  (md as any).manuscriptEmbedResolver = resolver;
+  if (documentPath) {
+    (md as any).manuscriptDocumentPath = documentPath;
+  }
+  if (getDocumentPath) {
+    (md as any).manuscriptGetDocumentPath = getDocumentPath;
+  }
+  md.use(manuscriptMarkdownPlugin);
+  return md.render(input, env);
+}
 
 describe('Manuscript Markdown Plugin Property Tests', () => {
   describe('GFM alerts', () => {
@@ -1373,5 +1409,69 @@ describe('Grid table preview', () => {
     expect(html).toContain('<table>');
     expect(html).toContain('A');
     expect(html).toContain('D');
+  });
+});
+
+describe('Embed preview document resolution', () => {
+  it('uses state.env.currentDocument to resolve embed paths', () => {
+    const resolver = makeEmbedResolver({
+      '/doc/data.csv': 'Name,Age\nAlice,30',
+    });
+    const html = renderWithEmbedSetup(
+      '<!-- embed: data.csv -->',
+      resolver,
+      { currentDocument: { fsPath: '/doc/file.md' } },
+    );
+
+    expect(html).toContain('<table');
+    expect(html).toContain('Alice');
+  });
+
+  it('prefers state.env.currentDocument over a stale manuscriptDocumentPath fallback', () => {
+    const resolver = makeEmbedResolver({
+      '/right/data.csv': 'Name,Age\nAlice,30',
+      '/wrong/data.csv': 'Name,Age\nBob,25',
+    });
+    const html = renderWithEmbedSetup(
+      '<!-- embed: data.csv -->',
+      resolver,
+      { currentDocument: { fsPath: '/right/file.md' } },
+      '/wrong/file.md',
+    );
+
+    expect(html).toContain('Alice');
+    expect(html).not.toContain('Bob');
+  });
+
+  it('uses manuscriptGetDocumentPath to resolve embed paths', () => {
+    const resolver = makeEmbedResolver({
+      '/dynamic/data.csv': 'Name,Age\nCarol,40',
+    });
+    const html = renderWithEmbedSetup(
+      '<!-- embed: data.csv -->',
+      resolver,
+      undefined,
+      undefined,
+      (src) => src.includes('embed') ? '/dynamic/file.md' : undefined,
+    );
+
+    expect(html).toContain('Carol');
+  });
+
+  it('prefers manuscriptDocumentPath over manuscriptGetDocumentPath once set', () => {
+    const resolver = makeEmbedResolver({
+      '/cached/data.csv': 'Name,Age\nDana,35',
+      '/dynamic/data.csv': 'Name,Age\nEvan,28',
+    });
+    const html = renderWithEmbedSetup(
+      '<!-- embed: data.csv -->',
+      resolver,
+      undefined,
+      '/cached/file.md',
+      () => '/dynamic/file.md',
+    );
+
+    expect(html).toContain('Dana');
+    expect(html).not.toContain('Evan');
   });
 });

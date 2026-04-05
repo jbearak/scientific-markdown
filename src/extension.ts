@@ -928,13 +928,12 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeActiveTextEditor(editor => {
 			if (editor) { updateHighlightDecorations(editor); }
 			// Update embed resolver document path for preview preprocessing.
-			// NOTE: This tracks the active editor, not the previewed document,
-			// because VS Code's markdown preview API does not expose which document
-			// is being rendered. In split-view scenarios where the active editor
-			// differs from the preview target, relative embed paths may resolve
-			// against the wrong base directory.
 			if (editor?.document.languageId === 'markdown' && previewMd) {
+				const hadPath = !!previewMd.manuscriptDocumentPath;
 				previewMd.manuscriptDocumentPath = editor.document.uri.fsPath;
+				if (!hadPath) {
+					vscode.commands.executeCommand('markdown.preview.refresh');
+				}
 			}
 		}),
 		vscode.workspace.onDidChangeTextDocument(e => {
@@ -989,11 +988,48 @@ export function activate(context: vscode.ExtensionContext) {
 				.getConfiguration('manuscriptMarkdown')
 				.get<number>('embedDtaMaxFileSize', 10_485_760);
 			md.manuscriptEmbedOptions = { maxDtaFileSize };
+
 			// Set initial document path from active editor
 			const activeDoc = vscode.window.activeTextEditor?.document;
 			if (activeDoc?.languageId === 'markdown') {
 				md.manuscriptDocumentPath = activeDoc.uri.fsPath;
 			}
+			
+			// Inject document path resolver for preview preprocessing.
+			// VS Code's markdown preview API does not expose the rendered document URI 
+			// directly to plugins during initialization, nor is it available on `env` 
+			// during the parse phase. We match the source text against all open documents.
+			md.manuscriptGetDocumentPath = (src: string): string | undefined => {
+				const active = vscode.window.activeTextEditor?.document;
+				if (active?.languageId === 'markdown' && active.getText() === src) {
+					return active.uri.fsPath;
+				}
+				for (const doc of vscode.workspace.textDocuments) {
+					if (doc.languageId === 'markdown' && doc.getText() === src) {
+						return doc.uri.fsPath;
+					}
+				}
+				return undefined;
+			};
+
+			// Window-restore race: when VS Code restores both the editor and
+			// preview simultaneously, activeTextEditor may not be available
+			// when extendMarkdownIt runs, and onDidChangeActiveTextEditor may
+			// not fire if the editor is simply restored (not switched).
+			// Schedule deferred retries to set the path and refresh.
+			if (!md.manuscriptDocumentPath) {
+				const tryResolve = () => {
+					if (md.manuscriptDocumentPath || previewMd !== md) return;
+					const ed = vscode.window.activeTextEditor;
+					if (ed?.document.languageId === 'markdown') {
+						md.manuscriptDocumentPath = ed.document.uri.fsPath;
+						vscode.commands.executeCommand('markdown.preview.refresh');
+					}
+				};
+				setTimeout(tryResolve, 250);
+				setTimeout(tryResolve, 1000);
+			}
+
 			return md.use(manuscriptMarkdownPlugin);
 		}
 	};

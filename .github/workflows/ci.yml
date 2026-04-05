@@ -77,7 +77,7 @@ jobs:
 
           # Verify required bundled files are present and non-trivial
           for f in extension/out/extension.js extension/out/server.js; do
-            size=$(unzip -l "$vsix" "$f" 2>/dev/null | awk '/-----/{getline; print $1}')
+            size=$(unzip -l "$vsix" "$f" 2>/dev/null | awk -v target="$f" '$NF == target { print $1; exit }')
             if [ -z "$size" ] || [ "$size" -lt 1000 ]; then
               echo "ERROR: $f missing or too small (${size:-0} bytes)"
               exit 1
