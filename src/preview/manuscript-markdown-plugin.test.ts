@@ -1451,11 +1451,27 @@ describe('Embed preview document resolution', () => {
       '<!-- embed: data.csv -->',
       resolver,
       undefined,
-      '/wrong/file.md',
+      undefined,
       (src) => src.includes('embed') ? '/dynamic/file.md' : undefined,
     );
 
     expect(html).toContain('Carol');
-    expect(html).not.toContain('Bob');
+  });
+
+  it('prefers manuscriptDocumentPath over manuscriptGetDocumentPath once set', () => {
+    const resolver = makeEmbedResolver({
+      '/cached/data.csv': 'Name,Age\\nDana,35',
+      '/dynamic/data.csv': 'Name,Age\\nEvan,28',
+    });
+    const html = renderWithEmbedSetup(
+      '<!-- embed: data.csv -->',
+      resolver,
+      undefined,
+      '/cached/file.md',
+      () => '/dynamic/file.md',
+    );
+
+    expect(html).toContain('Dana');
+    expect(html).not.toContain('Evan');
   });
 });

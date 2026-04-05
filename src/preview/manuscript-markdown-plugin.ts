@@ -993,6 +993,13 @@ function getEmbedDocumentPath(md: MarkdownIt, state: any): string | undefined {
     return currentDocument;
   }
 
+  // Once a preview instance has latched onto a document, keep using that base
+  // path instead of re-scanning open editors by source text on every render.
+  const fallbackPath = (md as any).manuscriptDocumentPath;
+  if (typeof fallbackPath === 'string' && fallbackPath.length > 0) {
+    return fallbackPath;
+  }
+
   const getDocPath = (md as any).manuscriptGetDocumentPath;
   if (typeof getDocPath === 'function') {
     const resolved = getDocPath(state.src);
@@ -1001,8 +1008,7 @@ function getEmbedDocumentPath(md: MarkdownIt, state: any): string | undefined {
     }
   }
 
-  const fallbackPath = (md as any).manuscriptDocumentPath;
-  return typeof fallbackPath === 'string' && fallbackPath.length > 0 ? fallbackPath : undefined;
+  return undefined;
 }
 
 /**
