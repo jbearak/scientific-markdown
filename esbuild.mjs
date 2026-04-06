@@ -9,6 +9,7 @@ const shared = {
   target: 'node20',
   format: 'cjs',
   sourcemap: true,
+  minify: true,
   outdir: 'out',
   // Keep __dirname/__filename as runtime values (esbuild default for
   // platform:'node'), which csl-loader.ts relies on to find bundled
