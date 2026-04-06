@@ -8,7 +8,8 @@ tests/**
 out/**/*.test.js
 out/test-*.js
 out/__mocks__/**
-.*.bun-build
+**/.*.bun-build
+*.bun-build
 dist/**
 
 # Git and editor metadata
@@ -38,15 +39,22 @@ docs/**
 *.vsix
 *.docx
 sample.png
+sample.bib
+sample.md
+.DS_Store
 example.qmd
 bun.lock
 esbuild.mjs
+eslint.config.mjs
 setup.sh
 scripts/**
 revised_temp/**
 full_draft_temp/**
 *_temp/**
 .tmp/**
+
+# Native binaries (built separately, not needed in extension package)
+bin/**
 
 # Dependencies are bundled by esbuild into out/; exclude raw node_modules
 node_modules/**
