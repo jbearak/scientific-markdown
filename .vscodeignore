@@ -48,5 +48,8 @@ full_draft_temp/**
 *_temp/**
 .tmp/**
 
+# Native binaries (built separately, not needed in extension package)
+bin/**
+
 # Dependencies are bundled by esbuild into out/; exclude raw node_modules
 node_modules/**
