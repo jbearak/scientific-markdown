@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["out/**", "*.js", "*.mjs", "**/*.test.ts"],
+    ignores: ["out/**", "**/*.js", "**/*.mjs", "**/*.test.ts"],
   },
   {
     files: ["src/**/*.ts"],
