@@ -3,7 +3,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { ommlToLatex } from './omml';
 import { resolveMarkdownColor } from './highlight-colors';
 import { Frontmatter, NotesMode, serializeFrontmatter, noteTypeFromNumber, parseColWidths, type CustomStyleDef } from './frontmatter';
-import { gfmAlertTitle, parseGfmAlertMarker, toGfmAlertMarker, type GfmAlertType } from './gfm';
+import { parseCalloutMarker, toCalloutMarker, calloutTitle, type CalloutType } from './callouts';
 import { emuToPixels, isSupportedImageFormat, resolveImageFilename } from './image-utils';
 import { parseBibtex, mergeBibtex } from './bibtex-parser';
 import { customStyleId } from './md-to-docx';
@@ -101,20 +101,33 @@ export async function extractBlockquotePostContentBlankLineMapping(data: Uint8Ar
   }
 }
 
-const ALERT_STYLE_TO_TYPE: Record<string, GfmAlertType> = {
+const ALERT_STYLE_TO_TYPE: Record<string, CalloutType> = {
   githubnote: 'note',
   githubtip: 'tip',
   githubimportant: 'important',
   githubwarning: 'warning',
   githubcaution: 'caution',
+  panelinfo: 'info',
+  panelerror: 'error',
+  panelsuccess: 'success',
+  panelnote: 'note',
 };
 
-const ALERT_GLYPH_TO_TYPE: Record<string, GfmAlertType> = {
+/** Map from style ID → panel-syntax form. Used during import to remember that
+ *  a paragraph came from `~~~panel` syntax when no MANUSCRIPT_CALLOUT_SYNTAX_
+ *  custom property is present. */
+const PANEL_STYLE_IDS = new Set(['panelinfo', 'panelerror', 'panelsuccess', 'panelnote']);
+
+const ALERT_GLYPH_TO_TYPE: Record<string, CalloutType> = {
   '※': 'note',
   '◈': 'tip',
   '‼': 'important',
   '▲': 'warning',
   '⛒': 'caution',
+  'ℹ': 'info',
+  '✖': 'error',
+  '✔': 'success',
+  '🗒': 'note',
 };
 
 export interface CommentReply {
@@ -258,7 +271,7 @@ export type ContentItem =
       isTitle?: boolean;       // true if Word "Title" paragraph style
       blockquoteLevel?: number; // 1+ if Quote/IntenseQuote paragraph style
       listContinuation?: ListContinuation; // parent list context for blockquote continuation blocks
-      alertType?: GfmAlertType; // present for GitHub alert styles
+      alertType?: CalloutType; // present for GitHub alert / Confluence panel styles
       isCodeBlock?: boolean;   // true if Word "Code Block" paragraph style
       blockquoteGroupIndex?: number; // sequential group index from md→docx gap metadata
       customStyleName?: string;      // user-defined custom style name (from MsCustomXxx pStyle)
@@ -540,11 +553,16 @@ export function parseBlockquoteLevel(pPrChildren: any[]): number | undefined {
   return undefined;
 }
 
-export function parseAlertType(pPrChildren: any[]): GfmAlertType | undefined {
+export function parseAlertType(pPrChildren: any[]): CalloutType | undefined {
   const pStyleElement = pPrChildren.find(child => child['w:pStyle'] !== undefined);
   if (!pStyleElement) return undefined;
   const val = getAttr(pStyleElement, 'val').toLowerCase();
   return ALERT_STYLE_TO_TYPE[val];
+}
+
+/** Is this Word paragraph-style ID one of the Confluence panel styles (as opposed to a GitHub alert style)? */
+export function isPanelStyleId(styleId: string): boolean {
+  return PANEL_STYLE_IDS.has(styleId.toLowerCase());
 }
 
 export function parseCodeBlockStyle(pPrChildren: any[]): boolean {
@@ -1065,6 +1083,33 @@ async function extractChunkedCustomProp(data: Uint8Array | JSZip, propPrefix: st
   if (parts.length === 0) return null;
   parts.sort((a, b) => a.index - b.index);
   return parts.map(p => p.value).join('');
+}
+
+/** Read the MANUSCRIPT_CALLOUT_SYNTAX_ custom prop: set of blockquote group
+ *  indices whose original markdown used `~~~panel` fence syntax. */
+export async function extractCalloutSyntaxGroups(data: Uint8Array | JSZip): Promise<Set<number> | null> {
+  const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_CALLOUT_SYNTAX');
+  if (!json) return null;
+  try {
+    const arr = JSON.parse(json);
+    if (!Array.isArray(arr)) return null;
+    return new Set(arr.filter((n: unknown) => typeof n === 'number') as number[]);
+  } catch {
+    return null;
+  }
+}
+
+/** Read the MANUSCRIPT_CALLOUT_STYLE_ custom prop: frontmatter `callout-style`
+ *  value, used to restore Confluence-vs-GitHub `note` disambiguation. */
+export async function extractCalloutStyle(data: Uint8Array | JSZip): Promise<'github' | 'confluence' | null> {
+  const json = await extractChunkedCustomProp(data, 'MANUSCRIPT_CALLOUT_STYLE');
+  if (!json) return null;
+  try {
+    const value = JSON.parse(json);
+    return value === 'github' || value === 'confluence' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function extractBlockquoteAlertStyleMapping(data: Uint8Array | JSZip): Promise<Map<number, boolean> | null> {
@@ -2556,7 +2601,7 @@ export async function extractDocumentContent(
           let isTitle = false;
           let blockquoteLevel: number | undefined;
           let blockquoteIndentUnitTwips: 240 | 720 | undefined;
-          let alertType: GfmAlertType | undefined;
+          let alertType: CalloutType | undefined;
           let isCodeBlock = false;
           let customStyle: string | undefined;
           let paragraphLeftIndentTwips: number | undefined;
@@ -3857,13 +3902,13 @@ function escapeRegExp(value: string): string {
 // colon-suffixed, and bare-title variants.  The plain-glyph-title pattern
 // is checked first (most common roundtrip case) so we don't rely on the
 // more permissive regexes for the happy path.
-function stripAlertLeadPrefix(text: string, alertType: GfmAlertType): string {
+function stripAlertLeadPrefix(text: string, alertType: CalloutType): string {
   // 1. Standard [!TYPE] marker (e.g. from a re-imported markdown)
-  const marker = parseGfmAlertMarker(text.trimStart());
+  const marker = parseCalloutMarker(text.trimStart());
   if (marker?.type === alertType) {
     return text.replace(/^\s*\[![A-Za-z]+\](?:[ \t]+|\\?\n\s*|$)/, '');
   }
-  const title = gfmAlertTitle(alertType);
+  const title = calloutTitle(alertType);
   const glyphAlternation = Object.keys(ALERT_GLYPH_TO_TYPE).map(escapeRegExp).join('|');
 
   // 2. Exact generateParagraph format: `GLYPH ' ' Title` followed by
@@ -4269,7 +4314,7 @@ function inferListContinuationForBlockquote(
   return fallback;
 }
 
-function alertGlyphForType(alertType: GfmAlertType): string | undefined {
+function alertGlyphForType(alertType: CalloutType): string | undefined {
   for (const [glyph, type] of Object.entries(ALERT_GLYPH_TO_TYPE)) {
     if (type === alertType) return glyph;
   }
@@ -4279,11 +4324,11 @@ function alertGlyphForType(alertType: GfmAlertType): string | undefined {
 function paragraphStartsWithExportedAlertLead(
   content: ContentItem[],
   paraIndex: number,
-  alertType: GfmAlertType,
+  alertType: CalloutType,
 ): boolean {
   const glyph = alertGlyphForType(alertType);
   if (!glyph) return false;
-  const expectedLead = glyph + ' ' + gfmAlertTitle(alertType) + ' ';
+  const expectedLead = glyph + ' ' + calloutTitle(alertType) + ' ';
   let sawLead = false;
 
   for (let i = paraIndex + 1; i < content.length; i++) {
@@ -4426,7 +4471,7 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
   let nextBlockquoteGroupIndex = 0;
   let currentBlockquoteGroupIndex: number | undefined;
   let lastBlockquoteLevel: number | undefined;
-  let lastBlockquoteType: GfmAlertType | 'plain' | undefined;
+  let lastBlockquoteType: CalloutType | 'plain' | undefined;
 
   for (let i = 0; i < content.length; i++) {
     const item = content[i];
@@ -4467,7 +4512,7 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
           item.blockquoteLevel = inferred.blockquoteLevel;
           item.listContinuation = inferred.listContinuation;
         }
-        const currentType: GfmAlertType | 'plain' = item.alertType || 'plain';
+        const currentType: CalloutType | 'plain' = item.alertType || 'plain';
         const startsNewGroup = currentBlockquoteGroupIndex === undefined
           || item.blockquoteLevel !== lastBlockquoteLevel
           || currentType !== lastBlockquoteType
@@ -4514,7 +4559,7 @@ function annotateStructuralParagraphMetadata(content: ContentItem[]): {
 export function buildMarkdown(
   content: ContentItem[],
   comments: Map<string, Comment>,
-  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; imageFormatMapping?: Map<string, string> | null; noteImageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; gridSourceColWidthsMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null; embedDirectiveMapping?: Map<string, string> | null },
+  options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; pipeTableMaxLineWidth?: number; gridTableMaxLineWidth?: number; commentIdMapping?: Map<string, string> | null; notes?: { map: Map<string, { label: string; body: ContentItem[]; noteKind: 'footnote' | 'endnote' }>; assignedLabels: Map<string, string> }; codeBlockLangs?: Map<string, string> | null; blockquoteGaps?: Map<number, number> | null; blockquotePreContentBlankLines?: Map<number, number> | null; blockquotePostContentBlankLines?: Map<number, number> | null; blockquoteAlertInlineByGroup?: Map<number, boolean> | null; calloutSyntaxGroups?: Set<number> | null; imageFormatMapping?: Map<string, string> | null; noteImageFormatMapping?: Map<string, string> | null; tableFormatMapping?: Map<string, string> | null; pipeTableAlignedMapping?: Map<string, string> | null; gridSourceColWidthsMapping?: Map<string, string> | null; tableFontSizeMapping?: Map<string, string> | null; tableFontMapping?: Map<string, string> | null; tableColWidthsMapping?: Map<string, string> | null; landscapeTableIndices?: Set<number> | null; portraitTableIndices?: Set<number> | null; listIndent?: 'tab' | 'spaces'; htmlCommentGaps?: Map<number, number> | null; htmlCommentAfterGaps?: Map<number, number> | null; sentinelGaps?: Record<string, number> | null; embedDirectiveMapping?: Map<string, string> | null },
 ): string {
   const mergedContent = mergeConsecutiveRuns(content);
 
@@ -4667,7 +4712,7 @@ export function buildMarkdown(
   const orderedListCounters = new Map<number, number>(); // per-level counters for ordered list items
   let codeBlockGroupIndex = 0;
   let lastAlertParagraphKey: string | undefined;
-  let pendingAlertPrefixStrip: GfmAlertType | undefined;
+  let pendingAlertPrefixStrip: CalloutType | undefined;
   // Fallback for imports without alert-style metadata: stripAlertLeadPrefix can
   // consume a hard line break after the glyph/title lead (e.g. "※ Note" + w:br).
   // If we've already emitted an inline marker (`> [!TYPE] `), rewrite it to the
@@ -4678,7 +4723,7 @@ export function buildMarkdown(
   let pendingPostContentGroupIndex: number | undefined;
   // Track previous blockquote type to detect group boundaries when gap
   // metadata is absent (plain↔alert or alert↔different-alert transitions).
-  let lastBlockquoteAlertType: GfmAlertType | 'plain' | undefined;
+  let lastBlockquoteAlertType: CalloutType | 'plain' | undefined;
   let lastBlockquoteLevel: number | undefined;
   const codeBlockLangs = options?.codeBlockLangs;
   const blockquoteGaps = options?.blockquoteGaps;
@@ -4946,7 +4991,7 @@ export function buildMarkdown(
           // Detect blockquote group boundary by type transition when gap
           // metadata is absent: plain↔alert or alert↔different-alert at
           // the same (or different) nesting level.
-          const currentType: GfmAlertType | 'plain' = item.alertType || 'plain';
+          const currentType: CalloutType | 'plain' = item.alertType || 'plain';
           if (currentType !== lastBlockquoteAlertType || item.blockquoteLevel !== lastBlockquoteLevel) {
             // Type or level changed — this is a group boundary.  Use gap
             // metadata if available, otherwise default double-newline.
@@ -5123,7 +5168,7 @@ export function buildMarkdown(
             && item.blockquoteGroupIndex !== prevBlockquoteGroupIndex;
           const isAlertStart = lastAlertParagraphKey !== alertKey || groupChanged;
           if (isAlertStart) {
-            output.push(toGfmAlertMarker(item.alertType));
+            output.push(toCalloutMarker(item.alertType));
             const isInlineMarker = options?.blockquoteAlertInlineByGroup?.get(item.blockquoteGroupIndex ?? -1) === true;
             if (isInlineMarker) {
               output.push(' ');
@@ -5628,7 +5673,64 @@ export function buildMarkdown(
     }
   }
 
-  return output.join('');
+  const joined = output.join('');
+  return options?.calloutSyntaxGroups && options.calloutSyntaxGroups.size > 0
+    ? rewritePanelSyntaxGroups(joined, options.calloutSyntaxGroups)
+    : joined;
+}
+
+/** After buildMarkdown emits blockquote form `> [!TYPE]\n> body`, rewrite each
+ *  blockquote group whose 0-indexed ordinal is in `panelGroups` to the
+ *  Confluence-style `~~~panel type=X` fence form. */
+function rewritePanelSyntaxGroups(markdown: string, panelGroups: Set<number>): string {
+  const lines = markdown.split('\n');
+  const out: string[] = [];
+  const alertMarkerRe = /^ {0,3}>\s*\[!([A-Za-z]+)\](?:[ \t]+(.*))?$/;
+  let groupOrdinal = -1; // 0-indexed; increments at each blockquote-group boundary
+  let prevWasBlockquote = false;
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const isBlockquoteLine = /^ {0,3}>/.test(line);
+    // New blockquote group: transitioning from non-blockquote to blockquote.
+    if (isBlockquoteLine && !prevWasBlockquote) {
+      groupOrdinal++;
+    }
+    // Check if this line starts an alert whose group should be rewritten.
+    const alertMatch = line.match(alertMarkerRe);
+    if (isBlockquoteLine && alertMatch && panelGroups.has(groupOrdinal)) {
+      const rawType = alertMatch[1].toLowerCase();
+      const inlineRest = alertMatch[2] ?? '';
+      // Collect all subsequent blockquote lines belonging to this group (same
+      // contiguous `>` run). Any blank line or non-blockquote line ends it.
+      const bodyLines: string[] = [];
+      if (inlineRest.trim().length > 0) bodyLines.push(inlineRest);
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        if (!/^ {0,3}>/.test(nextLine)) break;
+        // Strip the leading `> ` (or `>`) prefix.
+        const stripped = nextLine.replace(/^ {0,3}>\s?/, '');
+        // If a subsequent line starts a NEW alert marker within the same `>` run,
+        // that's a different group — stop.
+        if (alertMarkerRe.test(nextLine)) break;
+        bodyLines.push(stripped);
+        j++;
+      }
+      out.push('~~~panel type=' + rawType);
+      for (const bl of bodyLines) out.push(bl);
+      out.push('~~~');
+      prevWasBlockquote = j < lines.length && /^ {0,3}>/.test(lines[j]);
+      i = j;
+      continue;
+    }
+    out.push(line);
+    prevWasBlockquote = isBlockquoteLine;
+    i++;
+  }
+
+  return out.join('\n');
 }
 
 function formatOffsetString(offsetMinutes: number): string {
@@ -6097,7 +6199,7 @@ export async function convertDocx(
   options?: { tableIndent?: string; alwaysUseCommentIds?: boolean; imageFolder?: string; pipeTableMaxLineWidth?: number; pipeTableMaxLineWidthDefault?: number; gridTableMaxLineWidth?: number; gridTableMaxLineWidthDefault?: number; existingBibtex?: string; preferredBibliographyPath?: string },
 ): Promise<ConvertResult> {
   const zip = await loadZip(data);
-  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, gridSourceColWidthsMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides, embedDirectiveMapping] = await Promise.all([
+  const [comments, zoteroCitations, zoteroPrefs, author, commentIdMapping, footnoteIdMapping, footnoteCrossRefMapping, codeBlockLangMapping, threads, codeBlockStyling, blockquoteGapMapping, blockquotePreContentBlankLineMapping, blockquotePostContentBlankLineMapping, blockquoteAlertStyleMapping, calloutSyntaxGroups, extractedCalloutStyle, imageFormatMapping, noteImageFormatMapping, tableFormatMapping, pipeTableAlignedMapping, gridSourceColWidthsMapping, tableFontSizeMapping, tableFontMapping, tableColWidthsMapping, storedPipeTableMaxLineWidth, storedGridTableMaxLineWidth, storedListIndent, consecutiveReplyParaIds, storedFrontmatterBlankLines, htmlCommentGapMapping, bibKeyOrder, storedBibData, storedBibliographyPath, landscapeTableMapping, portraitTableMapping, portraitBreaks, explicitTableFontSize, storedFieldOrder, htmlCommentAfterGapMapping, sentinelGapMapping, defaultTableColWidths, storedCustomStyles, storedTableBorders, storedLineSpacing, storedParagraphIndent, storedBibHangingIndent, storedIndentOverrides, storedListIndentOverrides, embedDirectiveMapping] = await Promise.all([
     extractComments(zip),
     extractZoteroCitations(zip),
     extractZoteroPrefs(zip),
@@ -6112,6 +6214,8 @@ export async function convertDocx(
     extractBlockquotePreContentBlankLineMapping(zip),
     extractBlockquotePostContentBlankLineMapping(zip),
     extractBlockquoteAlertStyleMapping(zip),
+    extractCalloutSyntaxGroups(zip),
+    extractCalloutStyle(zip),
     extractImageFormatMapping(zip),
     extractNoteImageFormatMapping(zip),
     extractTableFormatMapping(zip),
@@ -6384,6 +6488,7 @@ export async function convertDocx(
     blockquotePreContentBlankLines: blockquotePreContentBlankLineMapping ?? derivedBlockquotePreContentBlankLines,
     blockquotePostContentBlankLines: blockquotePostContentBlankLineMapping ?? derivedBlockquotePostContentBlankLines,
     blockquoteAlertInlineByGroup: blockquoteAlertStyleMapping,
+    calloutSyntaxGroups,
     imageFormatMapping,
     noteImageFormatMapping,
     tableFormatMapping,
@@ -6504,6 +6609,9 @@ export async function convertDocx(
     const bhi = storedBibHangingIndent.toLowerCase();
     if (bhi === 'true') fm.bibliographyHangingIndent = true;
     else if (bhi === 'false') fm.bibliographyHangingIndent = false;
+  }
+  if (extractedCalloutStyle) {
+    fm.calloutStyle = extractedCalloutStyle;
   }
   const frontmatterStr = serializeFrontmatter(fm, storedFieldOrder ?? undefined);
   if (frontmatterStr) {

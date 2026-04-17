@@ -52,6 +52,32 @@ For GitHub-style typed callouts:
 > Critical information about risks or unexpected behavior.
 ```
 
+Confluence-style panels are also supported — useful when pasting content from a Confluence page:
+
+```markdown
+~~~panel type=info
+Highlight information in a coloured panel.
+~~~
+
+~~~panel type=success
+Add tips or confirmations.
+~~~
+
+~~~panel type=error
+Call out errors.
+~~~
+```
+
+Both syntaxes accept any of these type names: `note`, `tip`, `important`, `warning`, `caution`, `info`, `error`, `success`. The word `note` means something different in each vocabulary (blue in GitHub, purple in Confluence). To pick which interpretation applies, set the `callout-style` frontmatter field:
+
+```yaml
+---
+callout-style: confluence    # optional; defaults to "github"
+---
+```
+
+Under `callout-style: confluence`, `note` renders as the purple Confluence panel. Under the default `callout-style: github`, `note` renders as the blue GitHub alert.
+
 ### 5. Tables
 
 Create tables using standard Markdown syntax. For complex tables (merged cells), you can use HTML tables, which are fully supported and preserved during conversion.
