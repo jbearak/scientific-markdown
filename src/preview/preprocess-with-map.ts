@@ -13,6 +13,7 @@
 
 import { LineMap, type LineMapSegment } from './line-map';
 import { preprocessGridTables } from '../grid-table-preprocess';
+import { preprocessPanelFences } from '../panel-preprocess';
 import { wrapBareLatexEnvironments } from '../latex-env-preprocess';
 import { preprocessCriticMarkup } from '../critic-markup';
 
@@ -94,6 +95,13 @@ function buildMapFromLines(origLines: string[], outLines: string[]): LineMap {
 /** Preprocess grid tables and return the output with a line map. */
 export function preprocessGridTablesWithMap(src: string): { output: string; map: LineMap } {
   const output = preprocessGridTables(src);
+  if (output === src) return { output, map: LineMap.identity() };
+  return { output, map: buildMapFromLines(src.split('\n'), output.split('\n')) };
+}
+
+/** Preprocess Confluence-style panel fences and return the output with a line map. */
+export function preprocessPanelFencesWithMap(src: string): { output: string; map: LineMap } {
+  const output = preprocessPanelFences(src);
   if (output === src) return { output, map: LineMap.identity() };
   return { output, map: buildMapFromLines(src.split('\n'), output.split('\n')) };
 }

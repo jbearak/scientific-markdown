@@ -4,13 +4,15 @@ import { downloadStyle } from './csl-loader';
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 import { parseBibtex, BibtexEntry } from './bibtex-parser';
-import { parseFrontmatter, maskFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type CustomStyleDef, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
-import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
+import { parseFrontmatter, maskFrontmatter, Frontmatter, noteTypeToNumber, type ColorScheme, type CalloutStyle, type CustomStyleDef, parseColWidths, expandColWidths, colWidthsToPct } from './frontmatter';
+import { alertColorsByScheme, getDefaultColorScheme, CONFLUENCE_NOTE_COLOR } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
-import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
+import { isGfmDisallowedRawHtml, parseTaskListMarker, gfmAlertTitle } from './gfm';
+import { parseCalloutMarker, alertStyleForType, alertGlyphForType, type CalloutType } from './callouts';
 import { scanOrientationDirectives } from './orientation-scan';
 import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
+import { preprocessPanelFences, PANEL_PLACEHOLDER_PREFIX, decodePanelPlaceholder } from './panel-preprocess';
 import { preprocessEmbedsTracked } from './embed-preprocess';
 import { LATENT_STYLES } from './latent-styles';
 import { extractHtmlTables, type HtmlTableRow, type HtmlTableRun, type HtmlTableMeta } from './html-table-parser';
@@ -84,7 +86,8 @@ export interface MdToken {
   listContinuation?: ListContinuation; // parent list context for blockquote continuation blocks
   startNumber?: number;     // for ordered lists: first item's start number (when ≠ 1)
   taskChecked?: boolean;    // for GFM task list items
-  alertType?: GfmAlertType; // for GFM alerts in blockquotes
+  alertType?: CalloutType; // for GFM alerts / Confluence panels in blockquotes
+  calloutPanelSyntax?: true; // flag: originated from ~~~panel syntax (for round-trip preservation)
   alertLead?: boolean;      // first blockquote paragraph carrying alert header
   alertFirst?: boolean;     // first paragraph in an alert block (for spacing)
   alertLast?: boolean;      // last paragraph in an alert block (for spacing)
@@ -199,14 +202,6 @@ const COLOR_TO_OOXML: Record<string, string> = {
   'dark-yellow': 'darkYellow', 'gray-50': 'darkGray', 'gray-25': 'lightGray',
 };
 
-const ALERT_STYLE_BY_TYPE: Record<GfmAlertType, string> = {
-  note: 'GitHubNote',
-  tip: 'GitHubTip',
-  important: 'GitHubImportant',
-  warning: 'GitHubWarning',
-  caution: 'GitHubCaution',
-};
-
 // Map user-facing blockquote style option to OOXML styleId
 const BLOCKQUOTE_STYLE_ID: Record<string, string> = {
   'GitHub': 'GitHubBlockquote',
@@ -214,13 +209,19 @@ const BLOCKQUOTE_STYLE_ID: Record<string, string> = {
   'IntenseQuote': 'IntenseQuote',
 };
 
-const ALERT_GLYPH_BY_TYPE: Record<GfmAlertType, string> = {
-  note: '※',
-  tip: '◈',
-  important: '‼',
-  warning: '▲',
-  caution: '⛒',
-};
+/** Does this Word style use the GitHub-style 240-twip indent unit?
+ *  Covers GitHubBlockquote, the five GitHubX alert styles, and the four PanelX
+ *  panel styles — all share the same border/indent geometry. */
+function usesGitHubBlockquoteIndent(styleId: string): boolean {
+  return styleId.startsWith('GitHub') || styleId.startsWith('Panel');
+}
+
+/** Resolve the border/accent color for an alert type, honoring the
+ *  confluence `note` disambiguation (purple under callout-style: confluence). */
+function alertColorForType(type: CalloutType, calloutStyle: CalloutStyle, colorMap: Record<CalloutType, string>): string {
+  if (type === 'note' && calloutStyle === 'confluence') return CONFLUENCE_NOTE_COLOR;
+  return colorMap[type];
+}
 
 import { PARA_PLACEHOLDER, preprocessCriticMarkup, findMatchingClose } from './critic-markup';
 import { wrapBareLatexEnvironments } from './latex-env-preprocess';
@@ -829,6 +830,10 @@ export function extractFootnoteDefinitions(markdown: string): { cleaned: string;
 function annotateBlockquoteBoundaries(tokens: MdToken[]): void {
   let i = 0;
   while (i < tokens.length) {
+    // A group is anchored on a blockquote-typed token (the alertLead title row
+    // or plain blockquote paragraph). Non-blockquote tokens in the middle of a
+    // group (list items, code blocks, tables) carry the same alertType but
+    // don't anchor a new group by themselves.
     if (tokens[i].type !== 'blockquote') {
       i++;
       continue;
@@ -837,9 +842,16 @@ function annotateBlockquoteBoundaries(tokens: MdToken[]): void {
     const level = tokens[i].level;
     const start = i;
     i++;
-    // Continue the group while the next token has the same alertType/level
-    // AND is not an alertLead (which signals a new [!TYPE] marker group).
-    while (i < tokens.length && tokens[i].type === 'blockquote' && tokens[i].alertType === alertType && tokens[i].level === level && !tokens[i].alertLead) {
+    // Walk any subsequent tokens sharing the same alertType/level (regardless of
+    // type) until we hit a new alertLead marker, a level change, or a non-group
+    // token. This allows lists/code blocks/tables inside an alert to remain in
+    // the group so the top/bottom spacer paragraphs sit at the outer boundary.
+    while (
+      i < tokens.length &&
+      tokens[i].alertType === alertType &&
+      tokens[i].level === level &&
+      !tokens[i].alertLead
+    ) {
       i++;
     }
     tokens[start].alertFirst = true;
@@ -1143,6 +1155,20 @@ export function blockquotePostContentBlankLineProps(gaps: Map<number, number>): 
   return chunkCustomProps('MANUSCRIPT_BLOCKQUOTE_POST_CONTENT_BLANK_LINES_', JSON.stringify(mapping));
 }
 
+/** Write per-blockquote-group syntax form (alert vs panel) for round-trip.
+ *  Only panel-syntax groups are stored — alert-syntax is the default on import. */
+export function calloutSyntaxProps(panelGroups: Set<number>): CustomPropEntry[] {
+  if (panelGroups.size === 0) return [];
+  return chunkCustomProps('MANUSCRIPT_CALLOUT_SYNTAX_', JSON.stringify([...panelGroups].sort((a, b) => a - b)));
+}
+
+/** Persist the frontmatter `callout-style` value so `note` disambiguation
+ *  round-trips correctly. Skips emission for the default (`github`). */
+export function calloutStyleProps(calloutStyle: CalloutStyle | undefined): CustomPropEntry[] {
+  if (!calloutStyle || calloutStyle === 'github') return [];
+  return chunkCustomProps('MANUSCRIPT_CALLOUT_STYLE_', JSON.stringify(calloutStyle));
+}
+
 export function noteImageFormatProps(imageFormats: Map<string, string>): CustomPropEntry[] {
   if (imageFormats.size === 0) return [];
   const mapping: Record<string, string> = {};
@@ -1267,7 +1293,8 @@ export function parseMd(markdown: string, warnings?: string[], breaks = false, o
   // lazy continuation behavior (where a non-`>` line can be absorbed into a
   // preceding blockquote paragraph). For roundtrip fidelity we treat a missing
   // `>` as a hard blockquote boundary
-  const gridProcessed = preprocessGridTables(markdown);
+  const panelProcessed = preprocessPanelFences(markdown);
+  const gridProcessed = preprocessGridTables(panelProcessed);
   const deLazified = deLazifyBlockquotes(gridProcessed);
   const wrapped = wrapBareLatexEnvironments(deLazified);
   const processed = preprocessCriticMarkup(wrapped);
@@ -1739,11 +1766,11 @@ function deLazifyBlockquotes(markdown: string): string {
 }
 
 
-function stripLeadingAlertMarker(runs: MdRun[]): { alertType?: GfmAlertType; runs: MdRun[] } {
+function stripLeadingAlertMarker(runs: MdRun[]): { alertType?: CalloutType; runs: MdRun[] } {
   const firstTextIdx = runs.findIndex(run => run.type === 'text' && run.text.length > 0);
   if (firstTextIdx === -1) return { runs };
   const firstText = runs[firstTextIdx];
-  const parsed = parseGfmAlertMarker(firstText.text);
+  const parsed = parseCalloutMarker(firstText.text);
   if (!parsed) return { runs };
   const nextRuns = [...runs];
   if (parsed.rest.length > 0) {
@@ -1774,7 +1801,7 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
     }
     const markerIndices: number[] = [];
     for (let r = 0; r < token.runs.length; r++) {
-      if (token.runs[r].type === 'text' && parseGfmAlertMarker(token.runs[r].text)) {
+      if (token.runs[r].type === 'text' && parseCalloutMarker(token.runs[r].text)) {
         markerIndices.push(r);
       }
     }
@@ -1804,7 +1831,7 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
   }
 
   // Find all tokens whose runs start with an alert marker
-  interface Hit { idx: number; type: GfmAlertType; runs: MdRun[] }
+  interface Hit { idx: number; type: CalloutType; runs: MdRun[] }
   const hits: Hit[] = [];
   for (let idx = 0; idx < expanded.length; idx++) {
     if (expanded[idx].type === 'blockquote' || expanded[idx].runs.length === 0) continue;
@@ -1814,17 +1841,23 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
     }
   }
 
+  // Plain blockquote (no [!TYPE] marker): retain the pre-existing flattening
+  // behavior — everything becomes a bordered blockquote paragraph, including
+  // list items, to preserve the left-border framing around the group.
   if (hits.length === 0) {
     return expanded.map(t => ({ ...t, type: 'blockquote' as const, level: t.type === 'blockquote' ? t.level : level }));
   }
 
-  // Assign each group of tokens (from one marker to the next) its alert type.
-  // Tokens before the first marker become a plain blockquote.
+  // Inside an alert group, only paragraphs become `type: 'blockquote'`. Other
+  // block types (list_item, code_block, table, heading, hr) keep their native
+  // type so lists render as lists, code blocks as code blocks, tables as
+  // tables. They still carry `alertType` so they sit between the alertFirst /
+  // alertLast spacer paragraphs that frame the group.
   const result: MdToken[] = [];
   for (let idx = 0; idx < expanded.length; idx++) {
     const t = expanded[idx];
     const hit = hits.find(h => h.idx === idx);
-    let currentAlert: GfmAlertType | undefined;
+    let currentAlert: CalloutType | undefined;
     let isLead = false;
     if (hit) {
       currentAlert = hit.type;
@@ -1834,13 +1867,28 @@ function annotateBlockquoteAlert(tokens: MdToken[], level: number): MdToken[] {
         if (hits[h].idx < idx) { currentAlert = hits[h].type; break; }
       }
     }
-    result.push({
-      ...t,
-      type: 'blockquote' as const,
-      level: t.type === 'blockquote' ? t.level : level,
-      ...(currentAlert && t.type !== 'blockquote' ? { alertType: currentAlert } : {}),
-      ...(isLead ? { alertLead: true, runs: hit!.runs } : {}),
-    });
+    if (t.type === 'paragraph') {
+      result.push({
+        ...t,
+        type: 'blockquote' as const,
+        level,
+        ...(currentAlert ? { alertType: currentAlert } : {}),
+        ...(isLead ? { alertLead: true, runs: hit!.runs } : {}),
+      });
+    } else if (t.type === 'blockquote') {
+      result.push({
+        ...t,
+        ...(currentAlert ? { alertType: currentAlert } : {}),
+      });
+    } else {
+      // list_item / code_block / table / heading / hr: preserve native type
+      // and native `level` (which means different things per type — e.g. list
+      // nesting level, not blockquote nesting).
+      result.push({
+        ...t,
+        ...(currentAlert ? { alertType: currentAlert } : {}),
+      });
+    }
   }
   return result;
 }
@@ -1960,6 +2008,72 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
       
       case 'html_block': {
         const htmlContent = token.content || '';
+        if (htmlContent.trim().startsWith(PANEL_PLACEHOLDER_PREFIX)) {
+          const data = decodePanelPlaceholder(htmlContent.trim());
+          if (data) {
+            const panelType = data.type as CalloutType;
+            const bqLevel = blockquoteLevel + 1;
+            // Recursively parse the body as top-level markdown. This re-runs
+            // the preprocessor chain (idempotent for no-op cases) so nested
+            // grid tables / CriticMarkup / embeds inside the panel work.
+            const bodyTokens = parseMd(data.body, warnings);
+            // Tag every resulting token as a blockquote-level alert. The first
+            // non-blockquote token carries the lead flag (synthetic title row);
+            // existing child blockquote tokens keep their own level.
+            // Lift the body into the alert group while preserving native block
+            // types for lists, code blocks, tables, etc. Only the synthetic
+            // lead token (first paragraph) becomes type='blockquote' so the
+            // generateParagraph blockquote case emits the alert title row.
+            let leadAssigned = false;
+            for (const t of bodyTokens) {
+              const isSyntheticLead = !leadAssigned && t.type === 'paragraph';
+              if (t.type === 'paragraph') {
+                result.push({
+                  ...t,
+                  type: 'blockquote',
+                  level: bqLevel,
+                  alertType: panelType,
+                  calloutPanelSyntax: true,
+                  ...(isSyntheticLead ? { alertLead: true } : {}),
+                });
+              } else if (t.type === 'blockquote') {
+                result.push({
+                  ...t,
+                  level: t.level ?? bqLevel,
+                  alertType: panelType,
+                  calloutPanelSyntax: true,
+                });
+              } else {
+                // list_item / code_block / table / heading / hr
+                result.push({
+                  ...t,
+                  level: t.level ?? bqLevel,
+                  alertType: panelType,
+                  calloutPanelSyntax: true,
+                });
+              }
+              if (isSyntheticLead) leadAssigned = true;
+            }
+            // If the panel body had no paragraph to carry the lead, the alert
+            // title row won't render. Insert a synthetic empty lead paragraph
+            // so the title still appears at the top of the group.
+            if (!leadAssigned && bodyTokens.length > 0) {
+              const firstIdx = result.length - bodyTokens.length;
+              const syntheticLead: MdToken = {
+                type: 'blockquote',
+                level: bqLevel,
+                alertType: panelType,
+                alertLead: true,
+                calloutPanelSyntax: true,
+                runs: [],
+              };
+              result.splice(firstIdx, 0, syntheticLead);
+            }
+            i++;
+            break;
+          }
+          // Malformed placeholder: fall through to generic HTML comment handling.
+        }
         if (htmlContent.trim().startsWith(GRID_TABLE_PLACEHOLDER_PREFIX)) {
           const b64 = htmlContent.trim().slice(GRID_TABLE_PLACEHOLDER_PREFIX.length, -4); // strip prefix and ' -->'
           try {
@@ -2784,6 +2898,8 @@ export interface DocxGenState {
   blockquotePreContentBlankLines: Map<number, number>; // blank lines before group when previous non-blank source line is non-blockquote content
   blockquotePostContentBlankLines: Map<number, number>; // blank lines after group when next non-blank line is non-blockquote content
   blockquoteAlertMarkerInlineByGroup: Map<number, boolean>; // alert group index -> inline marker style
+  calloutStyle: CalloutStyle; // frontmatter callout-style (default 'github')
+  panelSyntaxGroups: Set<number>; // blockquote group indices whose source form was ~~~panel (not > [!X])
   // Image tracking
   imageRelationships: Map<string, { rId: string; mediaPath: string }>; // dedup key (absPath + '\0' + syntax) -> { rId, media path }
   imageMediaPaths: Map<string, string>; // absPath -> mediaPath (for binary dedup across syntaxes)
@@ -3400,8 +3516,10 @@ export function applyFontOverridesToTemplate(
   return xml;
 }
 
-/** Map from alert style ID → GfmAlertType for template color patching. */
-const ALERT_STYLE_ID_TO_TYPE: Record<string, GfmAlertType> = {
+/** Map from alert style ID → CalloutType for template color patching.
+ *  Only GitHub-style alerts are patched — Confluence panel styles use fixed
+ *  Confluence colors and are not affected by the color-scheme frontmatter. */
+const ALERT_STYLE_ID_TO_TYPE: Record<string, CalloutType> = {
   'GitHubNote': 'note',
   'GitHubTip': 'tip',
   'GitHubImportant': 'important',
@@ -3852,6 +3970,10 @@ export function stylesXml(overrides?: FontOverrides, codeBlockConfig?: CodeBlock
     githubAlertStyle('GitHubImportant', 'GitHub Important', alertColors.important) +
     githubAlertStyle('GitHubWarning', 'GitHub Warning', alertColors.warning) +
     githubAlertStyle('GitHubCaution', 'GitHub Caution', alertColors.caution) +
+    githubAlertStyle('PanelInfo', 'Panel Info', alertColors.info) +
+    githubAlertStyle('PanelError', 'Panel Error', alertColors.error) +
+    githubAlertStyle('PanelSuccess', 'Panel Success', alertColors.success) +
+    githubAlertStyle('PanelNote', 'Panel Note', CONFLUENCE_NOTE_COLOR) +
     '<w:style w:type="character" w:customStyle="1" w:styleId="CodeChar">\n' +
     '<w:name w:val="Code Char"/>\n' +
     codeCharRpr +
@@ -5111,8 +5233,10 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
       break;
     case 'blockquote': {
       const bqStyleOpt = options?.blockquoteStyle ?? 'GitHub';
-      const bqStyle = token.alertType ? ALERT_STYLE_BY_TYPE[token.alertType] : (BLOCKQUOTE_STYLE_ID[bqStyleOpt] ?? bqStyleOpt);
-      const bqIndentUnit = bqStyle.startsWith('GitHub') ? GITHUB_BLOCKQUOTE_INDENT : 720;
+      const bqStyle = token.alertType
+        ? alertStyleForType(token.alertType, state.calloutStyle)
+        : (BLOCKQUOTE_STYLE_ID[bqStyleOpt] ?? bqStyleOpt);
+      const bqIndentUnit = usesGitHubBlockquoteIndent(bqStyle) ? GITHUB_BLOCKQUOTE_INDENT : 720;
       const bqLevel = token.level || 1;
       const continuationIndent = token.listContinuation ? 720 * token.listContinuation.level : 0;
       const bqLeftIndent = bqIndentUnit * bqLevel + continuationIndent;
@@ -5192,7 +5316,7 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
     ? generateRun(token.taskChecked ? '☒ ' : '☐ ', '')
     : '';
   const alertPrefix = token.type === 'blockquote' && token.alertType && token.alertLead
-    ? generateRun(ALERT_GLYPH_BY_TYPE[token.alertType] + ' ' + gfmAlertTitle(token.alertType), '<w:rPr><w:b/><w:color w:val="' + alertColorMap[token.alertType] + '"/></w:rPr>')
+    ? generateRun(alertGlyphForType(token.alertType, state.calloutStyle) + ' ' + gfmAlertTitle(token.alertType as any), '<w:rPr><w:b/><w:color w:val="' + alertColorForType(token.alertType, state.calloutStyle, alertColorMap) + '"/></w:rPr>')
       + '<w:r><w:br/></w:r>'
     : '';
 
@@ -5202,10 +5326,14 @@ export function generateParagraph(token: MdToken, state: DocxGenState, options?:
   // inline left border (no pStyle, so the converter ignores them).  The left
   // rule extends symmetrically above/below content regardless of font size.
   if (token.type === 'blockquote' && (token.alertFirst || token.alertLast)) {
-    const borderColor = token.alertType ? alertColorMap[token.alertType] : GITHUB_BLOCKQUOTE_BORDER_COLOR;
+    const borderColor = token.alertType
+      ? alertColorForType(token.alertType, state.calloutStyle, alertColorMap)
+      : GITHUB_BLOCKQUOTE_BORDER_COLOR;
     const spacerBqStyleOpt = options?.blockquoteStyle ?? 'GitHub';
-    const spacerBqStyle = token.alertType ? ALERT_STYLE_BY_TYPE[token.alertType] : (BLOCKQUOTE_STYLE_ID[spacerBqStyleOpt] ?? spacerBqStyleOpt);
-    const spacerIndentUnit = spacerBqStyle.startsWith('GitHub') ? GITHUB_BLOCKQUOTE_INDENT : 720;
+    const spacerBqStyle = token.alertType
+      ? alertStyleForType(token.alertType, state.calloutStyle)
+      : (BLOCKQUOTE_STYLE_ID[spacerBqStyleOpt] ?? spacerBqStyleOpt);
+    const spacerIndentUnit = usesGitHubBlockquoteIndent(spacerBqStyle) ? GITHUB_BLOCKQUOTE_INDENT : 720;
     const spacerContinuationIndent = token.listContinuation ? 720 * token.listContinuation.level : 0;
     const spacerLeftIndent = spacerIndentUnit * (token.level || 1) + spacerContinuationIndent;
     const borderPPr = '<w:pBdr><w:left w:val="single" w:sz="' + GITHUB_BLOCKQUOTE_BORDER_SIZE + '" w:space="' + GITHUB_BLOCKQUOTE_BORDER_SPACE + '" w:color="' + borderColor + '"/></w:pBdr>';
@@ -6078,6 +6206,14 @@ export async function convertMdToDocx(
   const blockquotePostContentBlankLines = computeBlockquotePostContentBlankLines(bodyWithoutFootnotes);
   const blockquoteAlertMarkerInlineByGroup = computeBlockquoteAlertMarkerInlineByGroup(bodyWithoutFootnotes);
   annotateBlockquoteGroupIndices(tokens);
+  // Collect blockquote group indices that originated from `~~~panel` syntax
+  // so they round-trip as panel fences via the MANUSCRIPT_CALLOUT_SYNTAX_ prop.
+  const panelSyntaxGroups = new Set<number>();
+  for (const tok of tokens) {
+    if (tok.calloutPanelSyntax && tok.blockquoteGroupIndex !== undefined) {
+      panelSyntaxGroups.add(tok.blockquoteGroupIndex);
+    }
+  }
   const { beforeGaps: htmlCommentGaps, afterGaps: htmlCommentAfterGaps } = annotateHtmlCommentIndices(tokens);
 
   // Parse BibTeX if provided
@@ -6235,6 +6371,8 @@ export async function convertMdToDocx(
     blockquotePreContentBlankLines,
     blockquotePostContentBlankLines,
     blockquoteAlertMarkerInlineByGroup,
+    calloutStyle: frontmatter.calloutStyle ?? 'github',
+    panelSyntaxGroups,
     imageRelationships: new Map(),
     imageMediaPaths: new Map(),
     imageBinaries: new Map(),
@@ -6624,6 +6762,8 @@ export async function convertMdToDocx(
   customProps.push(...blockquotePreContentBlankLineProps(state.blockquotePreContentBlankLines));
   customProps.push(...blockquotePostContentBlankLineProps(state.blockquotePostContentBlankLines));
   customProps.push(...blockquoteAlertMarkerStyleProps(state.blockquoteAlertMarkerInlineByGroup));
+  customProps.push(...calloutSyntaxProps(state.panelSyntaxGroups));
+  customProps.push(...calloutStyleProps(frontmatter.calloutStyle));
   customProps.push(...imageFormatProps(state.imageFormats));
   customProps.push(...noteImageFormatProps(state.noteImageFormats));
   customProps.push(...tableFormatProps(state.tableFormats));
