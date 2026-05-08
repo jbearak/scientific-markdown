@@ -20,6 +20,25 @@ export function pixelsToEmu(px: number): number {
   return Math.round(px * EMU_PER_PIXEL);
 }
 
+export function parseImageDimension(value: string): number | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?|\.\d+)\s*(px|in|cm|mm|pt|pc)?$/i);
+  if (!match) return undefined;
+
+  const num = parseFloat(match[1]);
+  if (!isFinite(num) || num <= 0) return undefined;
+
+  const unit = (match[2] || 'px').toLowerCase();
+  switch (unit) {
+    case 'px': return Math.round(num);
+    case 'in': return Math.round(num * 96);
+    case 'cm': return Math.round(num * 96 / 2.54);
+    case 'mm': return Math.round(num * 96 / 25.4);
+    case 'pt': return Math.round(num * 96 / 72);
+    case 'pc': return Math.round(num * 96 / 6);
+    default: return undefined;
+  }
+}
+
 export function isSupportedImageFormat(ext: string): boolean {
   return SUPPORTED_IMAGE_EXTENSIONS.has(ext.toLowerCase());
 }
@@ -109,18 +128,13 @@ export function readImageDimensions(data: Uint8Array, format: string): { width: 
 }
 
 function parseUnit(value: string): number | null {
-  const num = parseFloat(value);
-  if (isNaN(num)) return null;
+  const parsed = parseImageDimension(value);
+  if (parsed !== undefined) return parsed;
 
-  if (value.endsWith('mm')) return num * 96 / 25.4;
-  if (value.endsWith('cm')) return num * 96 / 2.54;
-  if (value.endsWith('in')) return num * 96;
-  if (value.endsWith('pt')) return num * 96 / 72;
-  if (value.endsWith('pc')) return num * 96 / 6;
   // Reject relative/viewport-dependent units — caller falls back to viewBox
   if (value.endsWith('%') || value.endsWith('em') || value.endsWith('ex')) return null;
 
-  return num;
+  return null;
 }
 
 export function computeMissingDimension(
