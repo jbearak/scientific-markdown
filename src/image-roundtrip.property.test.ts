@@ -166,6 +166,49 @@ describe('image-roundtrip properties', () => {
     );
   });
 
+  // Feature: image-roundtrip, Property 5b: Image dimension unit parsing
+  it('P5b: image dimensions accept absolute units and convert them to pixels', () => {
+    const { parseMd } = require('./md-to-docx');
+
+    const cases = [
+      {
+        md: '![alt](test.png){width=2in height=5.08cm}',
+        width: 192,
+        height: 192,
+      },
+      {
+        md: '<img src="test.png" alt="alt" width="25.4mm" height="72pt">',
+        width: 96,
+        height: 96,
+      },
+      {
+        md: '<img src="test.png" alt="alt" width=6pc height=96px>',
+        width: 96,
+        height: 96,
+      },
+    ];
+
+    for (const c of cases) {
+      const tokens = parseMd(c.md);
+      const imgRun = tokens[0]?.runs?.find((r: any) => r.type === 'image');
+      expect(imgRun).toBeDefined();
+      expect(imgRun.imageWidth).toBe(c.width);
+      expect(imgRun.imageHeight).toBe(c.height);
+    }
+  });
+
+  // Feature: image-roundtrip, Property 5c: HTML image dimension attribute boundaries
+  it('P5c: HTML image dimensions ignore longer attribute names', () => {
+    const { parseMd } = require('./md-to-docx');
+    const md = '<img src="test.png" alt="alt" data-width="2in" width="96" data-height="5.08cm" height="48">';
+    const tokens = parseMd(md);
+    const imgRun = tokens[0]?.runs?.find((r: any) => r.type === 'image');
+
+    expect(imgRun).toBeDefined();
+    expect(imgRun.imageWidth).toBe(96);
+    expect(imgRun.imageHeight).toBe(48);
+  });
+
   // --- Roundtrip property tests (P2, P3, P4, P7, P8) ---
   // These require a real image file on disk for MD→DOCX conversion.
 

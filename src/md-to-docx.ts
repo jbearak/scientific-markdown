@@ -9,7 +9,7 @@ import { alertColorsByScheme, getDefaultColorScheme } from './alert-colors';
 import { ZoteroBiblData, zoteroStyleFullId } from './converter';
 import { isGfmDisallowedRawHtml, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from './gfm';
 import { scanOrientationDirectives } from './orientation-scan';
-import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS } from './image-utils';
+import { pixelsToEmu, isSupportedImageFormat, getImageContentType, readImageDimensions, computeMissingDimension, IMAGE_WARNINGS, parseImageDimension } from './image-utils';
 import { preprocessGridTables, GRID_TABLE_PLACEHOLDER_PREFIX, type GridTableData } from './grid-table-preprocess';
 import { preprocessEmbedsTracked } from './embed-preprocess';
 import { LATENT_STYLES } from './latent-styles';
@@ -20,6 +20,7 @@ export { extractHtmlTables } from './html-table-parser';
 // --- Orientation sentinel regexes (hoisted for cache-friendliness in the token loop) ---
 const ORIENTATION_OPEN_RE = /^<!--\s*(landscape|portrait)\s*-->$/i;
 const ORIENTATION_CLOSE_RE = /^<!--\s*\/(landscape|portrait)\s*-->$/i;
+const IMAGE_DIMENSION_ATTR_RE = '(\\d+(?:\\.\\d+)?|\\.\\d+)\\s*(px|in|cm|mm|pt|pc)?';
 
 // --- Implementation notes ---
 // - decodeHtmlEntities(): decode &amp; after other named entities to avoid over-decoding
@@ -2029,8 +2030,8 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
         } else if (/^<img\s/i.test(htmlContent.trim())) {
           const srcMatch = htmlContent.match(/src\s*=\s*["']([^"']+)["']/);
           const altMatch = htmlContent.match(/alt\s*=\s*["']([^"']*?)["']/);
-          const wMatch = htmlContent.match(/width\s*=\s*["']?(\d+)(?:px)?["']?(?=[\s\/>])/);
-          const hMatch = htmlContent.match(/height\s*=\s*["']?(\d+)(?:px)?["']?(?=[\s\/>])/);
+          const width = parseHtmlImageDimension(htmlContent, 'width');
+          const height = parseHtmlImageDimension(htmlContent, 'height');
           if (srcMatch) {
             result.push({
               type: 'paragraph',
@@ -2039,8 +2040,8 @@ function convertTokens(tokens: any[], listLevel = 0, blockquoteLevel = 0, warnin
                 text: '',
                 imageSrc: decodeHtmlEntities(srcMatch[1]),
                 imageAlt: altMatch ? decodeHtmlEntities(altMatch[1]) : '',
-                imageWidth: wMatch ? parseInt(wMatch[1], 10) : undefined,
-                imageHeight: hMatch ? parseInt(hMatch[1], 10) : undefined,
+                imageWidth: width,
+                imageHeight: height,
                 imageSyntax: 'html' as const,
               }]
             });
@@ -2205,16 +2206,16 @@ function processInlineChildren(tokens: any[]): MdRun[] {
         } else if (/^<img\s/i.test(html)) {
           const srcMatch = html.match(/src\s*=\s*["']([^"']+)["']/);
           const altMatch = html.match(/alt\s*=\s*["']([^"']*?)["']/);
-          const wMatch = html.match(/width\s*=\s*["']?(\d+)(?:px)?["']?(?=[\s\/>])/);
-          const hMatch = html.match(/height\s*=\s*["']?(\d+)(?:px)?["']?(?=[\s\/>])/);
+          const width = parseHtmlImageDimension(html, 'width');
+          const height = parseHtmlImageDimension(html, 'height');
           if (srcMatch) {
             runs.push({
               type: 'image',
               text: '',
               imageSrc: decodeHtmlEntities(srcMatch[1]),
               imageAlt: altMatch ? decodeHtmlEntities(altMatch[1]) : '',
-              imageWidth: wMatch ? parseInt(wMatch[1], 10) : undefined,
-              imageHeight: hMatch ? parseInt(hMatch[1], 10) : undefined,
+              imageWidth: width,
+              imageHeight: height,
               imageSyntax: 'html',
             });
           } else {
@@ -2400,10 +2401,8 @@ function processInlineChildren(tokens: any[]): MdRun[] {
           const attrMatch = nextToken.content.match(/^\{([^}]+)\}/);
           if (attrMatch) {
             const attrs = attrMatch[1];
-            const wm = attrs.match(/width=(\d+)/);
-            const hm = attrs.match(/height=(\d+)/);
-            if (wm) width = parseInt(wm[1], 10);
-            if (hm) height = parseInt(hm[1], 10);
+            width = parseMarkdownImageDimension(attrs, 'width');
+            height = parseMarkdownImageDimension(attrs, 'height');
             // Consume the attribute text (or remainder after it)
             const remainder = nextToken.content.slice(attrMatch[0].length);
             if (remainder) {
@@ -2616,6 +2615,20 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, '&');
+}
+
+function parseHtmlImageDimension(html: string, attrName: 'width' | 'height'): number | undefined {
+  const re = new RegExp('(?:^|\\s)' + attrName + '\\s*=\\s*["\\\']?' + IMAGE_DIMENSION_ATTR_RE + '["\\\']?(?=[\\s\\/>])', 'i');
+  const match = html.match(re);
+  if (!match) return undefined;
+  return parseImageDimension(match[1] + (match[2] || ''));
+}
+
+function parseMarkdownImageDimension(attrs: string, attrName: 'width' | 'height'): number | undefined {
+  const re = new RegExp('(?:^|\\s)' + attrName + '=' + IMAGE_DIMENSION_ATTR_RE + '(?=\\s|$)', 'i');
+  const match = attrs.match(re);
+  if (!match) return undefined;
+  return parseImageDimension(match[1] + (match[2] || ''));
 }
 
 // OOXML Generation Layer

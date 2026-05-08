@@ -671,7 +671,7 @@ Manuscript Markdown supports two syntaxes for images with optional dimension att
 ![alt text](folder/image.png){width=640 height=480}
 ```
 
-The curly-brace block after the image reference specifies dimensions in pixels. Both `width` and `height` are optional — when only one is provided, the other is computed from the image's intrinsic aspect ratio.
+The curly-brace block after the image reference specifies dimensions. Bare numbers and `px` are pixels; absolute units `in`, `cm`, `mm`, `pt`, and `pc` are converted at 96 px per inch. Both `width` and `height` are optional — when only one is provided, the other is computed from the image's intrinsic aspect ratio.
 
 ### HTML Image Syntax
 
@@ -679,7 +679,7 @@ The curly-brace block after the image reference specifies dimensions in pixels. 
 <img src="folder/image.png" alt="alt text" width="640" height="480">
 ```
 
-Standard HTML `<img>` tags are also supported, with `width` and `height` attributes in pixels.
+Standard HTML `<img>` tags are also supported, with `width` and `height` attributes using the same units as attribute syntax.
 
 ### Supported Formats
 
