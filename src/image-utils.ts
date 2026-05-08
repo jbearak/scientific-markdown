@@ -129,12 +129,7 @@ export function readImageDimensions(data: Uint8Array, format: string): { width: 
 
 function parseUnit(value: string): number | null {
   const parsed = parseImageDimension(value);
-  if (parsed !== undefined) return parsed;
-
-  // Reject relative/viewport-dependent units — caller falls back to viewBox
-  if (value.endsWith('%') || value.endsWith('em') || value.endsWith('ex')) return null;
-
-  return null;
+  return parsed !== undefined ? parsed : null;
 }
 
 export function computeMissingDimension(
