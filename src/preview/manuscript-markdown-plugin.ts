@@ -4,10 +4,12 @@ import type StateBlock from 'markdown-it/lib/rules_block/state_block.mjs';
 import { VALID_COLOR_IDS, getDefaultHighlightColor } from '../highlight-colors';
 import { PARA_PLACEHOLDER, findMatchingClose } from '../critic-markup';
 import { GRID_TABLE_PLACEHOLDER_PREFIX } from '../grid-table-preprocess';
-import { preprocessGridTablesWithMap, wrapBareLatexEnvironmentsWithMap, preprocessCriticMarkupWithMap } from './preprocess-with-map';
+import { preprocessGridTablesWithMap, preprocessPanelFencesWithMap, wrapBareLatexEnvironmentsWithMap, preprocessCriticMarkupWithMap } from './preprocess-with-map';
+import { PANEL_PLACEHOLDER_PREFIX, decodePanelPlaceholder } from '../panel-preprocess';
+import { parseCalloutMarker, calloutOcticonSvg, calloutTitle, type CalloutType } from '../callouts';
 import { LineMap } from './line-map';
 import { preprocessEmbedsWithMap, type EmbedResolver, type EmbedOptions } from '../embed-preprocess';
-import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker, parseGfmAlertMarker, gfmAlertTitle, type GfmAlertType } from '../gfm';
+import { isGfmDisallowedRawHtml, escapeHtmlText, parseTaskListMarker } from '../gfm';
 import { parseFrontmatter, type ColorScheme, type CustomStyleDef } from '../frontmatter';
 import { getDefaultColorScheme } from '../alert-colors';
 
@@ -20,27 +22,7 @@ function escapeHtmlAttr(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function alertOcticonSvg(type: GfmAlertType): string {
-  const common = 'class="octicon markdown-alert-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"';
-  switch (type) {
-    case 'note':
-      return '<svg ' + common + '><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>';
-    case 'tip':
-      return '<svg ' + common + '><path d="M8 1.5a4.5 4.5 0 0 0-2.106 8.478.75.75 0 0 1 .356.643v.629h3.5v-.63a.75.75 0 0 1 .356-.642A4.5 4.5 0 0 0 8 1.5ZM2 6a6 6 0 1 1 11.693 1.897 6.5 6.5 0 0 1-2.044 2.213c-.015.01-.024.024-.024.04v.85A1.5 1.5 0 0 1 10.125 12h-4.25a1.5 1.5 0 0 1-1.5-1.5v-.85c0-.015-.009-.03-.024-.04A6.501 6.501 0 0 1 2 6Zm3.75 7.5a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Z"/></svg>';
-    case 'important':
-      return '<svg ' + common + '><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>';
-    case 'warning':
-      return '<svg ' + common + '><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>';
-    case 'caution':
-      return '<svg ' + common + '><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>';
-    default: {
-      const _exhaustive: never = type;
-      return '';
-    }
-  }
-}
-
-interface AlertHit { inlineIdx: number; paraOpenIdx: number; type: GfmAlertType; rest: string }
+interface AlertHit { inlineIdx: number; paraOpenIdx: number; type: CalloutType; rest: string }
 
 function alertBlockquoteRule(state: any): void {
   const tokens = state.tokens;
@@ -68,7 +50,7 @@ function alertBlockquoteRule(state: any): void {
       // Find all child indices that are alert markers
       const markerChildIndices: number[] = [];
       for (let c = 0; c < children.length; c++) {
-        if (children[c].type === 'text' && parseGfmAlertMarker(children[c].content)) {
+        if (children[c].type === 'text' && parseCalloutMarker(children[c].content)) {
           markerChildIndices.push(c);
         }
       }
@@ -136,7 +118,7 @@ function alertBlockquoteRule(state: any): void {
       if (tokens[j].type !== 'inline' || !tokens[j].children) continue;
       const firstText = tokens[j].children.find((child: any) => child.type === 'text' && child.content.length > 0);
       if (!firstText) continue;
-      const parsed = parseGfmAlertMarker(firstText.content);
+      const parsed = parseCalloutMarker(firstText.content);
       if (!parsed) continue;
       let paraOpenIdx = j - 1;
       while (paraOpenIdx > i && tokens[paraOpenIdx].type !== 'paragraph_open') paraOpenIdx--;
@@ -157,7 +139,7 @@ function alertBlockquoteRule(state: any): void {
       tokens[i].meta = {
         ...(tokens[i].meta || {}),
         gfmAlertType: hits[0].type,
-        gfmAlertTitle: gfmAlertTitle(hits[0].type),
+        gfmAlertTitle: calloutTitle(hits[0].type),
       };
       i = closeIdx + 1;
       continue;
@@ -191,7 +173,7 @@ function alertBlockquoteRule(state: any): void {
       const bqOpen = new state.Token('blockquote_open', 'blockquote', 1);
       bqOpen.markup = '>';
       bqOpen.map = tokens[i].map;
-      bqOpen.meta = { gfmAlertType: hits[h].type, gfmAlertTitle: gfmAlertTitle(hits[h].type) };
+      bqOpen.meta = { gfmAlertType: hits[h].type, gfmAlertTitle: calloutTitle(hits[h].type) };
       rebuilt.push(bqOpen);
       for (let k = startOffset; k < endOffset; k++) {
         rebuilt.push(inner[k]);
@@ -1032,11 +1014,13 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
     const r0 = (embedResolver && docPath)
       ? preprocessEmbedsWithMap(state.src, embedResolver, docPath, embedOptions)
       : { output: state.src, map: LineMap.identity() };
-    const r1 = preprocessGridTablesWithMap(r0.output);
+    const rPanel = preprocessPanelFencesWithMap(r0.output);
+    const r1 = preprocessGridTablesWithMap(rPanel.output);
     const r2 = wrapBareLatexEnvironmentsWithMap(r1.output);
     const r3 = preprocessCriticMarkupWithMap(r2.output);
     state.src = r3.output;
-    state.env.lineMap = LineMap.chain(LineMap.chain(LineMap.chain(r0.map, r1.map), r2.map), r3.map);
+    state.env.lineMap = LineMap.chain(LineMap.chain(LineMap.chain(LineMap.chain(r0.map, rPanel.map), r1.map), r2.map), r3.map);
+    state.env.calloutStyle = metadata.calloutStyle || 'github';
   });
 
   // Inject <style> block for header-font-style and custom styles preview
@@ -1151,6 +1135,31 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
   md.core.ruler.after('inline', 'manuscript_markdown_associate_comments', associateCommentsRule);
   md.core.ruler.after('manuscript_markdown_associate_comments', 'manuscript_markdown_task_list', taskListRule);
   md.core.ruler.after('manuscript_markdown_task_list', 'manuscript_markdown_alert_blockquote', alertBlockquoteRule);
+
+  // Core rule: convert panel placeholder html_blocks into blockquote token
+  // streams so the existing blockquote_open renderer handles them uniformly.
+  md.core.ruler.after('manuscript_markdown_alert_blockquote', 'manuscript_markdown_panel_fence', (state: any) => {
+    const tokens = state.tokens;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].type !== 'html_block') continue;
+      const content = (tokens[i].content || '').trim();
+      if (!content.startsWith(PANEL_PLACEHOLDER_PREFIX)) continue;
+      const data = decodePanelPlaceholder(content);
+      if (!data) continue;
+      const alertType = data.type as CalloutType;
+      // Parse the body as independent markdown. This preserves nested
+      // paragraphs, lists, and code blocks inside the panel.
+      const bodyTokens = md.parse(data.body, state.env);
+      const bqOpen = new state.Token('blockquote_open', 'blockquote', 1);
+      bqOpen.markup = '>';
+      bqOpen.map = tokens[i].map;
+      bqOpen.meta = { gfmAlertType: alertType, gfmAlertTitle: calloutTitle(alertType) };
+      const bqClose = new state.Token('blockquote_close', 'blockquote', -1);
+      bqClose.markup = '>';
+      tokens.splice(i, 1, bqOpen, ...bodyTokens, bqClose);
+      i += bodyTokens.length + 1; // advance past inserted range
+    }
+  });
 
   // Core rule: wrap <!-- style: X -->...<!-- /style --> blocks in <div class="ms-custom-style ms-custom-style-{name}">
   md.core.ruler.after('manuscript_markdown_alert_blockquote', 'manuscript_custom_style_wrap', (state: any) => {
@@ -1337,14 +1346,15 @@ export function manuscriptMarkdownPlugin(md: MarkdownIt): void {
 
   md.renderer.rules.blockquote_open = (tokens, idx, options, env, self) => {
     const token = tokens[idx];
-    const alertType: GfmAlertType | undefined = token.meta?.gfmAlertType;
+    const alertType: CalloutType | undefined = token.meta?.gfmAlertType;
     if (!alertType) {
       return self.renderToken(tokens, idx, options);
     }
     const dataLine = token.map ? ' data-line="' + token.map[0] + '"' : '';
-    const title = token.meta?.gfmAlertTitle || gfmAlertTitle(alertType);
+    const title = token.meta?.gfmAlertTitle || calloutTitle(alertType);
     const schemeClass = env.colorScheme && ALLOWED_PREVIEW_SCHEMES.has(env.colorScheme) ? ' color-scheme-' + env.colorScheme : '';
-    return '<blockquote' + dataLine + ' class="markdown-alert markdown-alert-' + alertType + schemeClass + '"><p class="markdown-alert-title">' + alertOcticonSvg(alertType) + ' ' + escapeHtmlText(title) + '</p>\n';
+    const calloutStyleClass = env.calloutStyle === 'confluence' ? ' callout-style-confluence' : '';
+    return '<blockquote' + dataLine + ' class="markdown-alert markdown-alert-' + alertType + schemeClass + calloutStyleClass + '"><p class="markdown-alert-title">' + calloutOcticonSvg(alertType) + ' ' + escapeHtmlText(title) + '</p>\n';
   };
 
 }

@@ -57,6 +57,8 @@ function makeState(): DocxGenState {
     blockquoteGaps: new Map(),
     blockquotePostContentBlankLines: new Map(),
     blockquoteAlertMarkerInlineByGroup: new Map(),
+    calloutStyle: 'github',
+    panelSyntaxGroups: new Set(),
     imageRelationships: new Map(),
     imageMediaPaths: new Map(),
     imageBinaries: new Map(),

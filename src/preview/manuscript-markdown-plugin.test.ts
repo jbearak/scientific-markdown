@@ -5,6 +5,30 @@ import { manuscriptMarkdownPlugin } from './manuscript-markdown-plugin';
 import type { EmbedResolver } from '../embed-preprocess';
 import { VALID_COLOR_IDS, setDefaultHighlightColor, getDefaultHighlightColor } from '../highlight-colors';
 import { escapeHtml, stripHtmlTags, hasNoSpecialSyntax, renderWithPlugin, SIMPLE_CRITIC_TYPES } from '../test-helpers';
+
+describe('Confluence panel preview rendering', () => {
+  it('renders ~~~panel type=info as markdown-alert-info blockquote', () => {
+    const html = renderWithPlugin('~~~panel type=info\nHello\n~~~\n');
+    expect(html).toContain('markdown-alert-info');
+    expect(html).toContain('Hello');
+  });
+  it('renders ~~~panel type=success with check icon', () => {
+    const html = renderWithPlugin('~~~panel type=success\nDone\n~~~\n');
+    expect(html).toContain('markdown-alert-success');
+  });
+  it('renders ~~~panel type=error with X icon', () => {
+    const html = renderWithPlugin('~~~panel type=error\nBad\n~~~\n');
+    expect(html).toContain('markdown-alert-error');
+  });
+  it('ignores panel fence with unknown type', () => {
+    const html = renderWithPlugin('~~~panel type=foobar\nHi\n~~~\n');
+    expect(html).not.toContain('markdown-alert');
+  });
+  it('recognizes `> [!INFO]` blockquote marker', () => {
+    const html = renderWithPlugin('> [!INFO]\n> Hi\n');
+    expect(html).toContain('markdown-alert-info');
+  });
+});
 import * as fs from 'fs';
 import * as path from 'path';
 

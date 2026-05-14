@@ -29,6 +29,14 @@ def churn_time_minutes(temp_celsius, overrun=0.25):
 > [!WARNING]
 > Artificial green food coloring masks quality issues. Genuinely pistachio-rich ice cream is a muted olive-brown, not vivid green — bright color usually signals low nut content and added dye.
 
+~~~panel type=info
+Confluence-style panels are also supported. Paste a panel from Confluence and it renders with the matching border and icon.
+~~~
+
+~~~panel type=success
+The panel fence accepts the five Confluence types: `info`, `note`, `error`, `success`, and `warning`. All markdown inside — including **formatting** and nested code blocks — is preserved through DOCX round-trip.
+~~~
+
 > "We dare not trust our wit for making our house pleasant to our friend, so we buy ice cream." — Ralph Waldo Emerson (loosely)
 
 ## Review Comments

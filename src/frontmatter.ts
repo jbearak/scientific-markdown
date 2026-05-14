@@ -94,6 +94,18 @@ export function normalizeColorScheme(raw: string): ColorScheme | undefined {
   return COLOR_SCHEME_NAMES[raw.toLowerCase().trim()];
 }
 
+export type CalloutStyle = 'github' | 'confluence';
+
+const CALLOUT_STYLE_NAMES: Record<string, CalloutStyle> = {
+  'github': 'github',
+  'confluence': 'confluence',
+};
+
+/** Normalize a raw callout-style value (case-insensitive). */
+export function normalizeCalloutStyle(raw: string): CalloutStyle | undefined {
+  return CALLOUT_STYLE_NAMES[raw.toLowerCase().trim()];
+}
+
 export interface Frontmatter {
   title?: string[];
   author?: string;
@@ -124,6 +136,7 @@ export interface Frontmatter {
   tableBorders?: 'horizontal' | 'solid' | 'none';
   blockquoteStyle?: BlockquoteStyle;
   colors?: ColorScheme;
+  calloutStyle?: CalloutStyle;
   styles?: Record<string, CustomStyleDef>;
   breaks?: boolean;
   lineSpacing?: string | number;
@@ -434,6 +447,11 @@ export function parseFrontmatter(markdown: string): { metadata: Frontmatter; bod
         if (scheme) metadata.colors = scheme;
         break;
       }
+      case 'callout-style': {
+        const style = normalizeCalloutStyle(value);
+        if (style) metadata.calloutStyle = style;
+        break;
+      }
       case 'breaks':
         if (value === 'true') metadata.breaks = true;
         else if (value === 'false') metadata.breaks = false;
@@ -524,6 +542,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'grid-table-max-line-width': () => { if (metadata.gridTableMaxLineWidth !== undefined) lines.push('grid-table-max-line-width: ' + metadata.gridTableMaxLineWidth); },
     'blockquote-style': () => { if (metadata.blockquoteStyle) lines.push('blockquote-style: ' + metadata.blockquoteStyle); },
     'colors': () => { if (metadata.colors) lines.push('colors: ' + metadata.colors); },
+    'callout-style': () => { if (metadata.calloutStyle) lines.push('callout-style: ' + metadata.calloutStyle); },
     'styles': () => {
       if (!metadata.styles || Object.keys(metadata.styles).length === 0) return;
       lines.push('styles:');
@@ -552,7 +571,7 @@ export function serializeFrontmatter(metadata: Frontmatter, fieldOrder?: string[
     'table-font', 'table-font-size', 'table-col-widths', 'table-borders',
     'code-background-color', 'code-font-color', 'code-block-inset',
     'pipe-table-max-line-width', 'grid-table-max-line-width',
-    'blockquote-style', 'colors', 'styles', 'breaks',
+    'blockquote-style', 'colors', 'callout-style', 'styles', 'breaks',
     'line-spacing', 'paragraph-indent', 'bibliography-hanging-indent',
   ];
 

@@ -205,6 +205,31 @@ body.vscode-dark blockquote.color-scheme-guttmacher-blockquote {
   color: #cf222e;
 }
 
+/* Confluence-only panel types (always use Confluence palette regardless of color scheme) */
+.markdown-alert-info {
+  border-left-color: #0C66E4;
+  background: rgba(12, 102, 228, 0.08);
+}
+.markdown-alert-info .markdown-alert-title {
+  color: #0C66E4;
+}
+
+.markdown-alert-error {
+  border-left-color: #C9372C;
+  background: rgba(201, 55, 44, 0.08);
+}
+.markdown-alert-error .markdown-alert-title {
+  color: #C9372C;
+}
+
+.markdown-alert-success {
+  border-left-color: #22A06B;
+  background: rgba(34, 160, 107, 0.08);
+}
+.markdown-alert-success .markdown-alert-title {
+  color: #22A06B;
+}
+
 /* Dark Theme Overrides for Alerts */
 body.vscode-dark .markdown-alert-note { border-left-color: #58a6ff; background: rgba(88, 166, 255, 0.10); }
 body.vscode-dark .markdown-alert-note .markdown-alert-title { color: #58a6ff; }
@@ -216,6 +241,12 @@ body.vscode-dark .markdown-alert-warning { border-left-color: #d29922; backgroun
 body.vscode-dark .markdown-alert-warning .markdown-alert-title { color: #d29922; }
 body.vscode-dark .markdown-alert-caution { border-left-color: #f85149; background: rgba(248, 81, 73, 0.10); }
 body.vscode-dark .markdown-alert-caution .markdown-alert-title { color: #f85149; }
+body.vscode-dark .markdown-alert-info { border-left-color: #579DFF; background: rgba(87, 157, 255, 0.10); }
+body.vscode-dark .markdown-alert-info .markdown-alert-title { color: #579DFF; }
+body.vscode-dark .markdown-alert-error { border-left-color: #F87168; background: rgba(248, 113, 104, 0.10); }
+body.vscode-dark .markdown-alert-error .markdown-alert-title { color: #F87168; }
+body.vscode-dark .markdown-alert-success { border-left-color: #4BCE97; background: rgba(75, 206, 151, 0.10); }
+body.vscode-dark .markdown-alert-success .markdown-alert-title { color: #4BCE97; }
 
 /* Guttmacher Color Scheme — Light Theme */
 .color-scheme-guttmacher.markdown-alert-note { border-left-color: #0F6779; background: rgba(15, 103, 121, 0.08); }
@@ -240,4 +271,21 @@ body.vscode-dark .color-scheme-guttmacher.markdown-alert-warning { border-left-c
 body.vscode-dark .color-scheme-guttmacher.markdown-alert-warning .markdown-alert-title { color: #F4BF17; }
 body.vscode-dark .color-scheme-guttmacher.markdown-alert-caution { border-left-color: #F06040; background: rgba(240, 96, 64, 0.10); }
 body.vscode-dark .color-scheme-guttmacher.markdown-alert-caution .markdown-alert-title { color: #F06040; }
+
+/* Confluence-style disambiguation: under callout-style: confluence, the `note`
+ * type renders as purple (Confluence's "Note" panel) rather than GitHub's blue note. */
+.callout-style-confluence.markdown-alert-note {
+  border-left-color: #6E5DC6;
+  background: rgba(110, 93, 198, 0.08);
+}
+.callout-style-confluence.markdown-alert-note .markdown-alert-title {
+  color: #6E5DC6;
+}
+body.vscode-dark .callout-style-confluence.markdown-alert-note {
+  border-left-color: #9F8FEF;
+  background: rgba(159, 143, 239, 0.10);
+}
+body.vscode-dark .callout-style-confluence.markdown-alert-note .markdown-alert-title {
+  color: #9F8FEF;
+}
 
